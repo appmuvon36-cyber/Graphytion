@@ -21,7 +21,12 @@ Redis has been removed from the production architecture. Render, media and creat
 - Liveness and readiness endpoints are separate. Readiness checks PostgreSQL, Supabase Auth and private Storage independently and returns 503 if any dependency is unavailable.
 - Supabase Auth and Storage adapters expose real connectivity probes. Service-role key remains server-side only.
 
-### Invitation lifecycle
+#### Authentication rate limiting
+
+- Authentication endpoints use a bounded 60-second process-local sliding window (10 requests per client IP and route) after validating the BFF-supplied client address.
+- Keep FastAPI at one replica with this brokerless implementation. A shared PostgreSQL-backed limiter is required before horizontal API scaling; do not reintroduce an external queue/cache dependency.
+
+## Invitation lifecycle
 
 - Resend adapter sends a secure, expiring, single-use invitation link. Raw token is hashed in the database and only exists in memory during email delivery.
 - API responses and Admin UI no longer return or display raw invitation tokens.

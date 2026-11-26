@@ -32,7 +32,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const body = await response.json().catch(() => null) as {detail?: string; data?: T} | null;
   if (!response.ok) throw new Error(body?.detail ?? `Graphytion API returned HTTP ${response.status}`);
-  return (body?.data ?? body) as T;
+  return (body && typeof body === 'object' && 'data' in body ? body.data : body) as T;
 }
 
 type RenderJob = {

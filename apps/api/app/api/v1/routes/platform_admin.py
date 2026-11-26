@@ -75,7 +75,7 @@ async def platform_users(
     await _require_platform_admin(db, actor)
     auth_page = await supabase_auth.list_users(page=page, per_page=per_page)
     auth_users = auth_page.get("users", [])
-    ids = [str(item.get("id")) for item in auth_users if item.get("id")]
+    ids = [UUID(str(item["id"])) for item in auth_users if item.get("id")]
     profiles: dict[str, Any] = {}
     if ids:
         rows = (await db.execute(text("""

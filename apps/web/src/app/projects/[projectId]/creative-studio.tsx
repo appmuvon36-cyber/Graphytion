@@ -18,7 +18,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<VideoProjectApi | null>(null);
   const [briefs, setBriefs] = useState<CreativeBriefApi[]>([]);
   const [scripts, setScripts] = useState<VideoScriptApi[]>([]);
-  const [boards, setBoards] = useState<StoryboardApi[]>([]);\n  const [runs, setRuns] = useState<CreativeRunItem[]>([]);\n  const [renders, setRenders] = useState<RenderItem[]>([]);
+  const [boards, setBoards] = useState<StoryboardApi[]>([]);
+  const [runs, setRuns] = useState<CreativeRunItem[]>([]);
+  const [renders, setRenders] = useState<RenderItem[]>([]);
   const [prompt, setPrompt] = useState('');
   const [briefJson, setBriefJson] = useState('{"objective":"","audience":"","key_message":"","tone":"","language":"id-ID","duration_target_ms":60000,"production_mode":"motion_graphic","visual_style":"","cta":"","constraints":[],"missing_information":[]}');
   const [scriptTitle, setScriptTitle] = useState('');

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { handleSessionProxy } from '@/lib/session-proxy';
+import { handleSessionProxy } from '../../../lib/session-proxy';
 
 export const runtime = 'nodejs';
 type Context = { params: Promise<{ path: string[] }> };

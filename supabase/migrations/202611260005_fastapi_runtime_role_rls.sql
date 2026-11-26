@@ -97,7 +97,6 @@ grant insert (actor_user_id,operation,idempotency_key,request_hash)
 grant update (response_body,completed_at) on table public.api_idempotency_keys to graphytion_runtime;
 
 grant select,insert on table public.audit_logs to graphytion_runtime;
-grant usage,select on all sequences in schema public to graphytion_runtime;
 
 -- The service-role key is used only by the private Storage adapter, never by the
 -- FastAPI SQL path or browser Data API. Remove its broad legacy grants on domain tables.
@@ -115,7 +114,7 @@ revoke select,insert,update,delete on table public.profiles
   from authenticated,graphytion_runtime;
 grant select (id,display_name,avatar_path,bio,locale,timezone,created_at,updated_at)
   on table public.profiles to authenticated,graphytion_runtime;
-grant insert (id,display_name)
+grant insert (id)
   on table public.profiles to graphytion_runtime;
 grant update (display_name,bio,locale,timezone,avatar_path,updated_at)
   on table public.profiles to graphytion_runtime;

@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager
 from uuid import uuid4
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware\nfrom fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.errors import http_error_handler, unhandled_error_handler
+from app.core.errors import http_error_handler, unhandled_error_handler, validation_error_handler
 from app.core.logging import configure_logging, logger
 from app.core.redis import redis_client
 
@@ -17,7 +17,7 @@ async def lifespan(_: FastAPI):
     await redis_client.aclose()
 app = FastAPI(title="Graphytion API", version="1.0.0", description="Graphytion business and orchestration control plane", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_credentials=True, allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], allow_headers=["Authorization","Content-Type","Idempotency-Key","X-Request-ID"])
-app.add_exception_handler(StarletteHTTPException, http_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_error_handler)\napp.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
 @app.middleware("http")
 async def request_context(request: Request, call_next):

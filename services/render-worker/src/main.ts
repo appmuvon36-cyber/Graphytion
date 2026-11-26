@@ -13,6 +13,10 @@ if (!redisUrl) throw new Error('REDIS_URL is required');
 if (!apiBaseUrl) throw new Error('GRAPHYTION_API_BASE_URL is required');
 if (!workerToken) throw new Error('INTERNAL_WORKER_TOKEN is required');
 if (!serveUrl) throw new Error('REMOTION_SERVE_URL is required');
+const renderTimeoutMs = Number(process.env.RENDER_TIMEOUT_MS ?? 7200000);
+if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeoutMs > 86400000) {
+  throw new Error('RENDER_TIMEOUT_MS must be between 60000 and 86400000');
+}
 
 const workerId = `render:${process.env.HOSTNAME ?? 'worker'}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const stream = 'graphytion:render:jobs';
@@ -61,10 +65,6 @@ async function processJob(jobId?: string): Promise<boolean> {
   let cancelInvoked = false;
   let timedOut = false;
   const cancelRender = () => { if (!cancelInvoked) { cancelInvoked = true; cancel(); } };
-  const renderTimeoutMs = Number(process.env.RENDER_TIMEOUT_MS ?? 7200000);
-  if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeoutMs > 86400000) {
-    throw new Error('RENDER_TIMEOUT_MS must be between 60000 and 86400000');
-  }
   const timeoutTimer = setTimeout(() => { timedOut = true; cancelRender(); }, renderTimeoutMs);
   const leaseHeartbeat = setInterval(async () => {
     try {

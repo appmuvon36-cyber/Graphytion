@@ -100,7 +100,8 @@ async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncS
  if row["status"] not in {"provider_unavailable","failed"}:raise HTTPException(409,"Only unavailable or failed voiceover jobs can be retried")
  await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null where id=:id"),{"id":voiceover_id})
  await db.commit()
- # The media worker discovers this queued row through PostgreSQL polling.
+ await notify_worker("media", str(voiceover_id))
+ # PostgreSQL remains durable; Redis is a best-effort wake-up signal.
  return {"data":{"voiceover_id":str(voiceover_id),"status":"queued"}}
 
 

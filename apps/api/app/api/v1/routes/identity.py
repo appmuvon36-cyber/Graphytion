@@ -907,7 +907,7 @@ async def list_projects(
     claims: AuthenticatedClaims,
     db: AsyncSession = Db,
     q: str | None = Query(default=None, max_length=160),
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: str | None = Query(default=None, alias="status", pattern="^(draft|active|archived)$"),
     sort: str = Query(default="updated_at", pattern="^(updated_at|created_at|name)$"),
     direction: str = Query(default="desc", pattern="^(asc|desc)$"),
     limit: int = Query(default=25, ge=1, le=100),
@@ -936,7 +936,26 @@ async def list_projects(
         .mappings()
         .all()
     )
-    return {"data": [dict(r) for r in rows], "page": {"limit": limit, "offset": offset}}
+    total = (
+        await db.execute(
+            text("""
+                select count(*) from public.video_projects
+                where workspace_id=:workspace and status<>'deleted'
+                  and (:q is null or name ilike '%'||:q||'%')
+                  and (:status is null or status=:status)
+            """),
+            {"workspace": workspace_id, "q": q, "status": status_filter},
+        )
+    ).scalar_one()
+    return {
+        "data": [dict(r) for r in rows],
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+            "has_more": offset + len(rows) < total,
+        },
+    }
 
 
 @router.post("/workspaces/{workspace_id}/projects", status_code=201)

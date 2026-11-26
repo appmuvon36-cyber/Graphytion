@@ -293,3 +293,48 @@ async def platform_remove_member(
                  "workspace_member", member_id, {"workspace_id": str(workspace_id)})
     await db.commit()
     return None
+
+
+@router.get("/invitations")
+async def platform_invitations(
+    claims: AuthenticatedClaims,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select i.id,i.workspace_id,w.name as workspace_name,i.email,i.role,i.invited_by,
+               i.expires_at,i.accepted_at,i.cancelled_at,i.delivery_status,
+               i.delivery_attempts,i.sent_at,i.created_at
+        from public.workspace_invitations i
+        join public.workspaces w on w.id=i.workspace_id
+        order by i.created_at desc
+        limit :limit offset :offset
+    """), {"limit": per_page, "offset": (page - 1) * per_page})).mappings().all()
+    total = await db.scalar(text("select count(*) from public.workspace_invitations"))
+    return {"data": [dict(row) for row in rows], "page": {"number": page, "size": per_page, "total": total}}
+
+
+@router.delete("/invitations/{invitation_id}", status_code=204)
+async def platform_cancel_invitation(
+    invitation_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        update public.workspace_invitations
+        set cancelled_at=now()
+        where id=:id and accepted_at is null and cancelled_at is null
+        returning workspace_id
+    """), {"id": invitation_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pending invitation not found")
+    await _audit(db, request, actor, "platform.invitation.cancelled",
+                 "invitation", invitation_id, {"workspace_id": str(row["workspace_id"])})
+    await db.commit()
+    return None

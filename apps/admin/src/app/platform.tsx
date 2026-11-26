@@ -9,7 +9,8 @@ type Workspace = { id: string; name: string; slug: string; active_members: numbe
 type Project = { id: string; name: string; workspace_name: string; status: string; production_mode: string };
 type Audit = { id: string; action: string; actor_user_id: string; resource_type: string; resource_id: string; created_at: string };
 type Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
-type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };\ntype PlatformAdminRecord = { user_id: string; role: string; status: string; granted_at: string; reason?: string | null };
+type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };
+type PlatformAdminRecord = { user_id: string; role: string; status: string; granted_at: string; reason?: string | null };
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number };
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -29,7 +30,10 @@ export default function PlatformAdmin() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);\n  const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminRecord[]>([]);\n  const [newAdminUserId, setNewAdminUserId] = useState('');\n  const [newAdminRole, setNewAdminRole] = useState('operations_admin');
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminRecord[]>([]);
+  const [newAdminUserId, setNewAdminUserId] = useState('');
+  const [newAdminRole, setNewAdminRole] = useState('operations_admin');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
@@ -55,7 +59,8 @@ export default function PlatformAdmin() {
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Project>>('/admin/projects?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Audit>>('/admin/audit-logs?page=1&per_page=30'),
-        request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),\n        request<{data: PlatformAdminRecord[]}>('/admin/platform-admins'),
+        request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),
+        request<{data: PlatformAdminRecord[]}>('/admin/platform-admins'),
       ]);
       setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data);
       setDenied(false);

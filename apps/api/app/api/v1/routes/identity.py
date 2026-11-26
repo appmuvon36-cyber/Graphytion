@@ -15,13 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims
 from app.core.database import get_db_session
 from app.core.redis import redis_client
-from app.services.supabase_auth import supabase_auth
-from app.services.supabase_storage import SupabaseStorage
 from app.services.idempotency import (
     complete_idempotency,
     reserve_idempotency,
     validate_idempotency_key,
 )
+from app.services.supabase_auth import supabase_auth
+from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import (
     ROLE_PERMISSIONS,
     WorkspacePermissionResolver,
@@ -617,9 +617,7 @@ async def list_members(workspace_id: UUID, claims: AuthenticatedClaims, db: Asyn
 
 
 @router.get("/workspaces/{workspace_id}/invitations")
-async def list_invitations(
-    workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db
-):
+async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
     await require_permission(db, uid(claims), workspace_id, "member.manage")
     rows = (
         (
@@ -640,7 +638,11 @@ async def list_invitations(
     return {"data": [dict(row) for row in rows]}
 
 
-@router.post("/workspaces/{workspace_id}/invitations", status_code=201, dependencies=[Depends(auth_rate_limit)])
+@router.post(
+    "/workspaces/{workspace_id}/invitations",
+    status_code=201,
+    dependencies=[Depends(auth_rate_limit)],
+)
 async def create_invitation(
     workspace_id: UUID,
     payload: InviteCreate,
@@ -670,7 +672,9 @@ async def create_invitation(
         )
     ).scalar_one()
     if already_member:
-        raise HTTPException(status_code=409, detail="This user is already an active workspace member")
+        raise HTTPException(
+            status_code=409, detail="This user is already an active workspace member"
+        )
     await db.execute(
         text("""
             update public.workspace_invitations set cancelled_at=now()
@@ -705,7 +709,13 @@ async def create_invitation(
             .one()
         )
         await audit(
-            db, actor, workspace_id, "workspace.invitation.created", "invitation", row["id"], request
+            db,
+            actor,
+            workspace_id,
+            "workspace.invitation.created",
+            "invitation",
+            row["id"],
+            request,
         )
         await db.commit()
         return {"data": dict(row), "invitation_token": raw}
@@ -716,7 +726,9 @@ async def create_invitation(
         ) from exc
 
 
-@router.patch("/workspaces/{workspace_id}/members/{member_id}", dependencies=[Depends(auth_rate_limit)])
+@router.patch(
+    "/workspaces/{workspace_id}/members/{member_id}", dependencies=[Depends(auth_rate_limit)]
+)
 async def update_member_role(
     workspace_id: UUID,
     member_id: UUID,
@@ -770,7 +782,11 @@ async def update_member_role(
     return {"data": {"member_id": str(member_id), "role": payload.role}}
 
 
-@router.delete("/workspaces/{workspace_id}/members/{member_id}", status_code=204, dependencies=[Depends(auth_rate_limit)])
+@router.delete(
+    "/workspaces/{workspace_id}/members/{member_id}",
+    status_code=204,
+    dependencies=[Depends(auth_rate_limit)],
+)
 async def remove_workspace_member(
     workspace_id: UUID,
     member_id: UUID,
@@ -811,7 +827,11 @@ async def remove_workspace_member(
     return None
 
 
-@router.delete("/workspaces/{workspace_id}/invitations/{invitation_id}", status_code=204, dependencies=[Depends(auth_rate_limit)])
+@router.delete(
+    "/workspaces/{workspace_id}/invitations/{invitation_id}",
+    status_code=204,
+    dependencies=[Depends(auth_rate_limit)],
+)
 async def cancel_invitation(
     workspace_id: UUID,
     invitation_id: UUID,
@@ -936,7 +956,9 @@ async def list_projects(
     claims: AuthenticatedClaims,
     db: AsyncSession = Db,
     q: str | None = Query(default=None, max_length=160),
-    status_filter: str | None = Query(default=None, alias="status", pattern="^(draft|active|archived)$"),
+    status_filter: str | None = Query(
+        default=None, alias="status", pattern="^(draft|active|archived)$"
+    ),
     sort: str = Query(default="updated_at", pattern="^(updated_at|created_at|name)$"),
     direction: str = Query(default="desc", pattern="^(asc|desc)$"),
     limit: int = Query(default=25, ge=1, le=100),
@@ -1161,7 +1183,7 @@ async def update_project(
                         left join public.project_settings s on s.project_id=p.id
                         where p.id=:id
                     """),
-                    {"id": project_id}
+                    {"id": project_id},
                 )
             )
             .mappings()
@@ -1267,8 +1289,6 @@ async def delete_project(
         """),
         {"id": project_id},
     )
-    await audit(
-        db, actor, workspace_id, "project.deleted", "video_project", project_id, request
-    )
+    await audit(db, actor, workspace_id, "project.deleted", "video_project", project_id, request)
     await db.commit()
     return None

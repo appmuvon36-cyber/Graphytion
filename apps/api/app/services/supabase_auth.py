@@ -34,7 +34,9 @@ class SupabaseAuth:
         except httpx.TimeoutException as exc:
             raise HTTPException(status_code=504, detail="Supabase Auth request timed out") from exc
         except httpx.RequestError as exc:
-            raise HTTPException(status_code=503, detail="Supabase Auth is temporarily unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Supabase Auth is temporarily unavailable"
+            ) from exc
         try:
             body = response.json()
         except ValueError:

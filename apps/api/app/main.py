@@ -9,13 +9,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.database import engine
 from app.core.errors import (
     http_error_handler,
     unhandled_error_handler,
     validation_error_handler,
 )
 from app.core.logging import configure_logging, logger
-from app.core.database import engine
 from app.core.redis import redis_client
 
 configure_logging(settings.log_level)

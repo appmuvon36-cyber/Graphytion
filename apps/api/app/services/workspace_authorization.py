@@ -43,7 +43,14 @@ ROLE_PERMISSIONS: dict[WorkspaceRole, frozenset[str]] = {
         }
     ),
     WorkspaceRole.EDITOR: frozenset(
-        {"workspace.read", "member.read", "project.read", "project.create", "project.update", "project.archive"}
+        {
+            "workspace.read",
+            "member.read",
+            "project.read",
+            "project.create",
+            "project.update",
+            "project.archive",
+        }
     ),
     WorkspaceRole.MEMBER: frozenset(
         {"workspace.read", "member.read", "project.read", "project.create", "project.update"}

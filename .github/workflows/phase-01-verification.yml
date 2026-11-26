@@ -92,10 +92,10 @@ jobs:
       - name: Python compile, lint and FastAPI import
         working-directory: apps/api
         run: |
-          uv run ruff format app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py
+          uv run ruff format app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py app/services/invitation_email.py app/api/v1/routes/webhooks.py
           uv run python -m compileall -q app
-          uv run ruff check --fix app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py
-          uv run ruff check app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py
+          uv run ruff check --fix app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py app/services/invitation_email.py app/api/v1/routes/webhooks.py
+          uv run ruff check app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py app/services/invitation_email.py app/api/v1/routes/webhooks.py
           uv run python -c "from app.main import app; assert app.openapi()"
 
       - name: Python worker compile and import checks
@@ -126,7 +126,7 @@ jobs:
         run: |
           git config user.name "graphytion-ci"
           git config user.email "graphytion-ci@users.noreply.github.com"
-          git add pnpm-lock.yaml apps/api/uv.lock services/ai-worker/uv.lock services/media-worker/uv.lock services/ai-worker/pyproject.toml services/media-worker/pyproject.toml apps/api/app/api/deps.py apps/api/app/api/v1/router.py apps/api/app/api/v1/routes/identity.py apps/api/app/core/config.py apps/api/app/core/security.py apps/api/app/core/errors.py apps/api/app/main.py apps/api/app/services/supabase_auth.py apps/api/app/services/supabase_storage.py apps/api/app/services/workspace_authorization.py apps/api/app/services/idempotency.py
+          git add pnpm-lock.yaml apps/api/uv.lock services/ai-worker/uv.lock services/media-worker/uv.lock services/ai-worker/pyproject.toml services/media-worker/pyproject.toml apps/api/app/api/deps.py apps/api/app/api/v1/router.py apps/api/app/api/v1/routes/identity.py apps/api/app/core/config.py apps/api/app/core/security.py apps/api/app/core/errors.py apps/api/app/main.py apps/api/app/services/supabase_auth.py apps/api/app/services/supabase_storage.py apps/api/app/services/workspace_authorization.py apps/api/app/services/idempotency.py apps/api/app/services/invitation_email.py apps/api/app/api/v1/routes/webhooks.py
           if git diff --cached --quiet; then
             echo "Lockfiles are already up to date."
           else

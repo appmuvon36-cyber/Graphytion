@@ -18,7 +18,7 @@ BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
 class VoiceoverCreate(BaseModel):
  text:str=Field(min_length=1,max_length=20000)
  provider_key:str=Field(default="gemini",pattern=r"^(gemini|openai)$")
- model_key:str=Field(default="gemini-3.8-flash-tts",pattern=r"^(gemini-[a-zA-Z0-9.-]+-tts|tts-1|tts-1-hd|gpt-4o-mini-tts)$",max_length=100)
+ model_key:str=Field(default="gemini-3.8-flash-lite-tts",pattern=r"^(gemini-[a-zA-Z0-9.-]+-tts|tts-1|tts-1-hd|gpt-4o-mini-tts)$",max_length=100)
  voice_key:str=Field(default="Kore",min_length=2,max_length=40)
  language:str=Field(default="id-ID",min_length=2,max_length=16)
  scene_id:UUID|None=None

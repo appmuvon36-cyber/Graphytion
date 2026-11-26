@@ -588,7 +588,11 @@ async def create_invitation(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    actor_role = await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    if payload.role == "admin" and actor_role != "owner":
+        raise HTTPException(
+            status_code=403, detail="Only the workspace owner can invite an administrator"
+        )
     await db.execute(
         text("""
             update public.workspace_invitations set cancelled_at=now()

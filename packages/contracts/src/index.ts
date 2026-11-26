@@ -194,3 +194,10 @@ export const RenderJobApiSchema = z.object({
 }).strict();
 export type ProductionRunApi = z.infer<typeof ProductionRunApiSchema>;
 export type RenderJobApi = z.infer<typeof RenderJobApiSchema>;
+
+export const ProjectAssetApiSchema = z.object({
+  id: UUID, project_id: UUID, workspace_id: UUID, uploaded_by: UUID,
+  file_name: z.string(), content_type: z.string(), size_bytes: z.number().int().positive(),
+  sha256: z.string().length(64), status: z.enum(['active','deleted']), created_at: Timestamp,
+}).strict();
+export type ProjectAssetApi = z.infer<typeof ProjectAssetApiSchema>;

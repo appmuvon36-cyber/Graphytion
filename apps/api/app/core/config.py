@@ -54,10 +54,6 @@ class Settings(BaseSettings):
         return self.database_url.get_secret_value()
 
     @property
-    def redis_url_value(self) -> str:
-        return self.redis_url.get_secret_value()
-
-    @property
     def supabase_anon_key_value(self) -> str | None:
         return self.supabase_anon_key.get_secret_value() if self.supabase_anon_key else None
 
@@ -144,12 +140,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SUPABASE_JWT_SECRET must contain at least 32 characters when configured"
             )
-
-        redis_url = urlparse(self.redis_url_value)
-        if redis_url.scheme != "rediss" or not redis_url.hostname:
-            raise ValueError("Production REDIS_URL must use rediss:// TLS")
-        if redis_url.hostname in {"localhost", "127.0.0.1"}:
-            raise ValueError("Production REDIS_URL cannot point to localhost")
 
         supabase_host = urlparse(self.supabase_url).hostname
         if supabase_host != "xtjwmezfzexvupbfsdqt.supabase.co":

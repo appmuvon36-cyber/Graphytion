@@ -154,6 +154,16 @@ grant execute on function private.graphytion_workspace_has_active_member_email(u
 grant execute on function private.graphytion_invitation_matches_user(text,uuid) to graphytion_runtime;
 grant execute on function private.graphytion_can_accept_invitation(uuid,text) to graphytion_runtime;
 
+create or replace function private.graphytion_is_resend_webhook()
+returns boolean
+language sql stable
+set search_path = public
+as $resend_context$
+  select coalesce(current_setting('app.graphytion.internal',true),'')='resend_webhook'
+$resend_context$;
+revoke all on function private.graphytion_is_resend_webhook() from public,anon,authenticated;
+grant execute on function private.graphytion_is_resend_webhook() to graphytion_runtime;
+
 drop policy if exists profiles_select_workspace_members on public.profiles;
 create policy profiles_select_workspace_members
 on public.profiles for select to graphytion_runtime
@@ -293,16 +303,6 @@ with check (
       and private.graphytion_workspace_role(p.workspace_id) in ('owner','admin','editor','member')
   )
 );
-
-create or replace function private.graphytion_is_resend_webhook()
-returns boolean
-language sql stable
-set search_path = public
-as $resend_context$
-  select coalesce(current_setting('app.graphytion.internal',true),'')='resend_webhook'
-$resend_context$;
-revoke all on function private.graphytion_is_resend_webhook() from public,anon,authenticated;
-grant execute on function private.graphytion_is_resend_webhook() to graphytion_runtime;
 
 create or replace function public.graphytion_protect_invitation_update()
 returns trigger

@@ -483,6 +483,11 @@ async def split_subtitle_segment(
     if not row["start_ms"] < payload.split_at_ms < row["end_ms"]:
         raise HTTPException(422, "split_at_ms must be inside the segment")
     old = _snapshot(row)
+    old_words = old["word_timings"]
+    if any(word["start_ms"] < payload.split_at_ms < word["end_ms"] for word in old_words):
+        raise HTTPException(422, "split_at_ms cannot divide a word alignment interval")
+    first_words = [word for word in old_words if word["end_ms"] <= payload.split_at_ms]
+    second_words = [word for word in old_words if word["start_ms"] >= payload.split_at_ms]
     first_text, second_text = old["text"], payload.second_text
     if second_text is None:
         words = old["text"].split()
@@ -491,9 +496,9 @@ async def split_subtitle_segment(
         midpoint = max(1, len(words) // 2)
         first_text, second_text = " ".join(words[:midpoint]), " ".join(words[midpoint:])
     await db.execute(
-        text("""update public.subtitle_segments set end_ms=:end,text=:text,word_timings='[]'::jsonb,
+        text("""update public.subtitle_segments set end_ms=:end,text=:text,word_timings=cast(:words as jsonb),
         version=version+1,updated_at=now() where id=:id"""),
-        {"end": payload.split_at_ms, "text": first_text, "id": segment_id},
+        {"end": payload.split_at_ms, "text": first_text, "words": json.dumps(first_words), "id": segment_id},
     )
     first = _snapshot(await _get_segment(db, track_id, segment_id))
     second_index = int(old["segment_index"]) + 1
@@ -508,7 +513,11 @@ async def split_subtitle_segment(
     created = await _insert_segment(
         db, track_id,
         SubtitleSegmentInput(segment_index=second_index, start_ms=payload.split_at_ms,
-                             end_ms=old["end_ms"], text=second_text, speaker=old["speaker"]),
+                             end_ms=old["end_ms"], text=second_text, speaker=old["speaker"],
+                             word_timings=second_words, style_config=old["style_config"],
+                             position_config=old["position_config"],
+                             alignment_metadata=old["alignment_metadata"],
+                             audio_asset_id=UUID(old["audio_asset_id"]) if old["audio_asset_id"] else None),
         actor, request, "split",
     )
     await _revision(db, track_id, segment_id, "split", first, actor, request)
@@ -609,7 +618,6 @@ async def list_subtitle_segment_revisions(
     actor = _actor(claims)
     workspace = await _scope(db, project_id, actor, "project.read")
     await _get_track(db, project_id, workspace, track_id)
-    await _get_segment(db, track_id, segment_id)
     rows = (await db.execute(
         text("""select id,revision,operation,snapshot,actor_user_id,request_id,created_at
         from public.subtitle_segment_revisions where track_id=:track and segment_id=:segment

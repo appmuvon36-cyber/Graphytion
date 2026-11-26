@@ -533,7 +533,9 @@ async def admin_create_render_profile(payload:RenderProfileInput,request:Request
         insert into public.render_profiles(profile_key,name,description,scope,version,width,height,fps,container,
           video_codec,video_crf,video_bitrate,audio_codec,audio_bitrate,render_concurrency,priority,
           thumbnail_enabled,preview_enabled,is_default,created_by,updated_by)
-        values(:key,:name,:description,'global',1,:width,:height,:fps,:container,:video_codec,:crf,
+        values(:key,:name,:description,'global',
+          (select coalesce(max(version),0)+1 from public.render_profiles where profile_key=:key and scope='global'),
+          :width,:height,:fps,:container,:video_codec,:crf,
           :video_bitrate,:audio_codec,:audio_bitrate,:concurrency,:priority,:thumbnail,:preview,:default,:actor,:actor)
         returning *
     """),{"key":payload.profile_key,"name":payload.name,"description":payload.description,"width":payload.width,

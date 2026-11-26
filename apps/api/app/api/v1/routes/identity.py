@@ -658,6 +658,23 @@ async def create_invitation(
         raise HTTPException(
             status_code=403, detail="Only the workspace owner can invite an administrator"
         )
+    already_member = (
+        await db.execute(
+            text("""
+                select exists (
+                    select 1
+                    from auth.users u
+                    join public.workspace_members m on m.user_id=u.id
+                    where m.workspace_id=:workspace
+                      and lower(u.email)=lower(:email)
+                      and m.status='active'
+                )
+            """),
+            {"workspace": workspace_id, "email": payload.email},
+        )
+    ).scalar_one()
+    if already_member:
+        raise HTTPException(status_code=409, detail="This user is already an active workspace member")
     await db.execute(
         text("""
             update public.workspace_invitations set cancelled_at=now()

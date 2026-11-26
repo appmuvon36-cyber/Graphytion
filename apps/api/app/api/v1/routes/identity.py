@@ -161,14 +161,6 @@ def uid(claims: dict[str, Any]) -> UUID:
         raise HTTPException(status_code=401, detail="Invalid authenticated subject") from exc
 
 
-async def require_workspace(
-    db: AsyncSession, user_id: UUID, workspace_id: UUID, roles: set[str] | None = None
-) -> str:
-    return await WorkspacePermissionResolver().require_membership(
-        session=db, user_id=str(user_id), workspace_id=str(workspace_id), allowed_roles=roles
-    )
-
-
 async def require_permission(
     db: AsyncSession, user_id: UUID, workspace_id: UUID, permission: str
 ) -> str:

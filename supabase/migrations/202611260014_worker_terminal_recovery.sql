@@ -25,7 +25,7 @@ begin
       completed_at=now(),worker_id=null,lease_expires_at=null
     where id=any(v_failed);
     update public.agent_tasks set status='failed',
-      error_code='MAX_ATTEMPTS_EXCEEDED',completed_at=now(),lease_expires_at=null
+      error_code='MAX_ATTEMPTS_EXCEEDED',completed_at=now(),lease_expires_at=null,worker_id=null
     where production_run_id=any(v_failed) and status in ('running','retry_wait','queued');
   end if;
 
@@ -38,7 +38,7 @@ begin
     update public.production_runs set status='cancelled',cancelled_at=now(),
       completed_at=now(),worker_id=null,lease_expires_at=null
     where id=any(v_cancelled);
-    update public.agent_tasks set status='cancelled',completed_at=now(),lease_expires_at=null
+    update public.agent_tasks set status='cancelled',completed_at=now(),lease_expires_at=null,worker_id=null
     where production_run_id=any(v_cancelled) and status in ('running','retry_wait','queued');
   end if;
 

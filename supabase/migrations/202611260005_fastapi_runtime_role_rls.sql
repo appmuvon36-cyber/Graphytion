@@ -307,8 +307,8 @@ with check (
 );
 
 -- Keep the API login role non-administrative and unable to create schema objects.
-alter role graphytion_runtime nosuperuser nocreatedb nocreaterole noinherit noreplication;
-alter role graphytion_api nosuperuser nocreatedb nocreaterole noinherit noreplication;
+alter role graphytion_runtime nosuperuser nocreatedb nocreaterole inherit noreplication;
+alter role graphytion_api nosuperuser nocreatedb nocreaterole inherit noreplication;
 
 commit;
 

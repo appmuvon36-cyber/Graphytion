@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims
@@ -577,33 +578,39 @@ async def create_invitation(
     )
     raw = secrets.token_urlsafe(36)
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    row = (
-        (
-            await db.execute(
-                text("""
-      insert into public.workspace_invitations(
-        workspace_id, email, role, token_hash, invited_by, expires_at
-      )
-      values (:workspace,lower(:email),:role,:digest,:actor,now()+interval '7 days')
-      returning id,workspace_id,email,role,expires_at,created_at
-    """),
-                {
-                    "workspace": workspace_id,
-                    "email": payload.email,
-                    "role": payload.role,
-                    "digest": digest,
-                    "actor": actor,
-                },
+    try:
+        row = (
+            (
+                await db.execute(
+                    text("""
+          insert into public.workspace_invitations(
+            workspace_id, email, role, token_hash, invited_by, expires_at
+          )
+          values (:workspace,lower(:email),:role,:digest,:actor,now()+interval '7 days')
+          returning id,workspace_id,email,role,expires_at,created_at
+        """),
+                    {
+                        "workspace": workspace_id,
+                        "email": payload.email,
+                        "role": payload.role,
+                        "digest": digest,
+                        "actor": actor,
+                    },
+                )
             )
+            .mappings()
+            .one()
         )
-        .mappings()
-        .one()
-    )
-    await audit(
-        db, actor, workspace_id, "workspace.invitation.created", "invitation", row["id"], request
-    )
-    await db.commit()
-    return {"data": dict(row), "invitation_token": raw}
+        await audit(
+            db, actor, workspace_id, "workspace.invitation.created", "invitation", row["id"], request
+        )
+        await db.commit()
+        return {"data": dict(row), "invitation_token": raw}
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="A pending invitation already exists for this email"
+        ) from exc
 
 
 @router.patch("/workspaces/{workspace_id}/members/{member_id}")

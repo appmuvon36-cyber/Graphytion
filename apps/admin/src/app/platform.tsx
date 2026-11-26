@@ -9,7 +9,7 @@ type Workspace = { id: string; name: string; slug: string; active_members: numbe
 type Project = { id: string; name: string; workspace_name: string; status: string; production_mode: string };
 type Audit = { id: string; action: string; actor_user_id: string; resource_type: string; resource_id: string; created_at: string };
 type Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
-type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };
+type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };\ntype PlatformAdminRecord = { user_id: string; role: string; status: string; granted_at: string; reason?: string | null };
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number };
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -29,7 +29,7 @@ export default function PlatformAdmin() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);\n  const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminRecord[]>([]);\n  const [newAdminUserId, setNewAdminUserId] = useState('');\n  const [newAdminRole, setNewAdminRole] = useState('operations_admin');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
@@ -49,15 +49,15 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i] = await Promise.all([
+      const [o, u, w, p, a, i, pa] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Project>>('/admin/projects?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Audit>>('/admin/audit-logs?page=1&per_page=30'),
-        request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),
+        request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),\n        request<{data: PlatformAdminRecord[]}>('/admin/platform-admins'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -103,6 +103,28 @@ export default function PlatformAdmin() {
       await loadMembers(selectedWorkspace);
       setNotice('Workspace member role updated.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Perubahan role gagal'); }
+    finally { setBusy(false); }
+  }
+
+  async function grantPlatformAdmin(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setNotice('');
+    try {
+      await request('/admin/platform-admins', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: newAdminUserId.trim(), role: newAdminRole, reason: 'Provisioned through platform control plane' }),
+      });
+      setNewAdminUserId(''); setNotice('Platform administrator role granted.'); await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Grant platform role failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function revokePlatformAdmin(admin: PlatformAdminRecord) {
+    if (!window.confirm('Revoke platform administrator access for ' + admin.user_id + '?')) return;
+    setBusy(true); setError('');
+    try {
+      await request('/admin/platform-admins/' + admin.user_id, { method: 'DELETE' });
+      setNotice('Platform administrator access revoked.'); await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Revoke platform role failed'); }
     finally { setBusy(false); }
   }
 
@@ -197,6 +219,7 @@ export default function PlatformAdmin() {
         </div>)}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}><button disabled={page <= 1 || busy} onClick={() => setPage(value => value - 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Previous</button><span style={{ fontSize: 12 }}>Page {page}</span><button disabled={users.length < 25 || busy} onClick={() => setPage(value => value + 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Next</button></div>
       </section>
+      <section style={panel}><h2>Platform RBAC & administrator registry</h2><form onSubmit={grantPlatformAdmin} style={{display:'grid',gridTemplateColumns:'2fr 1fr auto',gap:8,marginBottom:12}}><input aria-label="User UUID" placeholder="User profile UUID" value={newAdminUserId} onChange={event=>setNewAdminUserId(event.target.value)} style={input} required/><select aria-label="Platform admin role" value={newAdminRole} onChange={event=>setNewAdminRole(event.target.value)} style={input}><option value="operations_admin">Operations admin</option><option value="support_admin">Support admin</option><option value="super_admin">Super admin</option></select><button disabled={busy} style={button}>Grant role</button></form>{platformAdmins.map(admin=><div key={admin.user_id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{admin.user_id}</strong><div style={{fontSize:12,color:'#68788e'}}>{admin.role} · {admin.status} · {new Date(admin.granted_at).toLocaleString()}</div></div>{admin.status==='active'&&<button disabled={busy} onClick={()=>void revokePlatformAdmin(admin)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Revoke</button>}</div>)}</section>
       <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div>)}
         {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>

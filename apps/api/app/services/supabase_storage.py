@@ -1,0 +1,30 @@
+from urllib.parse import quote
+import httpx
+from app.core.config import settings
+
+class SupabaseStorage:
+    """Server-only Supabase Storage adapter; service credentials never leave FastAPI."""
+    def _headers(self) -> dict[str, str]:
+        key = settings.supabase_service_role_key
+        if not key:
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is not configured")
+        return {"Authorization": f"Bearer {key}", "apikey": key}
+
+    async def upload(self, *, bucket: str, object_path: str, content: bytes, content_type: str) -> None:
+        url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}/{quote(object_path, safe='/')}"
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(url, headers={**self._headers(), "Content-Type": content_type, "x-upsert": "false"}, content=content)
+            response.raise_for_status()
+
+    async def create_signed_url(self, *, bucket: str, object_path: str, expires_in: int = 300) -> str:
+        if not 30 <= expires_in <= 3600:
+            raise ValueError("Signed URL expiry must be between 30 and 3600 seconds")
+        url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/sign/{quote(bucket, safe='')}/{quote(object_path, safe='/')}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(url, headers=self._headers(), json={"expiresIn": expires_in})
+            response.raise_for_status()
+            payload = response.json()
+        signed = payload.get("signedURL")
+        if not isinstance(signed, str) or not signed:
+            raise RuntimeError("Storage provider returned no signed URL")
+        return signed if signed.startswith("http") else f"{settings.supabase_url.rstrip('/')}/storage/v1{signed}"

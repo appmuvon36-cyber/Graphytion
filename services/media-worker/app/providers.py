@@ -122,8 +122,8 @@ class GeminiTTSProvider:
         inline = audio_part["inlineData"]
         pcm = base64.b64decode(inline["data"], validate=True)
         mime = inline.get("mimeType", "audio/L16;codec=pcm;rate=24000")
-        rate_match = re.search(r"rate=(\\d+)", mime)
-        channel_match = re.search(r"channels=(\\d+)", mime)
+        rate_match = re.search(r"rate=(\d+)", mime)
+        channel_match = re.search(r"channels=(\d+)", mime)
         sample_rate = int(rate_match.group(1)) if rate_match else 24000
         channels = int(channel_match.group(1)) if channel_match else 1
         if not pcm or sample_rate < 8000 or sample_rate > 96000 or channels not in (1, 2):

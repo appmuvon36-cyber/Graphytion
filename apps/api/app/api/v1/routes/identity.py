@@ -507,7 +507,7 @@ async def delete_workspace(
 
 @router.get("/workspaces/{workspace_id}/members")
 async def list_members(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
-    await require_workspace(db, uid(claims), workspace_id)
+    await require_workspace(db, uid(claims), workspace_id, {"owner", "admin", "editor", "member"})
     rows = (
         (
             await db.execute(
@@ -607,8 +607,9 @@ async def update_member_role(
         )
     if payload.role == "owner":
         raise HTTPException(status_code=400, detail="Use the ownership transfer workflow")
-    if target["role"] == "admin" and (await require_workspace(db, actor, workspace_id)) != "owner":
-        raise HTTPException(status_code=403, detail="Only the owner can change an administrator")
+    actor_role = await require_workspace(db, actor, workspace_id)
+    if (target["role"] == "admin" or payload.role == "admin") and actor_role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can grant or change administrator access")
     await db.execute(
         text("update public.workspace_members set role=:role where id=:member"),
         {"role": payload.role, "member": member_id},
@@ -785,7 +786,7 @@ async def list_projects(
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    await require_workspace(db, uid(claims), workspace_id)
+    await require_workspace(db, uid(claims), workspace_id, {"owner", "admin", "editor", "member", "viewer"})
     rows = (
         (
             await db.execute(
@@ -878,7 +879,7 @@ async def get_project(project_id: UUID, claims: AuthenticatedClaims, db: AsyncSe
       select p.*,s.settings,s.version as settings_version
       from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
       left join public.project_settings s on s.project_id=p.id
-      where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
+      where p.id=:project and m.user_id=:actor and m.status='active' and m.role in ('owner','admin','editor','member','viewer') and p.status<>'deleted'
     """),
                 {"project": project_id, "actor": actor},
             )

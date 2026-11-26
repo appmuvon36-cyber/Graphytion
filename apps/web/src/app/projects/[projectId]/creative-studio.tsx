@@ -14,7 +14,7 @@ const button: React.CSSProperties = { border: 0, borderRadius: 9, padding: '10px
 type CreativeRunItem = ProductionRunApi;
 type RenderItem = RenderJobApi;
 type VoiceoverItem={id:string;scene_id?:string|null;provider_key:string;model_key:string;voice_key:string;language:string;status:string;asset_id?:string|null;error_code?:string|null;attempt_count:number};
-type SubtitleSegmentItem={id:string;segment_index:number;start_ms:number;end_ms:number;text:string;speaker?:string|null;word_timings?:Array<Record<string,unknown>>};
+type SubtitleSegmentItem={id:string;segment_index:number;start_ms:number;end_ms:number;text:string;speaker?:string|null;word_timings?:Array<Record<string,unknown>>;version?:number;style_config?:Record<string,unknown>;position_config?:Record<string,unknown>;alignment_metadata?:Record<string,unknown>;audio_asset_id?:string|null};
 type SubtitleTrackItem={id:string;language:string;format:'webvtt'|'srt';version:number;style_config:Record<string,unknown>;segments:SubtitleSegmentItem[]};
 type TimelineHistoryItem={id:string;version:number;compiled_hash:string;created_at:string;fps:number;width:number;height:number;duration_frames:number};
 
@@ -37,7 +37,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
   const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
-  const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
+  const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);\n  const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});\n  const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
   const [voiceText,setVoiceText]=useState('');
   const [voiceKey,setVoiceKey]=useState('alloy');
   const [voiceModel,setVoiceModel]=useState('tts-1');
@@ -232,6 +232,66 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     }catch(e){setError(e instanceof Error?e.message:'Voiceover request failed');}
     finally{setBusy(false);}
   }
+  function updateSubtitleDraft(segment:SubtitleSegmentItem,patch:Partial<{text:string;start_ms:number;end_ms:number}>) {
+    setSubtitleDrafts(current=>({...current,[segment.id]:{text:current[segment.id]?.text??segment.text,start_ms:current[segment.id]?.start_ms??segment.start_ms,end_ms:current[segment.id]?.end_ms??segment.end_ms,...patch}}));
+  }
+  async function saveSubtitleSegment(track:SubtitleTrackItem,segment:SubtitleSegmentItem) {
+    const draft=subtitleDrafts[segment.id]??{text:segment.text,start_ms:segment.start_ms,end_ms:segment.end_ms};
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments/'+segment.id,{
+        method:'PATCH',body:JSON.stringify(draft),
+      });
+      setSubtitleDrafts(current=>{const next={...current};delete next[segment.id];return next;});
+      setNotice('Subtitle segment v'+((segment.version??1)+1)+' saved.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment update failed');}
+    finally {setBusy(false);}
+  }
+  async function deleteSubtitleSegment(track:SubtitleTrackItem,segment:SubtitleSegmentItem) {
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments/'+segment.id,{method:'DELETE'});
+      setSelectedSubtitleSegments(current=>current.filter(id=>id!==segment.id));
+      setNotice('Subtitle segment deleted; its revision history is retained.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment delete failed');}
+    finally {setBusy(false);}
+  }
+  async function splitSubtitleSegment(track:SubtitleTrackItem,segment:SubtitleSegmentItem) {
+    const splitAt=Math.floor((segment.start_ms+segment.end_ms)/2);
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments/'+segment.id+'/split',{
+        method:'POST',body:JSON.stringify({split_at_ms:splitAt}),
+      });
+      setNotice('Subtitle segment split at '+(splitAt/1000).toFixed(2)+'s.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment split failed');}
+    finally {setBusy(false);}
+  }
+  async function mergeSelectedSubtitleSegments(track:SubtitleTrackItem) {
+    if(selectedSubtitleSegments.length<2)return;
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments/merge',{
+        method:'POST',body:JSON.stringify({segment_ids:selectedSubtitleSegments,separator:' '}),
+      });
+      setSelectedSubtitleSegments([]);setNotice('Selected subtitle segments merged.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment merge failed');}
+    finally {setBusy(false);}
+  }
+  async function reorderSubtitleSegment(track:SubtitleTrackItem,segment:SubtitleSegmentItem,direction:-1|1) {
+    const ids=track.segments.map(item=>item.id);const index=ids.indexOf(segment.id);const target=index+direction;
+    if(index<0||target<0||target>=ids.length)return;
+    [ids[index],ids[target]]=[ids[target],ids[index]];
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments/reorder',{
+        method:'PUT',body:JSON.stringify({segment_ids:ids}),
+      });
+      setNotice('Subtitle segment order updated.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment reorder failed');}
+    finally {setBusy(false);}
+  }
+
   async function importSubtitleTrack(event:React.FormEvent) {
     event.preventDefault();setBusy(true);setError('');
     try{
@@ -466,8 +526,34 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       </form>
       {subtitleTracks.map(track=><article key={track.id} style={{padding:10,border:'1px solid #edf0f5',borderRadius:9,marginTop:10}}>
         <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><div><strong>{track.language} · {track.format.toUpperCase()} · v{track.version}</strong><div style={{fontSize:12,color:'#68788e'}}>{track.segments.length} segments</div></div><div style={{display:'flex',gap:6}}><button type="button" onClick={()=>void exportSubtitleTrack(track)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Export</button><button type="button" disabled={!previewSnapshot} onClick={()=>attachSubtitleTrack(track)} style={button}>Attach to timeline</button></div></div>
-        {track.segments.slice(0,5).map(segment=><div key={segment.id} style={{padding:'6px 0',borderTop:'1px solid #edf0f5',fontSize:12}}><span style={{color:'#68788e'}}>{(segment.start_ms/1000).toFixed(2)}s–{(segment.end_ms/1000).toFixed(2)}s</span> · {segment.text}</div>)}
-        {track.segments.length>5&&<p style={{fontSize:11,color:'#68788e'}}>Showing first 5 segments. Export for complete track.</p>}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginTop:10}}>
+          <span style={{fontSize:11,color:'#68788e'}}>Segment editor · stable IDs · revision history</span>
+          <button type="button" disabled={busy||selectedSubtitleSegments.length<2} onClick={()=>void mergeSelectedSubtitleSegments(track)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Merge selected ({selectedSubtitleSegments.length})</button>
+        </div>
+        {track.segments.map(segment=>{
+          const draft=subtitleDrafts[segment.id]??{text:segment.text,start_ms:segment.start_ms,end_ms:segment.end_ms};
+          return <div key={segment.id} style={{padding:'10px 0',borderTop:'1px solid #edf0f5',display:'grid',gap:7}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+              <label style={{fontSize:11,color:'#68788e',display:'flex',alignItems:'center',gap:6}}>
+                <input type="checkbox" checked={selectedSubtitleSegments.includes(segment.id)} onChange={event=>setSelectedSubtitleSegments(current=>event.target.checked?[...current,segment.id]:current.filter(id=>id!==segment.id))}/>
+                #{segment.segment_index+1} · v{segment.version??1} · {segment.id.slice(0,8)}
+              </label>
+              <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                <button type="button" disabled={busy} onClick={()=>void reorderSubtitleSegment(track,segment,-1)} style={{...button,padding:'6px 9px',background:'#edf3f9',color:'#173f72'}}>↑</button>
+                <button type="button" disabled={busy} onClick={()=>void reorderSubtitleSegment(track,segment,1)} style={{...button,padding:'6px 9px',background:'#edf3f9',color:'#173f72'}}>↓</button>
+                <button type="button" disabled={busy} onClick={()=>void splitSubtitleSegment(track,segment)} style={{...button,padding:'6px 9px'}}>Split</button>
+                <button type="button" disabled={busy} onClick={()=>void saveSubtitleSegment(track,segment)} style={{...button,padding:'6px 9px'}}>Save</button>
+                <button type="button" disabled={busy} onClick={()=>void deleteSubtitleSegment(track,segment)} style={{...button,padding:'6px 9px',background:'#9f2d35'}}>Delete</button>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+              <label style={{fontSize:11,color:'#68788e'}}>Start (ms)<input type="number" min={0} value={draft.start_ms} onChange={event=>updateSubtitleDraft(segment,{start_ms:Number(event.target.value)})} style={field}/></label>
+              <label style={{fontSize:11,color:'#68788e'}}>End (ms)<input type="number" min={1} value={draft.end_ms} onChange={event=>updateSubtitleDraft(segment,{end_ms:Number(event.target.value)})} style={field}/></label>
+            </div>
+            <textarea aria-label={'Subtitle text '+segment.segment_index} rows={2} value={draft.text} onChange={event=>updateSubtitleDraft(segment,{text:event.target.value})} style={{...field,fontSize:12}}/>
+            <div style={{fontSize:10,color:'#68788e'}}>Word alignment: {segment.word_timings?.length??0} words · Audio asset: {segment.audio_asset_id?'linked':'not linked'}</div>
+          </div>;
+        })}
       </article>)}
       {subtitleTracks.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada subtitle track.</p>}
     </section>

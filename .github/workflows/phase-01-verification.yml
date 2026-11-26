@@ -85,9 +85,9 @@ jobs:
           pnpm --filter @graphytion/contracts typecheck
           pnpm --filter @graphytion/api-client typecheck
 
-      - name: Parse Phase 02 migration SQL
+      - name: Parse all versioned migration SQL
         run: |
-          uv run --no-project --with pglast==8.9 python -c "from pathlib import Path; from pglast import parse_sql; parse_sql(Path('supabase/migrations/202611260001_phase_02_identity_workspace_projects.sql').read_text()); print('Phase 02 migration SQL parsed successfully')"
+          uv run --no-project --with pglast==8.9 python -c "from pathlib import Path; from pglast import parse_sql; files=sorted(Path('supabase/migrations').glob('*.sql')); assert files, 'No migration files found'; [parse_sql(path.read_text()) for path in files]; print(f'Parsed {len(files)} migration files successfully')"
 
       - name: Python compile, lint and FastAPI import
         working-directory: apps/api

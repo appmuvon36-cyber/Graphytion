@@ -1,11 +1,16 @@
 from typing import Annotated, Any
+
 from fastapi import Depends, Header, HTTPException, status
+
 from app.core.security import verify_access_token
 from app.services.supabase_auth import supabase_auth
 
+
 async def current_claims(authorization: Annotated[str | None, Header()] = None) -> dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
+        )
     token = authorization.removeprefix("Bearer ").strip()
     claims = verify_access_token(token)
     # Check the live Supabase session as well as JWT claims.
@@ -16,7 +21,9 @@ async def current_claims(authorization: Annotated[str | None, Header()] = None) 
     claims["_access_token"] = token
     return claims
 
+
 AuthenticatedClaims = Annotated[dict[str, Any], Depends(current_claims)]
+
 
 def require_workspace_role(*allowed_roles: str):
     async def dependency(claims: AuthenticatedClaims) -> dict[str, Any]:
@@ -24,4 +31,5 @@ def require_workspace_role(*allowed_roles: str):
             raise HTTPException(status_code=401, detail="Authenticated subject required")
         claims["_required_workspace_roles"] = list(allowed_roles)
         return claims
+
     return dependency

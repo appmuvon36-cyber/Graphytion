@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     redis_url: SecretStr = Field(default=SecretStr("redis://localhost:6379/0"), repr=False)
     invitation_email_provider: str = "resend"
     resend_api_key: SecretStr | None = Field(default=None, repr=False)
+    resend_webhook_secret: SecretStr | None = Field(default=None, repr=False)
     invitation_from_email: str | None = None
     log_level: str = "INFO"
     internal_worker_token: SecretStr | None = Field(default=None, repr=False)
@@ -70,6 +71,10 @@ class Settings(BaseSettings):
     def resend_api_key_value(self) -> str | None:
         return self.resend_api_key.get_secret_value() if self.resend_api_key else None
 
+    @property
+    def resend_webhook_secret_value(self) -> str | None:
+        return self.resend_webhook_secret.get_secret_value() if self.resend_webhook_secret else None
+
     @model_validator(mode="after")
     def validate_runtime_configuration(self) -> "Settings":
         if self.app_env.lower() not in {"production", "prod"}:
@@ -84,6 +89,7 @@ class Settings(BaseSettings):
                 ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key_value),
                 ("BFF_SHARED_SECRET", self.bff_shared_secret_value),
                 ("RESEND_API_KEY", self.resend_api_key_value),
+                ("RESEND_WEBHOOK_SECRET", self.resend_webhook_secret_value),
                 ("INVITATION_FROM_EMAIL", self.invitation_from_email),
             )
             if not value

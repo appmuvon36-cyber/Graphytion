@@ -93,3 +93,22 @@ The Graphytion Supabase connector binding is available under the account that ow
 - Redis is still not provisioned. PostgreSQL polling fallback remains the durable execution path; Redis is optional for wake-up coordination.
 
 Phase 03 remains OPEN until FastAPI becomes healthy, worker private DNS/authentication succeeds, and one real media job plus one real render job persist validated private artifacts and complete through the customer flow.
+
+
+## API integration continuation — 2026-11-27
+
+Execution focus is endpoint and API integration; no synthetic production jobs, TTS calls, render calls, staging, or real end-to-end tests were run.
+
+- Customer Studio now exposes the existing Gemini TTS provider adapter alongside OpenAI. Gemini is the default selection and uses the repository's configured `gemini-3.8-flash-lite-tts` model and supported prebuilt voice list. The selected provider/model/voice are passed to the existing FastAPI voiceover endpoint.
+- Render idempotency now compares the full immutable request identity: snapshot hash, render profile, resolved render configuration, and composition version. Reusing one key for a materially different render request returns HTTP 409 rather than replaying an incompatible job.
+- Voiceover idempotency now compares text, provider, model, voice, language, scene, subtitle segment, and generation configuration. Reusing one key for a different voiceover request returns HTTP 409.
+- Existing FastAPI route groups remain mounted through the versioned router: identity/workspaces/projects, creative production, assets, timeline, voiceover, subtitles, render/worker lifecycle, platform administration, webhooks, health/readiness, and system contract.
+- Customer Studio uses the same-origin Next.js BFF; the BFF forwards the HttpOnly session to the FastAPI base URL configured with the `/api/v1` prefix. Browser code does not receive or forward bearer tokens directly.
+- No endpoint or worker runtime status is upgraded to RUNNING/VERIFIED by this source-only integration work. Production API activation still depends on the dedicated `graphytion_api` LOGIN/password and matching Railway `DATABASE_URL`; Resend remains required for live invitation delivery. Redis remains optional for durable correctness because PostgreSQL polling is the fallback.
+
+Latest source commits for this continuation:
+- `fb7a85959e9deffb6a1d99cab583df949923de26` — expose Gemini/OpenAI provider selection in Customer Studio.
+- `525efea7360656e9761f2a4042402daa0dabbdf0` — validate full render idempotency payload.
+- `c5154f57ea9748daa2c536fe7a974caf6723be66` — validate full voiceover idempotency payload.
+
+Phase 03 remains OPEN. This continuation deliberately does not claim runtime completion or end-to-end verification.

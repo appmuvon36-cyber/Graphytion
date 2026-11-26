@@ -20,9 +20,13 @@ function config() {
   if (!apiBase || !appUrl || !bffSecret) {
     throw new Error('BFF runtime requires GRAPHYTION_API_URL, APP_PUBLIC_URL and GRAPHYTION_BFF_SHARED_SECRET');
   }
+  const apiUrl = new URL(apiBase);
   const origin = new URL(appUrl).origin;
-  if (production && !origin.startsWith('https://')) {
-    throw new Error('APP_PUBLIC_URL must use HTTPS in production');
+  if (production && (!origin.startsWith('https://') || !apiUrl.origin.startsWith('https://'))) {
+    throw new Error('APP_PUBLIC_URL and GRAPHYTION_API_URL must use HTTPS in production');
+  }
+  if (bffSecret.length < 32) {
+    throw new Error('GRAPHYTION_BFF_SHARED_SECRET must contain at least 32 characters');
   }
   return { apiBase, origin, bffSecret };
 }

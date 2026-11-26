@@ -1,5 +1,33 @@
 'use client';
+
 import React from 'react';
 import {Player} from '@remotion/player';
-import {GraphytionComposition,type GraphytionCompositionProps} from './video-composition';
-export function GraphytionPlayer({title,background}:GraphytionCompositionProps){return <Player component={GraphytionComposition} inputProps={{title,background}} durationInFrames={150} fps={30} compositionWidth={1920} compositionHeight={1080} controls autoPlay={false} loop={false}/>;}
+import {
+  TimelineComposition,
+  type TimelineCompositionProps,
+  type ResolvedCompositionAssets,
+} from '@graphytion/motion-components';
+
+export function GraphytionPlayer({
+  snapshot,
+  resolvedAssets={},
+}:{
+  snapshot:TimelineCompositionProps['snapshot'];
+  resolvedAssets?:ResolvedCompositionAssets;
+}) {
+  return (
+    <div style={{width:'100%',aspectRatio:`${snapshot.width} / ${snapshot.height}`,background:'#101828',overflow:'hidden'}}>
+      <Player
+        component={TimelineComposition}
+        inputProps={{snapshot,resolvedAssets}}
+        durationInFrames={snapshot.durationFrames}
+        fps={snapshot.fps}
+        compositionWidth={snapshot.width}
+        compositionHeight={snapshot.height}
+        controls
+        autoPlay={false}
+        loop={false}
+      />
+    </div>
+  );
+}

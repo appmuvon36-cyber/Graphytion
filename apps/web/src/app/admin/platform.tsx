@@ -217,6 +217,18 @@ export default function PlatformAdmin() {
     catch(cause){setError(cause instanceof Error?cause.message:'Profile archive failed');}
     finally{setBusy(false);}
   }
+  async function retryOperationalJob(kind:'render'|'media', jobId:string) {
+    const label=kind==='render'?'render':'voice-over';
+    if(!window.confirm('Queue a new attempt for this failed '+label+' job?'))return;
+    setBusy(true);setError('');setNotice('');
+    try{
+      await request('/admin/'+(kind==='render'?'render-jobs':'media-jobs')+'/'+jobId+'/retry',{method:'POST'});
+      setNotice('Job queued for retry. PostgreSQL remains the durable queue source.');
+      await load();
+    }catch(cause){setError(cause instanceof Error?cause.message:'Job retry failed');}
+    finally{setBusy(false);}
+  }
+
   async function toggleMotionComponent(item:MotionControl) {
     const reason=window.prompt('Reason for changing component availability',item.enabled?'Temporarily disabled by platform admin':'Re-enabled after review');
     if(!reason)return;
@@ -296,7 +308,7 @@ export default function PlatformAdmin() {
         <h2>Voice-over / TTS worker operations</h2>
         {adminMediaJobs.map(job=><div key={job.id} style={{padding:'9px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
           <div><strong>{job.project_name} · {job.status}</strong><div style={{fontSize:12,color:'#68788e'}}>{job.provider_key}/{job.model_key} · {job.voice_key} · attempt {job.attempt_count}/{job.max_attempts} · {job.error_code||job.asset_id||job.id}</div></div>
-          <div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'not claimed'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>
+          <div><div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'not claimed'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>{['failed','provider_unavailable'].includes(job.status)&&<button disabled={busy} onClick={()=>void retryOperationalJob('media',job.id)} style={{...button,marginTop:6}}>Retry job</button>}</div>
         </div>)}
       </section>
 <section style={panel}>
@@ -311,7 +323,7 @@ export default function PlatformAdmin() {
         <h2>Remotion render worker operations</h2>
         {adminRenderJobs.map(job=><div key={job.id} style={{padding:'9px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
           <div><strong>{job.project_name} · {job.status} · {job.progress_percent}%</strong><div style={{fontSize:12,color:'#68788e'}}>{job.workspace_name} · {job.render_profile||'profile unavailable'} · attempt {job.attempt_count} · {job.latest_attempt_status||'not claimed'}</div></div>
-          <div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'queued'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>
+          <div><div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'queued'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>{job.status==='failed'&&<button disabled={busy} onClick={()=>void retryOperationalJob('render',job.id)} style={{...button,marginTop:6}}>Retry job</button>}</div>
         </div>)}
       </section>
       <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div>)}

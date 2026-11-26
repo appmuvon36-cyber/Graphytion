@@ -84,7 +84,6 @@ async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncS
  row=(await db.execute(text("select id,project_id,workspace_id,status from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
  if not row:raise HTTPException(404,"Voiceover job not found")
  await _scope(db,row["project_id"],actor,"project.update")
- if not provider.configured():raise HTTPException(409,"TTS provider credentials are not configured")
  if row["status"] not in {"provider_unavailable","failed"}:raise HTTPException(409,"Only unavailable or failed voiceover jobs can be retried")
  await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null where id=:id"),{"id":voiceover_id})
  await db.commit()

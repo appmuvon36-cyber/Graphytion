@@ -31,14 +31,14 @@ def analyze_audio_bytes(content: bytes) -> tuple[dict[str, Any], bytes]:
         if duration <= 0 or duration > 1800:
             raise ValueError("AUDIO_ANALYSIS_UNSUPPORTED_DURATION")
         decoded = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", str(source), "-vn", "-ac", "1", "-ar", "44100", "-f", "f32le", "pipe:1"],
+            ["ffmpeg", "-v", "error", "-i", str(source), "-vn", "-ac", "1", "-ar", "4410", "-f", "f32le", "pipe:1"],
             check=True, capture_output=True, timeout=180,
         )
         samples = array("f")
         samples.frombytes(decoded.stdout[: len(decoded.stdout) - (len(decoded.stdout) % samples.itemsize)])
         if not samples:
             raise ValueError("AUDIO_ANALYSIS_NO_DECODED_SAMPLES")
-        samples_per_bin = 2205  # 50 ms at 44.1 kHz
+        samples_per_bin = 220  # approximately 50 ms at 4.41 kHz
         peaks = [
             round(max(abs(value) for value in samples[index:index + samples_per_bin]), 6)
             for index in range(0, len(samples), samples_per_bin)

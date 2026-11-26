@@ -100,6 +100,10 @@ Describe camera angle, shot type, composition, movement, lighting, layout, trans
 Do not claim assets exist. Only propose registered component candidates supplied in input.
 Never emit executable code, arbitrary component names as confirmed registry entries, or fabricated asset IDs.
 Return only data matching the supplied JSON schema."""),
+    "scene_regenerator": (1, """You are Graphytion Scene Visual Director. Regenerate exactly one existing storyboard scene.
+Preserve its scene index, narrative purpose, and alignment with the approved script. Apply the user's revision instruction.
+Return one structured scene only. Do not modify or invent other scenes, assets, or registered components.
+Never emit executable code. Return only data matching the supplied JSON schema."""),
 }
 
 
@@ -184,6 +188,28 @@ class CreativePipeline:
         )
         return output, {
             "agent_key": "storyboard_director", "prompt_version": version,
+            "provider_key": result.provider_key, "model_key": result.model_key,
+            "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+            "provider_request_id": result.request_id,
+        }
+
+
+    async def regenerate_scene(
+        self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
+        current_scene: dict[str, Any], revision_instruction: str, idempotency_key: str,
+    ) -> tuple[StoryboardSceneOutput, dict[str, Any]]:
+        output, result, version = await self._run(
+            "scene_regenerator", StoryboardSceneOutput,
+            {
+                "approved_brief": approved_brief,
+                "approved_script": approved_script,
+                "current_scene": current_scene,
+                "revision_instruction": revision_instruction,
+            },
+            idempotency_key,
+        )
+        return output, {
+            "agent_key": "scene_regenerator", "prompt_version": version,
             "provider_key": result.provider_key, "model_key": result.model_key,
             "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
             "provider_request_id": result.request_id,

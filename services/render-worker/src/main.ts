@@ -160,6 +160,21 @@ async function processJob(jobId?: string): Promise<boolean> {
     const audio = metadata.streams?.find(stream => stream.codec_type === 'audio');
     const expectedAudio = ({aac:'aac',opus:'opus'} as Record<string,string>)[claimed.render_config.audio_codec ?? 'aac'];
     if (!validContainer || video?.codec_name !== expectedCodec || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05 || (claimed.render_config.audio_codec === 'none' && audio) || (claimed.render_config.audio_codec !== 'none' && audio && audio.codec_name !== expectedAudio)) throw new Error('Rendered media metadata does not match the immutable composition snapshot and profile');
+    if (claimed.render_config.preview_enabled !== false) {
+      const previewPath = join(directory, claimed.id + '.preview.mp4');
+      await execFile('ffmpeg', [
+        '-y', '-i', outputPath, '-vf', 'scale=trunc(iw/2/2)*2:trunc(ih/2/2)*2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
+        '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', previewPath,
+      ], {timeout: renderTimeoutMs, maxBuffer: 2*1024*1024});
+      const previewBytes = await readFile(previewPath);
+      const previewForm = new FormData();
+      previewForm.set('file', new Blob([Uint8Array.from(previewBytes)], {type:'video/mp4'}), 'preview.mp4');
+      await api('internal/render-jobs/' + claimed.id + '/artifacts?artifact_type=preview&worker_id=' + encodeURIComponent(workerId), {
+        method: 'POST',
+        body: previewForm,
+      });
+    }
     const outputStat = await stat(outputPath);
     if (outputStat.size < 12 || outputStat.size > 512 * 1024 * 1024) throw new Error('Rendered output size is outside the supported range');
     const bytes = await readFile(outputPath);

@@ -22,7 +22,7 @@ router = APIRouter()
 permissions = WorkspacePermissionResolver()
 RENDER_STREAM = "graphytion:render:jobs"
 RENDER_BUCKET = "render-artifacts"
-MAX_RENDER_BYTES = 1024 * 1024 * 1024
+MAX_RENDER_BYTES = 512 * 1024 * 1024
 ALLOWED_COMPONENTS = {"core.title-card.v1"}
 
 
@@ -283,12 +283,12 @@ async def complete_render_artifact(
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     content = await file.read(MAX_RENDER_BYTES + 1)
     if len(content) < 12 or len(content) > MAX_RENDER_BYTES or content[4:8] != b"ftyp":
-        raise HTTPException(status_code=415, detail="Render output must be a valid MP4 file under 1 GB")
+        raise HTTPException(status_code=415, detail="Render output must be a valid MP4 file under 512 MB")
     digest = hashlib.sha256(content).hexdigest()
     object_path = f"{row['workspace_id']}/{row['project_id']}/{render_job_id}/output.mp4"
     try:
         await SupabaseStorage().upload(
-            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type="video/mp4", upsert=True
+            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type="video/mp4", upsert=True, timeout_seconds=600
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Render artifact storage upload failed") from exc

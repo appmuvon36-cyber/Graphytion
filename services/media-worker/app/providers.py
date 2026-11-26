@@ -121,21 +121,30 @@ class GeminiTTSProvider:
             raise RuntimeError("GEMINI_TTS_AUDIO_MISSING")
         inline = audio_part["inlineData"]
         pcm = base64.b64decode(inline["data"], validate=True)
-        mime = inline.get("mimeType", "audio/L16;codec=pcm;rate=24000")
-        rate_match = re.search(r"rate=(\d+)", mime)
-        channel_match = re.search(r"channels=(\d+)", mime)
-        sample_rate = int(rate_match.group(1)) if rate_match else 24000
-        channels = int(channel_match.group(1)) if channel_match else 1
-        if not pcm or sample_rate < 8000 or sample_rate > 96000 or channels not in (1, 2):
-            raise RuntimeError("GEMINI_TTS_PCM_INVALID")
-        result = subprocess.run(
-            [
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le",
-                "-ar", str(sample_rate), "-ac", str(channels), "-i", "pipe:0",
-                "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
-            ],
-            input=pcm, capture_output=True, check=True, timeout=120,
-        )
+        mime = inline.get("mimeType", "audio/wav")
+        if pcm.startswith(b"RIFF") and pcm[8:12] == b"WAVE":
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+                    "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
+                ],
+                input=pcm, capture_output=True, check=True, timeout=120,
+            )
+        else:
+            rate_match = re.search(r"rate=(\\d+)", mime)
+            channel_match = re.search(r"channels=(\\d+)", mime)
+            sample_rate = int(rate_match.group(1)) if rate_match else 24000
+            channels = int(channel_match.group(1)) if channel_match else 1
+            if not pcm or sample_rate < 8000 or sample_rate > 96000 or channels not in (1, 2):
+                raise RuntimeError("GEMINI_TTS_PCM_INVALID")
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le",
+                    "-ar", str(sample_rate), "-ac", str(channels), "-i", "pipe:0",
+                    "-codec:a", "libmp3lame", "-b:a", "192k", "-f", "mp3", "pipe:1",
+                ],
+                input=pcm, capture_output=True, check=True, timeout=120,
+            )
         audio = result.stdout
         if not (audio.startswith(b"ID3") or (len(audio) > 1 and audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0)):
             raise RuntimeError("GEMINI_TTS_MP3_CONVERSION_INVALID")

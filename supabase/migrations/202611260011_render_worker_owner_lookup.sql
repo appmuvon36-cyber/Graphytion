@@ -10,7 +10,7 @@ set search_path = ''
 as $$
   select requested_by
   from public.render_jobs
-  where id=p_job_id and worker_id=p_worker_id and status='rendering'
+  where id=p_job_id and worker_id=p_worker_id and status in ('rendering','cancel_requested')
   limit 1;
 $$;
 

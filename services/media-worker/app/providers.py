@@ -12,7 +12,7 @@ class TTSProvider(Protocol):
     def configured(self) -> bool: ...
 
     async def synthesize(
-        self, *, text: str, voice: str, model: str, language: str = "id-ID"
+        self, *, text: str, voice: str, model: str, language: str = "id-ID", style: str | None = None
     ) -> tuple[bytes, str]: ...
 
     async def align_words(
@@ -31,7 +31,7 @@ class OpenAITTSProvider:
         return bool(self.api_key)
 
     async def synthesize(
-        self, *, text: str, voice: str, model: str, language: str = "id-ID"
+        self, *, text: str, voice: str, model: str, language: str = "id-ID", style: str | None = None
     ) -> tuple[bytes, str]:
         if voice not in self.VOICES:
             raise ValueError("TTS_VOICE_UNSUPPORTED")
@@ -89,7 +89,7 @@ class GeminiTTSProvider:
         return bool(self.api_key)
 
     async def synthesize(
-        self, *, text: str, voice: str, model: str, language: str = "id-ID"
+        self, *, text: str, voice: str, model: str, language: str = "id-ID", style: str | None = None
     ) -> tuple[bytes, str]:
         if voice not in self.VOICES:
             raise ValueError("GEMINI_TTS_VOICE_UNSUPPORTED")
@@ -99,7 +99,7 @@ class GeminiTTSProvider:
             raise ValueError("GEMINI_TTS_MODEL_INVALID")
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
-            "contents": [{"parts": [{"text": text}]}],
+            "contents": [{"role": "user", "parts": [{"text": text, **({"speechMetadata": {"style": style}} if style else {})}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": {

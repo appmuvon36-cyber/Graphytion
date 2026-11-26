@@ -221,19 +221,19 @@ with check (public.graphytion_workspace_role(id) in ('owner','admin') and owner_
 
 drop policy if exists workspace_members_select_member on public.workspace_members;
 create policy workspace_members_select_member on public.workspace_members for select to authenticated
-using (public.graphytion_is_workspace_member(workspace_id));
+using (public.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member'));
 -- Membership mutations are server-only. No authenticated direct-write policy is granted.
 
 -- Invitation mutations are server-only; FastAPI enforces the invitation lifecycle.
 
 drop policy if exists video_projects_member_select on public.video_projects;
 create policy video_projects_member_select on public.video_projects for select to authenticated
-using (public.graphytion_is_workspace_member(workspace_id) and status <> 'deleted');
+using (public.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member','viewer') and status <> 'deleted');
 -- Project mutations are server-only; API permission checks remain authoritative.
 
 drop policy if exists project_settings_member_select on public.project_settings;
 create policy project_settings_member_select on public.project_settings for select to authenticated
-using (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_is_workspace_member(p.workspace_id)));
+using (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_workspace_role(p.workspace_id) in ('owner','admin','editor','member','viewer')));
 -- Project settings mutations are server-only.
 
 drop policy if exists audit_logs_workspace_read on public.audit_logs;

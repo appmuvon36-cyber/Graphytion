@@ -10,6 +10,12 @@
 
 Redis has been removed from the production architecture. Render, media and creative jobs are persisted in Supabase PostgreSQL and claimed directly by workers through FastAPI using transactional leases, heartbeats and expired-lease recovery. No Redis service or `REDIS_URL` is required.
 
+## Railway service consolidation
+
+- Super Admin UI is now served by the existing Web service at `/admin` and `/admin/workspaces`; the standalone `apps/admin` workspace and Railway Admin service have been removed.
+- The Web BFF uses the private Railway API endpoint `http://graphytionapi.railway.internal:8000/api/v1`. Production BFF validation permits HTTP only for Railway's private `.railway.internal` hostname; public API endpoints remain HTTPS-only.
+- Dedicated `@graphytion/media-worker` Railway service has been created and its Docker deployment completed successfully. Runtime polling currently cannot resolve the API private hostname because the FastAPI service remains staged and not deployed. The TTS provider credential `OPENAI_API_KEY` is also not configured on the worker yet.
+
 ## Implemented in the repository
 
 ### API runtime and database boundary

@@ -19,6 +19,13 @@ from app.services.queue_notifications import notify_worker
 router = APIRouter()
 
 
+class RenderSettingsInput(BaseModel):
+    max_concurrent_jobs: int = Field(ge=1, le=8)
+    lease_seconds: int = Field(ge=60, le=3600)
+    max_attempts: int = Field(ge=1, le=10)
+    max_output_bytes: int = Field(ge=1048576, le=2147483648)
+
+
 def _actor(claims: dict[str, Any]) -> UUID:
     try:
         return UUID(str(claims["sub"]))
@@ -509,6 +516,61 @@ class RenderProfileInput(BaseModel):
         if self.container=="webm" and (self.video_codec not in {"vp8","vp9"} or self.audio_codec not in {"opus","none"}):
             raise HTTPException(422,"WebM supports VP8/VP9 and Opus/no audio")
         return self
+
+
+@router.get("/render-settings")
+async def admin_get_render_settings(claims: AuthenticatedClaims, db: AsyncSession = DbSession):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        select singleton_id,max_concurrent_jobs,lease_seconds,max_attempts,
+               max_output_bytes,updated_by,updated_at
+        from public.platform_render_settings
+        where singleton_id=1
+    """))).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=503, detail="Global render settings are not initialized")
+    return {"data": dict(row)}
+
+
+@router.patch("/render-settings")
+async def admin_update_render_settings(
+    payload: RenderSettingsInput,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        update public.platform_render_settings
+        set max_concurrent_jobs=:concurrency,
+            lease_seconds=:lease,
+            max_attempts=:attempts,
+            max_output_bytes=:max_bytes,
+            updated_by=:actor,
+            updated_at=now()
+        where singleton_id=1
+        returning singleton_id,max_concurrent_jobs,lease_seconds,max_attempts,
+                  max_output_bytes,updated_by,updated_at
+    """), {
+        "concurrency": payload.max_concurrent_jobs,
+        "lease": payload.lease_seconds,
+        "attempts": payload.max_attempts,
+        "max_bytes": payload.max_output_bytes,
+        "actor": actor,
+    })).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=503, detail="Global render settings are not initialized")
+    await _audit(db, request, actor, "platform.render_settings.updated", "render_settings",
+                 UUID(int=1), {
+                     "max_concurrent_jobs": payload.max_concurrent_jobs,
+                     "lease_seconds": payload.lease_seconds,
+                     "max_attempts": payload.max_attempts,
+                     "max_output_bytes": payload.max_output_bytes,
+                 })
+    await db.commit()
+    return {"data": dict(row)}
 
 
 @router.get("/render-profiles")

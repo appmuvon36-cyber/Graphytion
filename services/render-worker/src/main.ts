@@ -92,16 +92,20 @@ async function processJob(jobId?: string): Promise<boolean> {
       outputLocation: outputPath,
       inputProps,
       cancelSignal,
-      onProgress: async ({progress}) => {
+      onProgress: ({progress}) => {
         currentProgress = Math.min(99.9, Math.max(0, progress * 100));
         const now = Date.now();
         if (progress >= 1 || now - lastProgressAt >= 5000) {
           lastProgressAt = now;
-          const update = await api<{cancel_requested?: boolean}>(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
+          void api<{cancel_requested?: boolean}>(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
             method: 'PATCH',
-            body: JSON.stringify({progress_percent: Math.min(99.9, Math.max(0, progress * 100))}),
+            body: JSON.stringify({progress_percent: currentProgress}),
+          }).then(update => {
+            if (update.cancel_requested) cancelRender();
+          }).catch(error => {
+            console.error('render_progress_update_failed', {render_job_id: claimed.id, error});
+            cancelRender();
           });
-          if (update.cancel_requested) cancelRender();
         }
       },
     });

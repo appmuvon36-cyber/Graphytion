@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, NAMESPACE_URL, uuid5
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -17,19 +17,21 @@ from app.core.database import set_rls_subject
 from app.core.redis import redis_client
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
+from app.services.composition_validation import validate_snapshot
+from app.services.composition_assets import collect_asset_ids, resolve_project_assets
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
 RENDER_STREAM = "graphytion:render:jobs"
 RENDER_BUCKET = "render-artifacts"
 MAX_RENDER_BYTES = 512 * 1024 * 1024
-ALLOWED_COMPONENTS = {"core.title-card.v1"}
+ALLOWED_COMPONENTS = {"core.title-card.v1","visual.image.v1","visual.video.v1","visual.shape.v1","text.basic.v1","data.chart.v1","audio.clip.v1","text.subtitle.v1"}
 
 
 class RenderCreate(BaseModel):
     snapshot: dict[str, Any]
-    codec: str = Field(default="h264", pattern=r"^h264$")
-    composition_version: str = Field(default="1.1.0", min_length=1, max_length=32)
+    render_profile_id: UUID | None = None
+    composition_version: str = Field(default="2.0.0", min_length=1, max_length=32)
 
 
 class RenderProgress(BaseModel):
@@ -59,51 +61,12 @@ async def _project_workspace(db: AsyncSession, project_id: UUID, actor: UUID, pe
     await permissions.require_permission(
         session=db, user_id=str(actor), workspace_id=str(workspace_id), permission=permission
     )
+    await set_rls_subject(db,str(actor))
     return workspace_id
 
 
 def _validate_snapshot(snapshot: dict[str, Any]) -> str:
-    required = {"version", "fps", "width", "height", "durationFrames", "clips"}
-    if not required.issubset(snapshot):
-        raise HTTPException(status_code=422, detail="Timeline snapshot is missing required fields")
-    if not isinstance(snapshot.get("version"), int) or snapshot["version"] < 1:
-        raise HTTPException(status_code=422, detail="Invalid timeline schema version")
-    fps, width, height, duration = (
-        snapshot.get("fps"), snapshot.get("width"), snapshot.get("height"), snapshot.get("durationFrames")
-    )
-    if not isinstance(fps, int) or not 1 <= fps <= 120:
-        raise HTTPException(status_code=422, detail="Unsupported timeline FPS")
-    if not isinstance(width, int) or not 320 <= width <= 7680:
-        raise HTTPException(status_code=422, detail="Invalid timeline width")
-    if not isinstance(height, int) or not 240 <= height <= 4320:
-        raise HTTPException(status_code=422, detail="Invalid timeline height")
-    if not isinstance(duration, int) or not 1 <= duration <= fps * 60 * 30:
-        raise HTTPException(status_code=422, detail="Timeline duration exceeds 30 minutes")
-    clips = snapshot.get("clips")
-    if not isinstance(clips, list) or len(clips) > 500:
-        raise HTTPException(status_code=422, detail="Timeline clips must be a list of at most 500 items")
-    clip_ids: set[str] = set()
-    for clip in clips:
-        if not isinstance(clip, dict):
-            raise HTTPException(status_code=422, detail="Invalid timeline clip")
-        clip_id = clip.get("id")
-        start = clip.get("startFrame")
-        length = clip.get("durationFrames")
-        if not isinstance(clip_id, str) or not clip_id or clip_id in clip_ids:
-            raise HTTPException(status_code=422, detail="Timeline clip IDs must be unique")
-        clip_ids.add(clip_id)
-        if not isinstance(start, int) or start < 0 or not isinstance(length, int) or length < 1 or start + length > duration:
-            raise HTTPException(status_code=422, detail="Timeline clip frame range is invalid")
-        component = clip.get("componentKey")
-        if component is not None and (
-            not isinstance(component, str) or component not in ALLOWED_COMPONENTS
-        ):
-            raise HTTPException(status_code=422, detail="Timeline contains a non-allowlisted component")
-        if not isinstance(clip.get("props", {}), dict):
-            raise HTTPException(status_code=422, detail="Timeline component props must be an object")
-    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
+    return validate_snapshot(snapshot)
 
 def _require_worker(request: Request) -> None:
     configured = settings.internal_worker_token.get_secret_value() if settings.internal_worker_token else ""
@@ -136,33 +99,34 @@ async def create_render(
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(status_code=400, detail="Idempotency-Key header must contain 16-128 characters")
     snapshot = dict(payload.snapshot)
+    snapshot.pop("contentHash", None)
     timeline_hash = _validate_snapshot(snapshot)
     snapshot["contentHash"] = timeline_hash
-    row = (await db.execute(text("""
-        insert into public.render_jobs(
-            workspace_id,project_id,requested_by,composition_id,composition_version,
-            timeline_snapshot,timeline_hash,render_config,idempotency_key
-        ) values (
-            :workspace,:project,:actor,'GraphytionTimeline',:version,
-            cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key
-        )
-        on conflict (workspace_id,idempotency_key) do nothing returning id,status
-    """), {
-        "workspace": workspace_id, "project": project_id, "actor": actor,
-        "version": payload.composition_version,
-        "snapshot": json.dumps(snapshot, ensure_ascii=False), "hash": timeline_hash,
-        "config": json.dumps({"codec": payload.codec, "format": "mp4"}),
-        "key": idempotency_key,
-    })).mappings().first()
+    component_keys = list({clip["componentKey"] for clip in snapshot["clips"]})
+    component_rows = (await db.execute(text("select component_key,component_version from public.motion_component_controls where enabled=true and component_key=any(cast(:keys as text[]))"), {"keys":component_keys})).mappings().all()
+    enabled = {r["component_key"]:r["component_version"] for r in component_rows}
+    for clip in snapshot["clips"]:
+        if enabled.get(clip["componentKey"]) != clip["componentVersion"]:
+            raise HTTPException(422, detail=f"Motion component {clip['componentKey']} is disabled or unsupported")
+    asset_ids = collect_asset_ids(snapshot)
+    await resolve_project_assets(db, project_id=project_id, workspace_id=workspace_id, asset_ids=asset_ids, expires_in=300, snapshot=snapshot)
+    if payload.render_profile_id:
+        profile = (await db.execute(text("select * from public.render_profiles where id=:id and is_archived=false and (scope='global' or (scope='workspace' and workspace_id=:workspace) or (scope='project' and project_id=:project))"), {"id":payload.render_profile_id,"workspace":workspace_id,"project":project_id})).mappings().first()
+    else:
+        profile = (await db.execute(text("select * from public.render_profiles where scope='global' and is_archived=false and width=:width and height=:height and fps=:fps order by is_default desc,priority desc,name limit 1"), {"width":snapshot["width"],"height":snapshot["height"],"fps":snapshot["fps"]})).mappings().first()
+    if profile is None:
+        raise HTTPException(422, detail="No active render profile matches this composition")
+    if (profile["width"],profile["height"],profile["fps"]) != (snapshot["width"],snapshot["height"],snapshot["fps"]):
+        raise HTTPException(422, detail="Render profile resolution and FPS must match the immutable composition snapshot")
+    render_config = {"codec":profile["video_codec"],"format":profile["container"],"video_crf":profile["video_crf"],"video_bitrate":profile["video_bitrate"],"audio_codec":profile["audio_codec"],"audio_bitrate":profile["audio_bitrate"],"concurrency":profile["render_concurrency"],"priority":profile["priority"],"thumbnail_enabled":profile["thumbnail_enabled"],"preview_enabled":profile["preview_enabled"],"profile_key":profile["profile_key"],"profile_version":profile["version"]}
+    timeline_id = await db.scalar(text("select id from public.video_timelines where project_id=:project and compiled_hash=:hash order by version desc limit 1"), {"project":project_id,"hash":timeline_hash})
+    row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id})).mappings().first()
     if row is None:
-        existing = (await db.execute(text("""
-            select id,status,timeline_hash from public.render_jobs
-            where workspace_id=:workspace and idempotency_key=:key
-        """), {"workspace": workspace_id, "key": idempotency_key})).mappings().first()
+        existing = (await db.execute(text("select id,status,timeline_hash from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
         if existing is None or existing["timeline_hash"] != timeline_hash:
-            raise HTTPException(status_code=409, detail="Idempotency-Key was used for a different render snapshot")
+            raise HTTPException(409, detail="Idempotency-Key was used for a different render snapshot")
         await db.rollback()
-        return {"data": {"render_job_id": str(existing["id"]), "status": existing["status"], "replayed": True}}
+        return {"data":{"render_job_id":str(existing["id"]),"status":existing["status"],"replayed":True}}
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values (:actor,:workspace,'render.queued','render_job',:job,:request_id)
@@ -241,13 +205,15 @@ async def claim_render_job(
         await db.rollback()
         return {"data": None}
     await set_rls_subject(db, str(row["requested_by"]))
+    resolved_assets = await resolve_project_assets(db, project_id=row["project_id"], workspace_id=row["workspace_id"], asset_ids=collect_asset_ids(dict(row["timeline_snapshot"])), expires_in=3600, snapshot=dict(row["timeline_snapshot"]))
+    await db.execute(text("insert into public.render_attempts(render_job_id,attempt_number,worker_id,status) values(:job,:attempt,:worker,'claimed') on conflict(render_job_id,attempt_number) do update set worker_id=excluded.worker_id,status='claimed',started_at=now(),ended_at=null"), {"job":row["id"],"attempt":row["attempt_count"],"worker":worker_id})
     await db.commit()
     return {"data": {
         "id": str(row["id"]), "workspace_id": str(row["workspace_id"]),
         "project_id": str(row["project_id"]), "requested_by": str(row["requested_by"]),
         "composition_id": row["composition_id"], "composition_version": row["composition_version"],
         "timeline_snapshot": row["timeline_snapshot"], "timeline_hash": row["timeline_hash"],
-        "render_config": row["render_config"], "attempt_count": row["attempt_count"],
+        "render_config": row["render_config"], "resolved_assets":resolved_assets, "attempt_count": row["attempt_count"],
     }}
 
 
@@ -279,6 +245,7 @@ async def update_render_progress(
         set progress_percent=:progress,lease_expires_at=now()+interval '5 minutes'
         where id=:job and worker_id=:worker and status='rendering'
     """), {"progress": payload.progress_percent, "job": render_job_id, "worker": worker_id})
+    await db.execute(text("update public.render_attempts set status='rendering',diagnostics=jsonb_build_object('progress_percent',:progress) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"progress":payload.progress_percent,"job":render_job_id})
     await db.commit()
     return {"data": {"render_job_id": str(render_job_id), "progress_percent": payload.progress_percent, "cancel_requested": False}}
 
@@ -299,19 +266,24 @@ async def complete_render_artifact(
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
-        select id,workspace_id,project_id,requested_by,worker_id,status
+        select id,workspace_id,project_id,requested_by,worker_id,status,render_config
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     content = await file.read(MAX_RENDER_BYTES + 1)
-    if len(content) < 12 or len(content) > MAX_RENDER_BYTES or content[4:8] != b"ftyp":
-        raise HTTPException(status_code=415, detail="Render output must be a valid MP4 file under 512 MB")
+    container = row["render_config"].get("format","mp4")
+    is_mp4 = len(content)>=12 and content[4:8]==b"ftyp"
+    is_webm = len(content)>=4 and content[:4]==bytes.fromhex("1a45dfa3")
+    if len(content)<12 or len(content)>MAX_RENDER_BYTES or not ((container=="mp4" and is_mp4) or (container=="webm" and is_webm)):
+        raise HTTPException(status_code=415, detail="Render output does not match its persisted container profile")
+    mime_type = "video/webm" if container=="webm" else "video/mp4"
+    extension = "webm" if container=="webm" else "mp4"
     digest = hashlib.sha256(content).hexdigest()
-    object_path = f"{row['workspace_id']}/{row['project_id']}/{render_job_id}/output.mp4"
+    object_path = f"{row['workspace_id']}/{row['project_id']}/{render_job_id}/output.{extension}"
     try:
         await SupabaseStorage().upload(
-            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type="video/mp4", upsert=True, timeout_seconds=600
+            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type=mime_type, upsert=True, timeout_seconds=600
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Render artifact storage upload failed") from exc
@@ -321,6 +293,7 @@ async def complete_render_artifact(
             completed_at=now(),lease_expires_at=null,worker_id=null
         where id=:job
     """), {"bucket": RENDER_BUCKET, "path": object_path, "size": len(content), "hash": digest, "job": render_job_id})
+    await db.execute(text("update public.render_attempts set status='completed',ended_at=now(),diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id,"diagnostics":json.dumps({"bytes":len(content),"sha256":digest,"mime_type":mime_type})})
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values (:actor,:workspace,'render.completed','render_job',:job,:request_id)
@@ -358,6 +331,7 @@ async def fail_render_job(
                 worker_id=null,lease_expires_at=null
             where id=:job and worker_id=:worker
         """), {"job": render_job_id, "worker": worker_id})
+        await db.execute(text("update public.render_attempts set status='cancelled',ended_at=now() where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id})
         await db.commit()
         return {"data": {"render_job_id": str(render_job_id), "status": "cancelled"}}
     retry = payload.retryable and row["attempt_count"] < row["max_attempts"]
@@ -367,6 +341,7 @@ async def fail_render_job(
         where id=:job
     """), {"status": "queued" if retry else "failed", "code": payload.error_code,
            "message": payload.error_message, "retry": retry, "job": render_job_id})
+    await db.execute(text("update public.render_attempts set status='failed',ended_at=now(),error_code=:code,diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"code":payload.error_code,"diagnostics":json.dumps({"message":payload.error_message,"retryable":payload.retryable}),"job":render_job_id})
     await db.commit()
     if retry:
         try:
@@ -406,6 +381,7 @@ async def render_approved_storyboard(
     if not scenes:
         raise HTTPException(status_code=409, detail="Storyboard has no scenes to render")
     fps = int(source["fps"] or 30)
+    track_id = str(uuid5(NAMESPACE_URL, f"graphytion:{storyboard_id}:main"))
     clips = []
     cursor = 0
     for scene in scenes:
@@ -416,17 +392,17 @@ async def render_approved_storyboard(
             background = "#102F60"
         clips.append({
             "id": str(scene["id"]),
-            "trackId": "main",
+            "trackId": track_id,
             "startFrame": cursor,
-            "durationFrames": duration_frames,
-            "componentKey": "core.title-card.v1",
+            "durationFrames": duration_frames, "trimStartFrames": 0, "playbackRate": 1,
+            "componentKey": "core.title-card.v1", "componentVersion": "1.1.0",
             "props": {"title": str(scene["title"]), "subtitle": str(visual.get("description") or "")[:500], "background": background},
         })
         cursor += duration_frames
     snapshot = {
-        "version": 1, "fps": fps,
+        "version": 2, "compositionVersion": "2.0.0", "fps": fps,
         "width": int(source["width"]), "height": int(source["height"]),
-        "durationFrames": cursor, "clips": clips,
+        "durationFrames": cursor, "tracks": [{"id":track_id,"kind":"typography","name":"Storyboard scenes","zIndex":10,"visible":True,"locked":False,"muted":False,"volume":1}], "clips": clips, "assetRefs": [], "background": "#101828",
     }
     return await create_render(
         project_id=project_id,
@@ -529,6 +505,7 @@ async def preview_approved_storyboard(
     if not scenes:
         raise HTTPException(status_code=409, detail="Storyboard has no scenes to preview")
     fps = int(source["fps"] or 30)
+    track_id = str(uuid5(NAMESPACE_URL, f"graphytion:{storyboard_id}:main"))
     clips = []
     cursor = 0
     for scene in scenes:
@@ -538,15 +515,16 @@ async def preview_approved_storyboard(
         if not isinstance(background, str) or not background.startswith("#") or len(background) not in (4, 7):
             background = "#102F60"
         clips.append({
-            "id": str(scene["id"]), "trackId": "main", "startFrame": cursor,
-            "durationFrames": duration_frames, "componentKey": "core.title-card.v1",
+            "id": str(scene["id"]), "trackId": track_id, "startFrame": cursor,
+            "durationFrames": duration_frames, "trimStartFrames": 0, "playbackRate": 1, "componentKey": "core.title-card.v1", "componentVersion": "1.1.0",
             "props": {"title": str(scene["title"]), "subtitle": str(visual.get("description") or "")[:500], "background": background},
         })
         cursor += duration_frames
     snapshot = {
-        "version": 1, "fps": fps, "width": int(source["width"]), "height": int(source["height"]),
-        "durationFrames": cursor, "clips": clips,
+        "version": 2, "compositionVersion": "2.0.0", "fps": fps, "width": int(source["width"]), "height": int(source["height"]),
+        "durationFrames": cursor, "tracks": [{"id":track_id,"kind":"typography","name":"Storyboard scenes","zIndex":10,"visible":True,"locked":False,"muted":False,"volume":1}], "clips": clips, "assetRefs": [], "background": "#101828",
     }
     timeline_hash = _validate_snapshot(snapshot)
     snapshot["contentHash"] = timeline_hash
-    return {"data": {"storyboard_id": str(storyboard_id), "snapshot": snapshot, "timeline_hash": timeline_hash}}
+    resolved_assets = await resolve_project_assets(db, project_id=project_id, workspace_id=workspace_id, asset_ids=collect_asset_ids(snapshot), snapshot=snapshot)
+    return {"data": {"storyboard_id": str(storyboard_id), "snapshot": snapshot, "resolved_assets":resolved_assets, "timeline_hash": timeline_hash}}

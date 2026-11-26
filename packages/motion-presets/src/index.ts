@@ -1,1 +1,16 @@
-export type MotionPreset={key:string;version:string;durationFrames:number;easing:'linear'|'ease'|'ease-in'|'ease-out';from:Record<string,number>;to:Record<string,number>};export const motionPresets={ 'fade-in.v1':{key:'fade-in.v1',version:'1.0.0',durationFrames:18,easing:'ease-out',from:{opacity:0},to:{opacity:1}},'slide-up.v1':{key:'slide-up.v1',version:'1.0.0',durationFrames:24,easing:'ease-out',from:{opacity:0,translateY:36},to:{opacity:1,translateY:0}}} satisfies Record<string,MotionPreset>;
+export type TransitionPreset={type:'cut'|'fade'|'dissolve'|'wipe'|'slide'|'zoom';durationFrames:number;direction?:'left'|'right'|'up'|'down'};
+export const TRANSITION_PRESETS:Readonly<Record<string,TransitionPreset>>=Object.freeze({
+ cut:{type:'cut',durationFrames:0},
+ fade:{type:'fade',durationFrames:18},
+ dissolve:{type:'dissolve',durationFrames:24},
+ wipe:{type:'wipe',durationFrames:18,direction:'left'},
+ slide:{type:'slide',durationFrames:20,direction:'left'},
+ zoom:{type:'zoom',durationFrames:18},
+});
+export const KEYFRAME_EASINGS=['linear','ease-in','ease-out','ease-in-out'] as const;
+export const RENDER_PROFILE_KEYS=['draft-preview','standard','high-quality','full-hd','4k','custom'] as const;
+export type RenderProfileKey=typeof RENDER_PROFILE_KEYS[number];
+export function transitionPreset(name:string,overrides:Partial<TransitionPreset>={}):TransitionPreset {
+ const preset=TRANSITION_PRESETS[name];if(!preset)throw new Error('Unsupported transition preset: '+name);
+ return {...preset,...overrides};
+}

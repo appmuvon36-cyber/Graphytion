@@ -13,6 +13,10 @@ type Invitation = { id: string; workspace_name: string; email: string; role: str
 type PlatformAdminRecord = { user_id: string; role: string; status: string; granted_at: string; reason?: string | null };
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number; active_render_jobs: number; input_tokens_24h: number; output_tokens_24h: number };
 type LlmStatus = { available_providers: string[]; configured_model: string; openai_credential_configured: boolean; generation_ready: boolean };
+type RenderProfile={id:string;profile_key:string;name:string;version:number;width:number;height:number;fps:number;container:string;video_codec:string;video_crf:number;audio_codec:string;render_concurrency:number;priority:number;is_default:boolean;is_archived:boolean};
+type MotionControl={component_key:string;component_version:string;category:string;enabled:boolean;reason?:string|null};
+type AdminRenderJob={id:string;project_name:string;workspace_name:string;status:string;progress_percent:number;worker_id?:string|null;lease_expires_at?:string|null;render_profile?:string|null;attempt_count:number;latest_attempt_status?:string|null};
+type AdminMediaJob={id:string;project_name:string;workspace_name:string;status:string;provider_key:string;model_key:string;voice_key:string;worker_id?:string|null;lease_expires_at?:string|null;attempt_count:number;max_attempts:number;error_code?:string|null;asset_id?:string|null};
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
 const input: React.CSSProperties = { width: '100%', padding: 10, border: '1px solid #dce3ed', borderRadius: 8 };
@@ -26,6 +30,12 @@ export default function PlatformAdmin() {
   const [password, setPassword] = useState('');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
+  const [renderProfiles,setRenderProfiles]=useState<RenderProfile[]>([]);
+  const [motionComponents,setMotionComponents]=useState<MotionControl[]>([]);
+  const [adminRenderJobs,setAdminRenderJobs]=useState<AdminRenderJob[]>([]);
+  const [adminMediaJobs,setAdminMediaJobs]=useState<AdminMediaJob[]>([]);
+  const [profileDraft,setProfileDraft]=useState({profile_key:'custom-1080p',name:'Custom 1080p',width:1920,height:1080,fps:30,container:'mp4',video_codec:'h264',video_crf:20,audio_codec:'aac',render_concurrency:2,priority:20,is_default:false});
+  const [editingProfileId,setEditingProfileId]=useState<string|null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -55,7 +65,7 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i, pa, llm] = await Promise.all([
+      const [o, u, w, p, a, i, pa, llm, rp, mc, rj, mj] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
@@ -64,8 +74,12 @@ export default function PlatformAdmin() {
         request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),
         request<{data: PlatformAdminRecord[]}>('/admin/platform-admins'),
         request<{data: LlmStatus}>('/admin/llm/providers'),
+        request<{data:RenderProfile[]}>('/admin/render-profiles'),
+        request<{data:MotionControl[]}>('/admin/motion-components'),
+        request<Page<AdminRenderJob>>('/admin/render-jobs?page=1&per_page=50'),
+        request<Page<AdminMediaJob>>('/admin/media-jobs?page=1&per_page=50'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -186,6 +200,32 @@ export default function PlatformAdmin() {
     finally { setBusy(false); }
   }
 
+  async function createRenderProfile(event:React.FormEvent) {
+    event.preventDefault();setBusy(true);setError('');setNotice('');
+    try{await request(editingProfileId?'/admin/render-profiles/'+editingProfileId:'/admin/render-profiles',{method:editingProfileId?'PATCH':'POST',body:JSON.stringify(profileDraft)});setNotice(editingProfileId?'Render profile version created.':'Render profile created.');setEditingProfileId(null);await load();}
+    catch(cause){setError(cause instanceof Error?cause.message:'Render profile creation failed');}
+    finally{setBusy(false);}
+  }
+  function editRenderProfile(profile:RenderProfile) {
+    setEditingProfileId(profile.id);
+    setProfileDraft({profile_key:profile.profile_key,name:profile.name,width:profile.width,height:profile.height,fps:profile.fps,container:profile.container,video_codec:profile.video_codec,video_crf:profile.video_crf,audio_codec:profile.audio_codec,render_concurrency:profile.render_concurrency,priority:profile.priority,is_default:profile.is_default});
+  }
+  async function archiveRenderProfile(profile:RenderProfile) {
+    if(!window.confirm('Archive '+profile.name+' v'+profile.version+'?'))return;
+    setBusy(true);setError('');
+    try{await request('/admin/render-profiles/'+profile.id+'/archive',{method:'POST'});setNotice('Render profile archived.');await load();}
+    catch(cause){setError(cause instanceof Error?cause.message:'Profile archive failed');}
+    finally{setBusy(false);}
+  }
+  async function toggleMotionComponent(item:MotionControl) {
+    const reason=window.prompt('Reason for changing component availability',item.enabled?'Temporarily disabled by platform admin':'Re-enabled after review');
+    if(!reason)return;
+    setBusy(true);setError('');
+    try{await request('/admin/motion-components/'+encodeURIComponent(item.component_key),{method:'PATCH',body:JSON.stringify({enabled:!item.enabled,reason})});setNotice('Motion component registry updated.');await load();}
+    catch(cause){setError(cause instanceof Error?cause.message:'Component registry update failed');}
+    finally{setBusy(false);}
+  }
+
   async function logout() {
     try { await api.request('/auth/logout', { method: 'POST' }); } catch { /* session may already be expired */ }
     setAuthenticated(false); setOverview(null); setUsers([]); setWorkspaces([]); setProjects([]); setAudit([]);
@@ -229,6 +269,51 @@ export default function PlatformAdmin() {
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}><button disabled={page <= 1 || busy} onClick={() => setPage(value => value - 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Previous</button><span style={{ fontSize: 12 }}>Page {page}</span><button disabled={users.length < 25 || busy} onClick={() => setPage(value => value + 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Next</button></div>
       </section>
       <section style={panel}><h2>Platform RBAC & administrator registry</h2><form onSubmit={grantPlatformAdmin} style={{display:'grid',gridTemplateColumns:'2fr 1fr auto',gap:8,marginBottom:12}}><input aria-label="User UUID" placeholder="User profile UUID" value={newAdminUserId} onChange={event=>setNewAdminUserId(event.target.value)} style={input} required/><select aria-label="Platform admin role" value={newAdminRole} onChange={event=>setNewAdminRole(event.target.value)} style={input}><option value="operations_admin">Operations admin</option><option value="support_admin">Support admin</option><option value="super_admin">Super admin</option></select><button disabled={busy} style={button}>Grant role</button></form>{platformAdmins.map(admin=><div key={admin.user_id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{admin.user_id}</strong><div style={{fontSize:12,color:'#68788e'}}>{admin.role} · {admin.status} · {new Date(admin.granted_at).toLocaleString()}</div></div>{admin.status==='active'&&<button disabled={busy} onClick={()=>void revokePlatformAdmin(admin)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Revoke</button>}</div>)}</section>
+      <section style={panel}>
+        <h2>Remotion · Render profiles & quality presets</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>New render jobs pin the selected global profile version and immutable composition snapshot.</p>
+        <form onSubmit={createRenderProfile} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
+          <input aria-label="Profile key" value={profileDraft.profile_key} onChange={e=>setProfileDraft(v=>({...v,profile_key:e.target.value}))} placeholder="profile-key" style={input}/>
+          <input aria-label="Profile name" value={profileDraft.name} onChange={e=>setProfileDraft(v=>({...v,name:e.target.value}))} placeholder="Profile name" style={input}/>
+          <input aria-label="Width" type="number" value={profileDraft.width} onChange={e=>setProfileDraft(v=>({...v,width:Number(e.target.value)}))} style={input}/>
+          <input aria-label="Height" type="number" value={profileDraft.height} onChange={e=>setProfileDraft(v=>({...v,height:Number(e.target.value)}))} style={input}/>
+          <select aria-label="FPS" value={profileDraft.fps} onChange={e=>setProfileDraft(v=>({...v,fps:Number(e.target.value)}))} style={input}>{[24,25,30,50,60].map(v=><option key={v} value={v}>{v}</option>)}</select>
+          <select aria-label="Container" value={profileDraft.container} onChange={e=>setProfileDraft(v=>({...v,container:e.target.value,video_codec:e.target.value==='mp4'?'h264':'vp9',audio_codec:e.target.value==='mp4'?'aac':'opus'}))} style={input}><option value="mp4">MP4</option><option value="webm">WebM</option></select>
+          <select aria-label="Video codec" value={profileDraft.video_codec} onChange={e=>setProfileDraft(v=>({...v,video_codec:e.target.value}))} style={input}>{(profileDraft.container==='mp4'?['h264','h265']:['vp8','vp9']).map(v=><option key={v}>{v}</option>)}</select>
+          <input aria-label="Video CRF" type="number" min={0} max={51} value={profileDraft.video_crf} onChange={e=>setProfileDraft(v=>({...v,video_crf:Number(e.target.value)}))} style={input}/>
+          <select aria-label="Audio codec" value={profileDraft.audio_codec} onChange={e=>setProfileDraft(v=>({...v,audio_codec:e.target.value}))} style={input}>{(profileDraft.container==='mp4'?['aac','none']:['opus','none']).map(v=><option key={v}>{v}</option>)}</select>
+          <input aria-label="Render concurrency" type="number" min={1} max={8} value={profileDraft.render_concurrency} onChange={e=>setProfileDraft(v=>({...v,render_concurrency:Number(e.target.value)}))} style={input}/>
+          <input aria-label="Priority" type="number" min={0} max={100} value={profileDraft.priority} onChange={e=>setProfileDraft(v=>({...v,priority:Number(e.target.value)}))} style={input}/>
+          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:6}}><input type="checkbox" checked={profileDraft.is_default} onChange={e=>setProfileDraft(v=>({...v,is_default:e.target.checked}))}/> Default profile</label>
+          <button disabled={busy} style={button}>{editingProfileId?'Create new version':'Create profile'}</button>{editingProfileId&&<button type="button" onClick={()=>setEditingProfileId(null)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Cancel edit</button>}
+        </form>
+        {renderProfiles.map(profile=><div key={profile.id} style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',padding:'9px 0',borderTop:'1px solid #edf0f5'}}>
+          <div><strong>{profile.name} · v{profile.version}</strong><div style={{fontSize:12,color:'#68788e'}}>{profile.profile_key} · {profile.width}×{profile.height} · {profile.fps} FPS · {profile.container}/{profile.video_codec} · CRF {profile.video_crf} · {profile.audio_codec} · priority {profile.priority}{profile.is_default?' · default':''}</div></div>
+          <button disabled={busy||profile.is_archived} onClick={()=>editRenderProfile(profile)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Edit version</button><button disabled={busy||profile.is_archived} onClick={()=>void archiveRenderProfile(profile)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Archive</button>
+        </div>)}
+      </section>
+            <section style={panel}>
+        <h2>Voice-over / TTS worker operations</h2>
+        {adminMediaJobs.map(job=><div key={job.id} style={{padding:'9px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
+          <div><strong>{job.project_name} · {job.status}</strong><div style={{fontSize:12,color:'#68788e'}}>{job.provider_key}/{job.model_key} · {job.voice_key} · attempt {job.attempt_count}/{job.max_attempts} · {job.error_code||job.asset_id||job.id}</div></div>
+          <div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'not claimed'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>
+        </div>)}
+      </section>
+<section style={panel}>
+        <h2>Motion component registry</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>Only versioned, compiled allowlisted components are executable. Disabled components are rejected on new timeline saves and render submissions.</p>
+        {motionComponents.map(item=><div key={item.component_key} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}>
+          <div><strong>{item.component_key}</strong><div style={{fontSize:12,color:'#68788e'}}>{item.category} · v{item.component_version} · {item.reason||'No change reason'}</div></div>
+          <button disabled={busy} onClick={()=>void toggleMotionComponent(item)} style={{...button,background:item.enabled?'#fff1f0':'#ecfdf3',color:item.enabled?'#b42318':'#176b45'}}>{item.enabled?'Disable':'Enable'}</button>
+        </div>)}
+      </section>
+      <section style={panel}>
+        <h2>Remotion render worker operations</h2>
+        {adminRenderJobs.map(job=><div key={job.id} style={{padding:'9px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
+          <div><strong>{job.project_name} · {job.status} · {job.progress_percent}%</strong><div style={{fontSize:12,color:'#68788e'}}>{job.workspace_name} · {job.render_profile||'profile unavailable'} · attempt {job.attempt_count} · {job.latest_attempt_status||'not claimed'}</div></div>
+          <div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'queued'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>
+        </div>)}
+      </section>
       <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div>)}
         {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>

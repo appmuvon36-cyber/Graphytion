@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,7 +20,7 @@ permissions = WorkspacePermissionResolver()
 ASSET_BUCKET = "project-assets"
 MAX_ASSET_BYTES = 50 * 1024 * 1024
 MIME_EXTENSIONS = {
-    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/svg+xml": "svg", "font/woff2": "woff2", "font/woff": "woff", "font/ttf": "ttf", "font/otf": "otf",
     "video/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav",
     "application/pdf": "pdf",
 }
@@ -44,7 +46,42 @@ async def _project_workspace(db: AsyncSession, project_id: UUID, actor: UUID, pe
     return workspace_id
 
 
+def _sanitize_svg(data: bytes) -> bytes:
+    if len(data) > MAX_ASSET_BYTES:
+        raise HTTPException(status_code=413, detail="SVG exceeds the asset size limit")
+    try:
+        root = ET.fromstring(data.decode("utf-8"))
+    except (UnicodeDecodeError, ET.ParseError) as exc:
+        raise HTTPException(status_code=415, detail="SVG document is invalid") from exc
+    allowed = {"svg","g","path","rect","circle","ellipse","line","polyline","polygon","text","tspan","defs","linearGradient","radialGradient","stop","clipPath","mask"}
+    attrs = {"xmlns","viewBox","width","height","x","y","x1","x2","y1","y2","cx","cy","r","rx","ry","d","points","fill","fill-rule","fill-opacity","stroke","stroke-width","stroke-linecap","stroke-linejoin","stroke-dasharray","stroke-dashoffset","stroke-opacity","opacity","transform","id","class","font-size","font-family","font-weight","text-anchor","dominant-baseline","offset","stop-color","stop-opacity","gradientUnits","gradientTransform","clip-path","mask","preserveAspectRatio"}
+    def clean(node: ET.Element) -> None:
+        tag=node.tag.split("}")[-1]
+        if tag not in allowed:
+            node.clear()
+            node.tag="g"
+        for key in list(node.attrib):
+            local=key.split("}")[-1]
+            value=node.attrib[key].strip()
+            if local not in attrs or local.lower().startswith("on") or re.search(r"(javascript:|data:|https?://|url\((?!#)",value,re.I):
+                del node.attrib[key]
+        for child in list(node):
+            clean(child)
+    if root.tag.split("}")[-1] != "svg":
+        raise HTTPException(status_code=415, detail="SVG root element is required")
+    clean(root)
+    return ET.tostring(root,encoding="utf-8",xml_declaration=True)
+
+
 def _valid_media(content_type: str, data: bytes) -> bool:
+    if content_type == "image/svg+xml":
+        try: _sanitize_svg(data)
+        except HTTPException: return False
+        return True
+    if content_type == "font/woff2": return data.startswith(b"wOF2")
+    if content_type == "font/woff": return data.startswith(b"wOFF")
+    if content_type == "font/ttf": return data.startswith(b"\x00\x01\x00\x00")
+    if content_type == "font/otf": return data.startswith(b"OTTO")
     if content_type == "image/png":
         return data.startswith(b"\x89PNG\r\n\x1a\n")
     if content_type == "image/jpeg":
@@ -81,6 +118,8 @@ async def upload_project_asset(
         raise HTTPException(status_code=413, detail="Project assets must be between 1 byte and 50 MB")
     if not _valid_media(content_type, content):
         raise HTTPException(status_code=415, detail="Uploaded file signature does not match its media type")
+    if content_type == "image/svg+xml":
+        content = _sanitize_svg(content)
     asset_id = uuid4()
     object_path = f"{workspace_id}/{project_id}/{asset_id}.{extension}"
     filename = Path(file.filename or f"asset.{extension}").name[:255]

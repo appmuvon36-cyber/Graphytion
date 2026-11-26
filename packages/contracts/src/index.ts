@@ -87,6 +87,60 @@ export const MediaAssetSchema = z.object({id:UUID,workspaceId:UUID,projectId:UUI
 export const SubtitleSegmentSchema = z.object({id:UUID,segmentIndex:z.number().int().nonnegative(),text:z.string(),startMs:z.number().int().nonnegative(),endMs:z.number().int().positive()}).refine(v=>v.endMs>v.startMs,'endMs must exceed startMs');
 export const TimelineClipSchema = z.object({id:UUID,trackId:UUID,clipType:z.enum(['component','image','video','audio','subtitle']),startFrame:z.number().int().nonnegative(),durationFrames:z.number().int().positive(),componentKey:z.string().nullable(),props:z.record(z.string(),z.unknown())}).strict();
 export const TimelineSchema = z.object({id:UUID,projectId:UUID,version:z.number().int().positive(),fps:z.number().int().positive(),width:z.number().int().positive(),height:z.number().int().positive(),durationFrames:z.number().int().positive(),clips:z.array(TimelineClipSchema),compiledHash:z.string().min(32)}).strict();
+export const TimelineTrackKind = z.enum(['video','visual','shape','typography','audio','voiceover','subtitle','effects']);
+export const TimelineTrackV2Schema = z.object({
+ id:UUID,kind:TimelineTrackKind,name:z.string().min(1).max(80),zIndex:z.number().int(),
+ visible:z.boolean(),locked:z.boolean(),muted:z.boolean(),volume:z.number().min(0).max(1),
+}).strict();
+export const MotionTransitionSchema = z.object({
+ type:z.enum(['cut','fade','dissolve','wipe','slide','zoom']),
+ durationFrames:z.number().int().nonnegative(),direction:z.enum(['left','right','up','down']).optional(),
+}).strict();
+export const MotionKeyframeSchema = z.object({
+ frame:z.number().int().nonnegative(),value:z.union([z.number(),z.string()]),
+ easing:z.enum(['linear','ease-in','ease-out','ease-in-out']).optional(),
+}).strict();
+export const CompositionClipSchema = z.object({
+ id:z.string().min(1),trackId:UUID,startFrame:z.number().int().nonnegative(),durationFrames:z.number().int().positive(),
+ trimStartFrames:z.number().int().nonnegative(),playbackRate:z.number().min(.1).max(4),
+ componentKey:z.string().min(1),componentVersion:z.string().min(1),
+ props:z.record(z.string(),z.unknown()),assetId:UUID.optional(),
+ transitionIn:MotionTransitionSchema.optional(),transitionOut:MotionTransitionSchema.optional(),
+ keyframes:z.record(z.string(),z.array(MotionKeyframeSchema)).optional(),
+}).strict();
+export const CompositionAssetRefSchema=z.object({assetId:UUID,kind:z.enum(['image','video','audio','font','subtitle','resource']),required:z.boolean()}).strict();
+export const CompositionSnapshotSchema=z.object({
+ version:z.literal(2),compositionVersion:z.literal('2.0.0'),fps:z.number().int().min(1).max(120),
+ width:z.number().int().min(320).max(7680),height:z.number().int().min(240).max(4320),
+ durationFrames:z.number().int().positive(),tracks:z.array(TimelineTrackV2Schema).min(1).max(32),
+ clips:z.array(CompositionClipSchema).max(500),assetRefs:z.array(CompositionAssetRefSchema).max(500),
+ background:z.string().max(64),contentHash:z.string().length(64).optional(),
+}).strict();
+export const TimelineVersionApiSchema=z.object({
+ timeline_id:UUID,version:z.number().int().positive(),snapshot:CompositionSnapshotSchema,
+ compiled_hash:z.string().length(64),created_at:Timestamp,
+}).strict();
+export const RenderProfileApiSchema=z.object({
+ id:UUID,profile_key:z.string(),name:z.string(),version:z.number().int().positive(),
+ width:z.number().int().positive(),height:z.number().int().positive(),fps:z.number().int().positive(),
+ container:z.enum(['mp4','webm']),video_codec:z.enum(['h264','h265','vp8','vp9']),
+ video_crf:z.number().int().min(0).max(51),audio_codec:z.enum(['aac','opus','none']),
+ render_concurrency:z.number().int().min(1).max(8),priority:z.number().int().min(0).max(100),
+ is_default:z.boolean(),is_archived:z.boolean(),
+}).strict();
+export const VoiceoverApiSchema=z.object({
+ id:UUID,project_id:UUID,scene_id:UUID.nullable(),provider_key:z.string(),model_key:z.string(),
+ voice_key:z.string(),language:z.string(),status:z.enum(['queued','running','completed','failed','provider_unavailable','cancelled']),
+ asset_id:UUID.nullable(),error_code:z.string().nullable(),attempt_count:z.number().int().nonnegative(),created_at:Timestamp,
+}).strict();
+export const SubtitleSegmentApiSchema=z.object({
+ id:UUID,segment_index:z.number().int().nonnegative(),start_ms:z.number().int().nonnegative(),
+ end_ms:z.number().int().positive(),text:z.string(),speaker:z.string().nullable(),word_timings:z.array(z.record(z.string(),z.unknown())),
+}).strict();
+export const SubtitleTrackApiSchema=z.object({
+ id:UUID,language:z.string(),format:z.enum(['webvtt','srt']),version:z.number().int().positive(),
+ style_config:z.record(z.string(),z.unknown()),segments:z.array(SubtitleSegmentApiSchema),
+}).strict();
 export const RenderJobSchema = z.object({id:UUID,projectId:UUID,workspaceId:UUID,timelineId:UUID,status:RenderStatus,progressPercent:z.number().min(0).max(100),attemptCount:z.number().int().nonnegative(),createdAt:Timestamp}).strict();
 export const RenderArtifactSchema = z.object({id:UUID,renderJobId:UUID,artifactType:z.enum(['video','thumbnail','poster','captions']),storageBucket:z.string(),storagePath:z.string(),mimeType:z.string(),checksumSha256:z.string().nullable()}).strict();
 export const AIModelConfigSchema = z.object({providerKey:z.string(),modelKey:z.string(),capabilities:z.array(z.string()),enabled:z.boolean()}).strict();

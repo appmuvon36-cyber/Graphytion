@@ -54,9 +54,10 @@ type RenderJob = {
   composition_id: string;
   timeline_snapshot: {
     version: number; fps: number; width: number; height: number;
-    durationFrames: number; clips: Array<Record<string, unknown>>; contentHash: string;
+    durationFrames: number; tracks:Array<Record<string,unknown>>; clips: Array<Record<string, unknown>>; assetRefs:Array<Record<string,unknown>>; contentHash: string;
   };
-  render_config: {codec?: string; format?: string};
+  render_config: {codec?: string; format?: string; video_crf?:number; video_bitrate?:string|null; audio_codec?:string; audio_bitrate?:string|null; concurrency?:number};
+  resolved_assets:Record<string,string>;
   attempt_count: number;
 };
 
@@ -67,7 +68,8 @@ async function processJob(jobId?: string): Promise<boolean> {
   if (!claimed) return false;
 
   const directory = await mkdtemp(join(tmpdir(), 'graphytion-render-'));
-  const outputPath = join(directory, `${claimed.id}.mp4`);
+  const extension = claimed.render_config.format === 'webm' ? 'webm' : 'mp4';
+  const outputPath = join(directory, `${claimed.id}.${extension}`);
   let lastProgressAt = 0;
   let currentProgress = 0;
   const {cancelSignal, cancel} = makeCancelSignal();
@@ -87,7 +89,8 @@ async function processJob(jobId?: string): Promise<boolean> {
     }
   }, 30000);
   try {
-    const inputProps = {snapshot: claimed.timeline_snapshot};
+    const renderSnapshot = claimed.render_config.audio_codec === 'none' ? {...claimed.timeline_snapshot,tracks:claimed.timeline_snapshot.tracks.map(track => ['audio','voiceover'].includes(String(track.kind)) ? {...track,muted:true} : track)} : claimed.timeline_snapshot;
+    const inputProps = {snapshot: renderSnapshot,resolvedAssets:claimed.resolved_assets};
     const composition = await selectComposition({
       serveUrl,
       id: claimed.composition_id,
@@ -98,12 +101,15 @@ async function processJob(jobId?: string): Promise<boolean> {
     await renderMedia({
       composition,
       serveUrl,
-      codec: 'h264',
+      codec: claimed.render_config.codec === 'h265' || claimed.render_config.codec === 'vp8' || claimed.render_config.codec === 'vp9' ? claimed.render_config.codec : 'h264',
       outputLocation: outputPath,
       inputProps,
       cancelSignal,
-      concurrency: renderConcurrency,
-      crf: renderCrf,
+      concurrency: claimed.render_config.concurrency ?? renderConcurrency,
+      crf: claimed.render_config.video_crf ?? renderCrf,
+      ...(claimed.render_config.video_bitrate ? {videoBitrate:claimed.render_config.video_bitrate} : {}),
+      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' ? {audioCodec:claimed.render_config.audio_codec} : {}),
+      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' && claimed.render_config.audio_bitrate ? {audioBitrate:claimed.render_config.audio_bitrate} : {}),
       x264Preset,
       pixelFormat: 'yuv420p',
       browserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE,
@@ -130,17 +136,23 @@ async function processJob(jobId?: string): Promise<boolean> {
     const video = metadata.streams?.find(stream => stream.codec_type === 'video');
     const duration = Number(metadata.format?.duration);
     const expectedDuration = claimed.timeline_snapshot.durationFrames / claimed.timeline_snapshot.fps;
-    if (!metadata.format?.format_name?.split(',').includes('mp4') || video?.codec_name !== 'h264' || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05) throw new Error('Rendered MP4 metadata does not match the persisted timeline snapshot');
+    const expectedCodec = ({h264:'h264',h265:'hevc',vp8:'vp8',vp9:'vp9'} as Record<string,string>)[claimed.render_config.codec ?? 'h264'];
+    const formats = metadata.format?.format_name?.split(',') ?? [];
+    const validContainer = extension === 'webm' ? formats.includes('webm') || formats.includes('matroska') : formats.includes('mp4');
+    const audio = metadata.streams?.find(stream => stream.codec_type === 'audio');
+    const expectedAudio = ({aac:'aac',opus:'opus'} as Record<string,string>)[claimed.render_config.audio_codec ?? 'aac'];
+    if (!validContainer || video?.codec_name !== expectedCodec || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05 || (claimed.render_config.audio_codec === 'none' && audio) || (claimed.render_config.audio_codec !== 'none' && audio && audio.codec_name !== expectedAudio)) throw new Error('Rendered media metadata does not match the immutable composition snapshot and profile');
     const outputStat = await stat(outputPath);
-    if (outputStat.size < 12 || outputStat.size > 512 * 1024 * 1024) throw new Error('Rendered MP4 output size is outside the supported range');
+    if (outputStat.size < 12 || outputStat.size > 512 * 1024 * 1024) throw new Error('Rendered output size is outside the supported range');
     const bytes = await readFile(outputPath);
+    const mime = extension === 'webm' ? 'video/webm' : 'video/mp4';
     const form = new FormData();
-    form.set('file', new Blob([Uint8Array.from(bytes)], {type: 'video/mp4'}), 'output.mp4');
+    form.set('file', new Blob([Uint8Array.from(bytes)], {type:mime}), 'output.'+extension);
     await api(`internal/render-jobs/${claimed.id}/artifact?worker_id=${encodeURIComponent(workerId)}`, {
       method: 'POST',
       body: form,
     });
-    console.info('render_completed', {render_job_id: claimed.id, bytes: bytes.byteLength, duration_seconds: duration, width: video.width, height: video.height, codec: video.codec_name});
+    console.info('render_completed', {render_job_id: claimed.id, bytes: bytes.byteLength, duration_seconds: duration, width: video.width, height: video.height, codec: video.codec_name,container:extension});
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown render worker error';

@@ -1,7 +1,7 @@
-FROM python:3.12.11-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+FROM python:3.12-slim
 WORKDIR /app
-COPY pyproject.toml ./
+COPY services/media-worker/pyproject.toml ./pyproject.toml
+COPY services/media-worker/app ./app
 RUN pip install --no-cache-dir .
-COPY app ./app
+ENV PYTHONUNBUFFERED=1
 CMD ["python","-m","app.main"]

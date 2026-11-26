@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
-import { GraphytionTimelinePlayer } from '@graphytion/motion-components';
+import { TimelineEditor } from '@graphytion/motion-components';
+import type {CompositionSnapshot,ResolvedCompositionAssets} from '@graphytion/motion-components';
 import type {
   CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
 } from '@graphytion/contracts';
@@ -12,7 +13,11 @@ const field: React.CSSProperties = { width: '100%', padding: '11px 13px', border
 const button: React.CSSProperties = { border: 0, borderRadius: 9, padding: '10px 14px', background: '#173f72', color: '#fff', fontWeight: 700, cursor: 'pointer' };
 type CreativeRunItem = ProductionRunApi;
 type RenderItem = RenderJobApi;
-type CompositionSnapshot = {version:number;fps:number;width:number;height:number;durationFrames:number;clips:Array<{id:string;trackId:string;startFrame:number;durationFrames:number;componentKey?:string|null;props:Record<string,unknown>}>;contentHash:string};
+type VoiceoverItem={id:string;scene_id?:string|null;provider_key:string;model_key:string;voice_key:string;language:string;status:string;asset_id?:string|null;error_code?:string|null;attempt_count:number};
+type SubtitleSegmentItem={id:string;segment_index:number;start_ms:number;end_ms:number;text:string;speaker?:string|null;word_timings?:Array<Record<string,unknown>>};
+type SubtitleTrackItem={id:string;language:string;format:'webvtt'|'srt';version:number;style_config:Record<string,unknown>;segments:SubtitleSegmentItem[]};
+type TimelineHistoryItem={id:string;version:number;compiled_hash:string;created_at:string;fps:number;width:number;height:number;duration_frames:number};
+
 const panel: React.CSSProperties = { background: '#fff', border: '1px solid #e5eaf1', borderRadius: 14, padding: 18, marginBottom: 14 };
 
 export default function CreativeStudio({ projectId }: { projectId: string }) {
@@ -24,8 +29,20 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [runs, setRuns] = useState<CreativeRunItem[]>([]);
   const [renders, setRenders] = useState<RenderItem[]>([]);
   const [previewSnapshot, setPreviewSnapshot] = useState<CompositionSnapshot | null>(null);
+  const [previewResolvedAssets,setPreviewResolvedAssets]=useState<ResolvedCompositionAssets>({});
+  const [timelineVersion,setTimelineVersion]=useState<number|null>(null);
+  const [timelineHistory,setTimelineHistory]=useState<TimelineHistoryItem[]>([]);
+  const [timelineDirty,setTimelineDirty]=useState(false);
+  const [timelineSaving,setTimelineSaving]=useState(false);
   const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
+  const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
+  const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
+  const [voiceText,setVoiceText]=useState('');
+  const [voiceKey,setVoiceKey]=useState('alloy');
+  const [voiceModel,setVoiceModel]=useState('tts-1');
+  const [subtitleImport,setSubtitleImport]=useState('');
+  const [subtitleFormat,setSubtitleFormat]=useState<'srt'|'webvtt'>('srt');
   const [assetFile, setAssetFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState('');
   const [briefJson, setBriefJson] = useState('{"objective":"","audience":"","key_message":"","tone":"","language":"id-ID","duration_target_ms":60000,"production_mode":"motion_graphic","visual_style":"","cta":"","constraints":[],"missing_information":[]}');
@@ -50,7 +67,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, b, s, sb, runResult, renderResult, assetResult] = await Promise.all([
+      const [p, b, s, sb, runResult, renderResult, assetResult, voiceResult, subtitleResult] = await Promise.all([
         call<{data: VideoProjectApi}>('/projects/' + projectId),
         call<{data: CreativeBriefApi[]}>('/projects/' + projectId + '/briefs'),
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
@@ -58,9 +75,11 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: CreativeRunItem[]}>('/projects/' + projectId + '/creative-runs'),
         call<{data: RenderItem[]}>('/projects/' + projectId + '/renders'),
         call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets'),
+        call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
+        call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
-      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data);
+      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
       if (!selectedBrief && b.data[0]) setSelectedBrief(b.data[0].id);
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }
@@ -183,13 +202,111 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   async function previewStoryboard(id: string) {
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await call<{data:{snapshot:CompositionSnapshot}}>('/projects/' + projectId + '/storyboards/' + id + '/preview');
-      setPreviewSnapshot(result.data.snapshot);
+      const [result,history] = await Promise.all([
+        call<{data:{snapshot:CompositionSnapshot;resolved_assets:ResolvedCompositionAssets}}>('/projects/' + projectId + '/storyboards/' + id + '/preview'),
+        call<{data:TimelineHistoryItem[]}>('/projects/'+projectId+'/timelines'),
+      ]);
+      setPreviewSnapshot(result.data.snapshot); setPreviewResolvedAssets(result.data.resolved_assets||{});
+      setTimelineHistory(history.data);setTimelineVersion(history.data[0]?.version??null);setTimelineDirty(true);
       setPreviewStoryboardId(id);
       setNotice('Preview memakai timeline snapshot yang sama dengan renderer Remotion.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Remotion preview failed'); }
     finally { setBusy(false); }
   }
+
+  async function retryVoiceover(item:VoiceoverItem) {
+    setBusy(true);setError('');
+    try{await call('/voiceovers/'+item.id+'/retry',{method:'POST'});setNotice('Voiceover job re-queued.');await load();}
+    catch(e){setError(e instanceof Error?e.message:'Voiceover retry failed');}
+    finally{setBusy(false);}
+  }
+  async function generateVoiceover(event:React.FormEvent) {
+    event.preventDefault();setBusy(true);setError('');setNotice('');
+    try{
+      const result=await call<{data:{voiceover_id:string;status:string;provider_configured:boolean}}>('/projects/'+projectId+'/voiceovers',{
+        method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
+        body:JSON.stringify({text:voiceText,provider_key:'openai',model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID'}),
+      });
+      setNotice(result.data.status==='provider_unavailable'?'Voiceover job tersimpan, tetapi provider credentials belum dikonfigurasi. Tidak ada audio yang dibuat.':'Voiceover job queued · '+result.data.voiceover_id);
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:'Voiceover request failed');}
+    finally{setBusy(false);}
+  }
+  async function importSubtitleTrack(event:React.FormEvent) {
+    event.preventDefault();setBusy(true);setError('');
+    try{
+      const result=await call<{data:{id:string;segment_count:number}}>('/projects/'+projectId+'/subtitles/import',{
+        method:'POST',body:JSON.stringify({language:project?.default_language||'id-ID',format:subtitleFormat,content:subtitleImport,style_config:{position:'bottom'}}),
+      });
+      setNotice('Subtitle track imported · '+result.data.segment_count+' segments');setSubtitleImport('');await load();
+    }catch(e){setError(e instanceof Error?e.message:'Subtitle import failed');}
+    finally{setBusy(false);}
+  }
+  async function exportSubtitleTrack(track:SubtitleTrackItem) {
+    try{
+      const result=await call<{data:{format:string;content:string}}>('/projects/'+projectId+'/subtitles/'+track.id+'/export');
+      const blob=new Blob([result.data.content],{type:track.format==='srt'?'application/x-subrip':'text/vtt'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='graphytion-subtitles.'+(track.format==='srt'?'srt':'vtt');a.click();URL.revokeObjectURL(url);
+    }catch(e){setError(e instanceof Error?e.message:'Subtitle export failed');}
+  }
+  function attachSubtitleTrack(track:SubtitleTrackItem) {
+    if(!previewSnapshot){setError('Open a Remotion preview before attaching subtitles to the timeline.');return;}
+    let subtitleTrack=previewSnapshot.tracks.find(t=>t.kind==='subtitle'&&!t.locked);
+    let tracks=previewSnapshot.tracks;
+    if(!subtitleTrack){subtitleTrack={id:crypto.randomUUID(),kind:'subtitle',name:'Subtitles · '+track.language,zIndex:Math.max(0,...tracks.map(t=>t.zIndex))+10,visible:true,locked:false,muted:false,volume:1};tracks=[...tracks,subtitleTrack];}
+    const clips=track.segments.map(seg=>({id:crypto.randomUUID(),trackId:subtitleTrack!.id,startFrame:Math.round(seg.start_ms*previewSnapshot.fps/1000),durationFrames:Math.max(1,Math.round((seg.end_ms-seg.start_ms)*previewSnapshot.fps/1000)),trimStartFrames:0,playbackRate:1,componentKey:'text.subtitle.v1',componentVersion:'1.0.0',props:{text:seg.text,color:'#ffffff',background:'rgba(0,0,0,.65)',fontSize:32,position:'bottom',align:'center'}}));
+    const durationFrames=Math.max(previewSnapshot.durationFrames,...clips.map(c=>c.startFrame+c.durationFrames));
+    setPreviewSnapshot({...previewSnapshot,tracks,clips:[...previewSnapshot.clips,...clips],durationFrames});setTimelineDirty(true);
+    setNotice('Subtitle segments attached to Remotion timeline.');
+  }
+
+  async function loadTimelineHistory() {
+    try{const result=await call<{data:TimelineHistoryItem[]}>('/projects/'+projectId+'/timelines');setTimelineHistory(result.data);}
+    catch(e){setError(e instanceof Error?e.message:'Timeline history could not be loaded');}
+  }
+  async function restoreTimelineVersion(item:TimelineHistoryItem) {
+    try{
+      const result=await call<{data:{snapshot:CompositionSnapshot;resolved_assets:ResolvedCompositionAssets;version:number}}>('/projects/'+projectId+'/timelines/'+item.id);
+      setPreviewSnapshot(result.data.snapshot);setPreviewResolvedAssets(result.data.resolved_assets||{});
+      setTimelineVersion(timelineHistory[0]?.version??result.data.version);setTimelineDirty(true);
+      setNotice('Timeline v'+item.version+' restored into editor. Save creates a new immutable version.');
+    }catch(e){setError(e instanceof Error?e.message:'Timeline version restore failed');}
+  }
+
+  async function saveTimelineVersion() {
+    if(!previewSnapshot||timelineSaving)return;
+    const snapshotToSave=previewSnapshot;
+    setTimelineSaving(true);setError('');
+    try{
+      const result=await call<{data:{timeline_id:string;version:number;compiled_hash:string}}>('/projects/'+projectId+'/timeline',{
+        method:'PUT',body:JSON.stringify({snapshot:snapshotToSave,expected_version:timelineVersion}),
+      });
+      setTimelineVersion(result.data.version);
+      if(JSON.stringify(snapshotToSave)===JSON.stringify(previewSnapshot))setTimelineDirty(false);
+      setNotice('Timeline version v'+result.data.version+' tersimpan · '+result.data.compiled_hash.slice(0,12)); await loadTimelineHistory();
+    }catch(e){setError(e instanceof Error?e.message:'Timeline save failed');}
+    finally{setTimelineSaving(false);}
+  }
+
+  async function renderCurrentTimeline() {
+    if(!previewSnapshot)return;
+    setBusy(true);setError('');setNotice('');
+    try{
+      const result=await call<{data:{render_job_id:string;status:string}}>('/projects/'+projectId+'/renders',{
+        method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
+        body:JSON.stringify({snapshot:previewSnapshot}),
+      });
+      setNotice('Current timeline render queued · '+result.data.render_job_id);
+      await load();
+    }catch(e){setError(e instanceof Error?e.message:'Timeline render submission failed');}
+    finally{setBusy(false);}
+  }
+
+  useEffect(()=>{
+    if(!previewSnapshot||!timelineDirty||timelineSaving)return;
+    const handle=window.setTimeout(()=>{void saveTimelineVersion();},1500);
+    return ()=>window.clearTimeout(handle);
+  },[previewSnapshot,timelineDirty,timelineSaving,timelineVersion]);
 
   async function renderStoryboard(id: string) {
     setBusy(true); setError(''); setNotice('');
@@ -290,9 +407,18 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     {previewSnapshot && <section style={panel}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:12}}>
         <div><h2 style={{margin:'0 0 4px'}}>Remotion Player Preview</h2><p style={{fontSize:12,color:'#68788e',margin:0}}>Storyboard {previewStoryboardId} · {previewSnapshot.width}×{previewSnapshot.height} · {previewSnapshot.fps} FPS · {Math.ceil(previewSnapshot.durationFrames/previewSnapshot.fps)}s · {previewSnapshot.contentHash.slice(0,12)}</p></div>
-        <button type="button" onClick={()=>{setPreviewSnapshot(null);setPreviewStoryboardId('');}} style={{...button,background:'#edf3f9',color:'#173f72'}}>Close preview</button>
+        <button type="button" onClick={()=>{setPreviewSnapshot(null);setPreviewResolvedAssets({});setPreviewStoryboardId('');setTimelineDirty(false);}} style={{...button,background:'#edf3f9',color:'#173f72'}}>Close preview</button>
       </div>
-      <GraphytionTimelinePlayer snapshot={previewSnapshot}/>
+      <TimelineEditor snapshot={previewSnapshot} resolvedAssets={previewResolvedAssets} assets={assets} savedVersion={timelineVersion} saving={timelineSaving} onChange={next=>{setPreviewSnapshot(next);setTimelineDirty(true);}} onSave={()=>void saveTimelineVersion()}/>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}><button type="button" disabled={busy||timelineSaving} onClick={()=>void renderCurrentTimeline()} style={{...button,background:'#0d6b54'}}>Render current timeline</button><button type="button" disabled={timelineSaving||!timelineDirty} onClick={()=>void saveTimelineVersion()} style={{...button,background:'#edf3f9',color:'#173f72'}}>Save timeline now</button></div>
+      <section style={{border:'1px solid #edf0f5',borderRadius:10,padding:10,marginTop:10}}>
+        <strong style={{fontSize:12}}>Timeline version history</strong>
+        {timelineHistory.map(item=><div key={item.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap',padding:'7px 0',borderTop:'1px solid #edf0f5'}}>
+          <div><strong>v{item.version} · {item.width}×{item.height} · {item.fps} FPS</strong><div style={{fontSize:11,color:'#68788e'}}>{new Date(item.created_at).toLocaleString()} · {item.compiled_hash.slice(0,12)}</div></div>
+          <button type="button" onClick={()=>void restoreTimelineVersion(item)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Restore as draft</button>
+        </div>)}
+        {timelineHistory.length===0&&<p style={{fontSize:11,color:'#68788e'}}>Versions appear after the first autosave.</p>}
+      </section>
     </section>}
     <section style={panel}>
       <h2 style={{marginTop:0}}>04 · Creative runs</h2>
@@ -307,12 +433,43 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     <section style={panel}>
       <h2 style={{marginTop:0}}>06 · Project assets</h2>
       <form onSubmit={uploadAsset} style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap',marginBottom:12}}>
-        <input type="file" aria-label="Upload project asset" accept="image/png,image/jpeg,image/webp,video/mp4,audio/mpeg,audio/wav,application/pdf" onChange={event=>setAssetFile(event.target.files?.[0]||null)} style={{...field,maxWidth:380}}/>
+        <input type="file" aria-label="Upload project asset" accept="image/png,image/jpeg,image/webp,image/svg+xml,video/mp4,audio/mpeg,audio/wav,font/woff2,font/woff,font/ttf,font/otf,application/pdf" onChange={event=>setAssetFile(event.target.files?.[0]||null)} style={{...field,maxWidth:380}}/>
         <button disabled={busy||!assetFile} style={button}>Upload asset</button>
       </form>
-      <p style={{fontSize:12,color:'#68788e'}}>Private Supabase Storage · PNG, JPEG, WebP, MP4, MP3, WAV, PDF · max 50 MB</p>
+      <p style={{fontSize:12,color:'#68788e'}}>Private Supabase Storage · PNG, JPEG, WebP, sanitized SVG, MP4, MP3, WAV, WOFF2/WOFF/TTF/OTF, PDF · max 50 MB</p>
       {assets.map(asset=><div key={asset.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{asset.file_name}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{asset.content_type} · {(asset.size_bytes/1024/1024).toFixed(2)} MB · {asset.sha256.slice(0,12)}</p></div><div style={{display:'flex',gap:7}}><button type="button" onClick={()=>void downloadAsset(asset)} style={button}>Download</button><button type="button" disabled={busy} onClick={()=>void deleteAsset(asset)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Delete</button></div></div>)}
       {assets.length===0&&<p style={{color:'#68788e'}}>No project assets uploaded.</p>}
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>07 · Voice-over & TTS</h2>
+      <p style={{fontSize:13,color:'#68788e'}}>Provider-independent TTS lifecycle. Jika credentials belum tersedia, request akan tersimpan sebagai provider_unavailable dan tidak menghasilkan audio palsu.</p>
+      <form onSubmit={generateVoiceover} style={{display:'grid',gap:8}}>
+        <textarea aria-label="Voice-over text" rows={4} required value={voiceText} onChange={e=>setVoiceText(e.target.value)} placeholder="Masukkan narasi voice-over…" style={field}/>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8}}>
+          <select aria-label="TTS model" value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} style={field}><option value="tts-1">TTS Standard</option><option value="tts-1-hd">TTS HD</option><option value="gpt-4o-mini-tts">GPT-4o mini TTS</option></select>
+          <select aria-label="TTS voice" value={voiceKey} onChange={e=>setVoiceKey(e.target.value)} style={field}>{['alloy','ash','coral','echo','fable','onyx','nova','sage','shimmer','verse'].map(v=><option key={v}>{v}</option>)}</select>
+          <button disabled={busy||!voiceText.trim()} style={button}>Generate voice-over</button>
+        </div>
+      </form>
+      {voiceovers.map(item=><div key={item.id} style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap',padding:'8px 0',borderTop:'1px solid #edf0f5'}}>
+        <div><strong>{item.voice_key} · {item.model_key} · {item.status}</strong><div style={{fontSize:12,color:'#68788e'}}>Language {item.language} · attempt {item.attempt_count} · {item.error_code||item.asset_id||item.id}</div></div>
+        {item.status==='completed'&&item.asset_id&&<button type="button" onClick={()=>void load()} style={{...button,background:'#edf3f9',color:'#173f72'}}>Refresh assets</button>}
+        {(item.status==='provider_unavailable'||item.status==='failed')&&<button type="button" disabled={busy} onClick={()=>void retryVoiceover(item)} style={button}>Retry after provider setup</button>}
+      </div>)}
+      {voiceovers.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada voice-over job.</p>}
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>08 · Subtitle tracks</h2>
+      <form onSubmit={importSubtitleTrack} style={{display:'grid',gap:8}}>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}><select aria-label="Subtitle format" value={subtitleFormat} onChange={e=>setSubtitleFormat(e.target.value as 'srt'|'webvtt')} style={{...field,maxWidth:160}}><option value="srt">SRT</option><option value="webvtt">WebVTT</option></select><button disabled={busy||!subtitleImport.trim()} style={button}>Import subtitle file content</button></div>
+        <textarea aria-label="Subtitle import content" rows={6} value={subtitleImport} onChange={e=>setSubtitleImport(e.target.value)} placeholder="Paste SRT / WebVTT content…" style={{...field,fontFamily:'monospace',fontSize:12}}/>
+      </form>
+      {subtitleTracks.map(track=><article key={track.id} style={{padding:10,border:'1px solid #edf0f5',borderRadius:9,marginTop:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><div><strong>{track.language} · {track.format.toUpperCase()} · v{track.version}</strong><div style={{fontSize:12,color:'#68788e'}}>{track.segments.length} segments</div></div><div style={{display:'flex',gap:6}}><button type="button" onClick={()=>void exportSubtitleTrack(track)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Export</button><button type="button" disabled={!previewSnapshot} onClick={()=>attachSubtitleTrack(track)} style={button}>Attach to timeline</button></div></div>
+        {track.segments.slice(0,5).map(segment=><div key={segment.id} style={{padding:'6px 0',borderTop:'1px solid #edf0f5',fontSize:12}}><span style={{color:'#68788e'}}>{(segment.start_ms/1000).toFixed(2)}s–{(segment.end_ms/1000).toFixed(2)}s</span> · {segment.text}</div>)}
+        {track.segments.length>5&&<p style={{fontSize:11,color:'#68788e'}}>Showing first 5 segments. Export for complete track.</p>}
+      </article>)}
+      {subtitleTracks.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada subtitle track.</p>}
     </section>
     <p style={{fontSize:12,color:'#68788e'}}>AI generation berjalan melalui FastAPI Model Router dengan structured output, prompt version, dan persisted run lifecycle. Jika provider adapter belum diregistrasikan pada runtime, API mengembalikan status unavailable dan tidak membuat hasil AI palsu.</p>
   </main>;

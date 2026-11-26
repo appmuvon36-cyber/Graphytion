@@ -481,3 +481,146 @@ async def platform_llm_providers(
         "openai_credential_configured": bool(settings.openai_api_key_value),
         "generation_ready": "openai" in model_router.available(),
     }}
+
+
+class RenderProfileInput(BaseModel):
+    profile_key:str=Field(min_length=2,max_length=64,pattern=r"^[a-z0-9][a-z0-9-]*$")
+    name:str=Field(min_length=2,max_length=120)
+    description:str|None=Field(default=None,max_length=500)
+    width:int=Field(ge=320,le=7680)
+    height:int=Field(ge=240,le=4320)
+    fps:int=Field(ge=1,le=120)
+    container:str=Field(pattern=r"^(mp4|webm)$")
+    video_codec:str=Field(pattern=r"^(h264|h265|vp8|vp9)$")
+    video_crf:int=Field(ge=0,le=51)
+    video_bitrate:str|None=Field(default=None,max_length=32)
+    audio_codec:str=Field(pattern=r"^(aac|opus|none)$")
+    audio_bitrate:str|None=Field(default=None,max_length=32)
+    render_concurrency:int=Field(default=2,ge=1,le=8)
+    priority:int=Field(default=10,ge=0,le=100)
+    thumbnail_enabled:bool=True
+    preview_enabled:bool=True
+    is_default:bool=False
+
+    def validate_codec_pair(self):
+        if self.container=="mp4" and (self.video_codec not in {"h264","h265"} or self.audio_codec not in {"aac","none"}):
+            raise HTTPException(422,"MP4 supports H.264/H.265 and AAC/no audio")
+        if self.container=="webm" and (self.video_codec not in {"vp8","vp9"} or self.audio_codec not in {"opus","none"}):
+            raise HTTPException(422,"WebM supports VP8/VP9 and Opus/no audio")
+        return self
+
+
+@router.get("/render-profiles")
+async def admin_list_render_profiles(claims:AuthenticatedClaims,include_archived:bool=False,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    rows=(await db.execute(text("""
+        select id,profile_key,name,description,scope,version,width,height,fps,container,video_codec,
+          video_crf,video_bitrate,audio_codec,audio_bitrate,render_concurrency,priority,
+          thumbnail_enabled,preview_enabled,is_default,is_archived,updated_at
+        from public.render_profiles where scope='global' and (:archived or is_archived=false)
+        order by profile_key,version desc
+    """),{"archived":include_archived})).mappings().all()
+    return {"data":[dict(r) for r in rows]}
+
+
+@router.post("/render-profiles",status_code=201)
+async def admin_create_render_profile(payload:RenderProfileInput,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    payload.validate_codec_pair()
+    if payload.is_default:
+        await db.execute(text("update public.render_profiles set is_default=false where scope='global'"))
+    row=(await db.execute(text("""
+        insert into public.render_profiles(profile_key,name,description,scope,version,width,height,fps,container,
+          video_codec,video_crf,video_bitrate,audio_codec,audio_bitrate,render_concurrency,priority,
+          thumbnail_enabled,preview_enabled,is_default,created_by,updated_by)
+        values(:key,:name,:description,'global',1,:width,:height,:fps,:container,:video_codec,:crf,
+          :video_bitrate,:audio_codec,:audio_bitrate,:concurrency,:priority,:thumbnail,:preview,:default,:actor,:actor)
+        returning *
+    """),{"key":payload.profile_key,"name":payload.name,"description":payload.description,"width":payload.width,
+      "height":payload.height,"fps":payload.fps,"container":payload.container,"video_codec":payload.video_codec,
+      "crf":payload.video_crf,"video_bitrate":payload.video_bitrate,"audio_codec":payload.audio_codec,
+      "audio_bitrate":payload.audio_bitrate,"concurrency":payload.render_concurrency,"priority":payload.priority,
+      "thumbnail":payload.thumbnail_enabled,"preview":payload.preview_enabled,"default":payload.is_default,"actor":actor})).mappings().one()
+    await _audit(db,request,actor,"render_profile.created","render_profile",row["id"],{"profile_key":payload.profile_key,"version":1})
+    await db.commit()
+    return {"data":dict(row)}
+
+
+@router.patch("/render-profiles/{profile_id}")
+async def admin_version_render_profile(profile_id:UUID,payload:RenderProfileInput,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor);payload.validate_codec_pair()
+    previous=(await db.execute(text("select * from public.render_profiles where id=:id and scope='global' and is_archived=false for update"),{"id":profile_id})).mappings().first()
+    if not previous:raise HTTPException(404,"Active global render profile not found")
+    if payload.profile_key!=previous["profile_key"]:raise HTTPException(422,"Profile key cannot be changed when versioning an existing profile")
+    if payload.is_default:await db.execute(text("update public.render_profiles set is_default=false where scope='global'"))
+    await db.execute(text("update public.render_profiles set is_archived=true,is_default=false,updated_by=:actor where id=:id"),{"actor":actor,"id":profile_id})
+    values=payload.model_dump()
+    row=(await db.execute(text("""
+      insert into public.render_profiles(profile_key,name,description,scope,version,width,height,fps,container,video_codec,
+       video_crf,video_bitrate,audio_codec,audio_bitrate,render_concurrency,priority,thumbnail_enabled,preview_enabled,is_default,created_by,updated_by)
+      values(:profile_key,:name,:description,'global',:version,:width,:height,:fps,:container,:video_codec,:video_crf,
+       :video_bitrate,:audio_codec,:audio_bitrate,:render_concurrency,:priority,:thumbnail_enabled,:preview_enabled,:is_default,:actor,:actor)
+      returning *
+    """),{**values,"version":int(previous["version"])+1,"actor":actor})).mappings().one()
+    await _audit(db,request,actor,"render_profile.versioned","render_profile",row["id"],{"previous_id":str(profile_id),"version":row["version"]})
+    await db.commit();return {"data":dict(row)}
+
+
+@router.post("/render-profiles/{profile_id}/archive")
+async def admin_archive_render_profile(profile_id:UUID,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    row=(await db.execute(text("update public.render_profiles set is_archived=true,is_default=false,updated_by=:actor where id=:id and scope='global' and is_archived=false returning id,profile_key,version"),{"actor":actor,"id":profile_id})).mappings().first()
+    if not row:raise HTTPException(404,"Active global render profile not found")
+    await _audit(db,request,actor,"render_profile.archived","render_profile",row["id"],{"profile_key":row["profile_key"],"version":row["version"]})
+    await db.commit();return {"data":dict(row)}
+
+
+@router.get("/motion-components")
+async def admin_list_motion_components(claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    rows=(await db.execute(text("select component_key,component_version,category,enabled,reason,updated_by,updated_at from public.motion_component_controls order by category,component_key"))).mappings().all()
+    return {"data":[dict(r) for r in rows]}
+
+
+class MotionComponentToggle(BaseModel):
+    enabled:bool
+    reason:str=Field(min_length=3,max_length=500)
+
+
+@router.patch("/motion-components/{component_key}")
+async def admin_toggle_motion_component(component_key:str,payload:MotionComponentToggle,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    row=(await db.execute(text("update public.motion_component_controls set enabled=:enabled,reason=:reason,updated_by=:actor,updated_at=now() where component_key=:key returning component_key,component_version,category,enabled,reason,updated_at"),{"enabled":payload.enabled,"reason":payload.reason,"actor":actor,"key":component_key})).mappings().first()
+    if not row:raise HTTPException(404,"Allowlisted motion component not found")
+    await db.execute(text("insert into public.audit_logs(actor_user_id,action,resource_type,metadata,request_id) values(:actor,'platform.motion_component.toggled','motion_component',cast(:metadata as jsonb),:request)"),{"actor":actor,"metadata":json.dumps({"component_key":component_key,"enabled":payload.enabled,"reason":payload.reason}),"request":request.state.request_id})
+    await db.commit();return {"data":dict(row)}
+
+
+@router.get("/render-jobs")
+async def admin_list_render_jobs(claims:AuthenticatedClaims,page:int=Query(default=1,ge=1),per_page:int=Query(default=50,ge=1,le=100),status:str|None=Query(default=None,max_length=32),db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    rows=(await db.execute(text("""
+      select r.id,r.project_id,r.workspace_id,r.status,r.progress_percent,r.attempt_count,r.worker_id,
+       r.lease_expires_at,r.timeline_hash,r.snapshot_version,r.created_at,r.started_at,r.completed_at,
+       p.name project_name,w.name workspace_name,rp.name render_profile,
+       (select a.status from public.render_attempts a where a.render_job_id=r.id order by a.attempt_number desc limit 1) latest_attempt_status
+      from public.render_jobs r join public.video_projects p on p.id=r.project_id
+      join public.workspaces w on w.id=r.workspace_id left join public.render_profiles rp on rp.id=r.render_profile_id
+      where (:status is null or r.status=:status) order by r.created_at desc limit :limit offset :offset
+    """),{"status":status,"limit":per_page,"offset":(page-1)*per_page})).mappings().all()
+    return {"data":[dict(r) for r in rows],"page":{"number":page,"size":per_page}}
+
+
+@router.get("/media-jobs")
+async def admin_list_media_jobs(claims:AuthenticatedClaims,page:int=Query(default=1,ge=1),per_page:int=Query(default=50,ge=1,le=100),status:str|None=Query(default=None,max_length=32),db:AsyncSession=DbSession):
+    actor=_actor(claims);await _require_platform_admin(db,actor)
+    rows=(await db.execute(text("""
+      select a.id,a.project_id,a.workspace_id,a.status,a.provider_key,a.model_key,a.voice_key,
+        a.worker_id,a.lease_expires_at,a.attempt_count,a.max_attempts,a.error_code,a.asset_id,a.created_at,a.completed_at,
+        p.name project_name,w.name workspace_name
+      from public.audio_generations a join public.video_projects p on p.id=a.project_id
+      join public.workspaces w on w.id=a.workspace_id
+      where (:status is null or a.status=:status)
+      order by a.created_at desc limit :limit offset :offset
+    """),{"status":status,"limit":per_page,"offset":(page-1)*per_page})).mappings().all()
+    return {"data":[dict(r) for r in rows],"page":{"number":page,"size":per_page}}

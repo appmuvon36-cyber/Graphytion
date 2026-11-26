@@ -1,1 +1,31 @@
-export type TimelineClip={id:string;trackId:string;startFrame:number;durationFrames:number;componentKey?:string|null;props:Record<string,unknown>};export type CompositionSnapshot={version:number;fps:number;width:number;height:number;durationFrames:number;clips:TimelineClip[];contentHash:string};export function millisecondsToFrames(ms:number,fps:number){if(!Number.isFinite(ms)||ms<0||!Number.isInteger(fps)||fps<1||fps>120)throw new RangeError('Invalid timebase');return Math.round(ms*fps/1000);}export function validateComposition(s:CompositionSnapshot){if(!Number.isInteger(s.fps)||s.fps<1||s.fps>120)throw new Error('Unsupported FPS');if(!Number.isInteger(s.durationFrames)||s.durationFrames<=0)throw new Error('Invalid durationFrames');if(s.width<=0||s.height<=0)throw new Error('Invalid dimensions');const ids=new Set<string>();for(const c of s.clips){if(ids.has(c.id))throw new Error('Duplicate clip id');ids.add(c.id);if(!Number.isInteger(c.startFrame)||c.startFrame<0||!Number.isInteger(c.durationFrames)||c.durationFrames<=0)throw new Error('Invalid clip frame range');if(c.startFrame+c.durationFrames>s.durationFrames)throw new Error('Clip exceeds composition duration');}}
+export type TrackKind='video'|'visual'|'shape'|'typography'|'audio'|'voiceover'|'subtitle'|'effects';
+export type TimelineTrack={id:string;kind:TrackKind;name:string;zIndex:number;visible:boolean;locked:boolean;muted:boolean;volume:number};
+export type MotionKeyframe={frame:number;value:number|string;easing?:'linear'|'ease-in'|'ease-out'|'ease-in-out'};
+export type Transition={type:'cut'|'fade'|'dissolve'|'wipe'|'slide'|'zoom';durationFrames:number;direction?:'left'|'right'|'up'|'down'};
+export type TimelineClip={id:string;trackId:string;startFrame:number;durationFrames:number;trimStartFrames:number;playbackRate:number;componentKey:string;componentVersion:string;props:Record<string,unknown>;assetId?:string;transitionIn?:Transition;transitionOut?:Transition;keyframes?:Record<string,MotionKeyframe[]>};
+export type CompositionAssetRef={assetId:string;kind:'image'|'video'|'audio'|'font'|'subtitle'|'resource';required:boolean};
+export type CompositionSnapshot={version:2;compositionVersion:'2.0.0';fps:number;width:number;height:number;durationFrames:number;tracks:TimelineTrack[];clips:TimelineClip[];assetRefs:CompositionAssetRef[];background:string;contentHash?:string};
+export type ResolvedCompositionAssets=Record<string,string>;
+export const MOTION_COMPONENTS=[
+ {key:'core.title-card.v1',version:'1.1.0',category:'typography',label:'Title card'},
+ {key:'visual.image.v1',version:'1.0.0',category:'image',label:'Image'},
+ {key:'visual.video.v1',version:'1.0.0',category:'video',label:'Video'},
+ {key:'visual.shape.v1',version:'1.0.0',category:'shape',label:'Shape'},
+ {key:'text.basic.v1',version:'1.0.0',category:'typography',label:'Text'},
+ {key:'data.chart.v1',version:'1.0.0',category:'chart',label:'Chart'},
+ {key:'audio.clip.v1',version:'1.0.0',category:'audio',label:'Audio'},
+ {key:'text.subtitle.v1',version:'1.0.0',category:'subtitle',label:'Subtitle'},
+] as const;
+export function millisecondsToFrames(ms:number,fps:number){if(!Number.isFinite(ms)||ms<0||!Number.isInteger(fps)||fps<1||fps>120)throw new RangeError('Invalid timebase');return Math.round(ms*fps/1000);}
+export function framesToMilliseconds(frames:number,fps:number){if(!Number.isInteger(frames)||frames<0||!Number.isInteger(fps)||fps<1)throw new RangeError('Invalid frame time');return Math.round(frames*1000/fps);}
+export function calculateDurationFrames(clips:TimelineClip[]){return clips.reduce((max,c)=>Math.max(max,c.startFrame+c.durationFrames),1);}
+export function validateComposition(s:CompositionSnapshot){
+ if(s.version!==2||s.compositionVersion!=='2.0.0')throw new Error('Unsupported composition schema version');
+ if(!Number.isInteger(s.fps)||s.fps<1||s.fps>120)throw new Error('Unsupported FPS');
+ if(!Number.isInteger(s.durationFrames)||s.durationFrames<=0||s.durationFrames>s.fps*60*30)throw new Error('Invalid composition duration');
+ if(!Number.isInteger(s.width)||s.width<320||s.width>7680||!Number.isInteger(s.height)||s.height<240||s.height>4320)throw new Error('Invalid composition dimensions');
+ if(!Array.isArray(s.tracks)||!Array.isArray(s.clips)||!Array.isArray(s.assetRefs))throw new Error('Tracks, clips and assetRefs must be arrays');
+ const trackIds=new Set<string>();for(const t of s.tracks){if(!t.id||trackIds.has(t.id))throw new Error('Track IDs must be unique');trackIds.add(t.id);if(!Number.isInteger(t.zIndex)||!Number.isFinite(t.volume)||t.volume<0||t.volume>1)throw new Error('Invalid track configuration');}
+ const clipIds=new Set<string>();for(const c of s.clips){if(!c.id||clipIds.has(c.id))throw new Error('Clip IDs must be unique');clipIds.add(c.id);if(!trackIds.has(c.trackId))throw new Error('Clip references an unknown track');if(!Number.isInteger(c.startFrame)||c.startFrame<0||!Number.isInteger(c.durationFrames)||c.durationFrames<1||c.startFrame+c.durationFrames>s.durationFrames)throw new Error('Clip frame range is invalid');if(!Number.isFinite(c.playbackRate)||c.playbackRate<.1||c.playbackRate>4)throw new Error('Invalid playback rate');for(const tr of [c.transitionIn,c.transitionOut])if(tr&&(!Number.isInteger(tr.durationFrames)||tr.durationFrames<0||tr.durationFrames>c.durationFrames))throw new Error('Transition duration exceeds clip duration');for(const [property,frames] of Object.entries(c.keyframes??{})){if(!['opacity','scale','translateX','translateY','rotate','volume'].includes(property))throw new Error('Unsupported keyframe property');let previous=-1;for(const f of frames){if(!Number.isInteger(f.frame)||f.frame<0||f.frame>c.durationFrames||f.frame<=previous)throw new Error('Keyframes must be ordered within clip duration');previous=f.frame;}}}
+ const refs=new Set<string>();for(const a of s.assetRefs){if(!a.assetId||refs.has(a.assetId))throw new Error('Asset references must be unique');refs.add(a.assetId);}
+}

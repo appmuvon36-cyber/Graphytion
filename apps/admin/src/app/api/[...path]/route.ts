@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { handleSessionProxy } from '../../../lib/session-proxy';
 
 export const runtime = 'nodejs';

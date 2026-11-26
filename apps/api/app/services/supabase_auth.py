@@ -69,6 +69,26 @@ class SupabaseAuth:
         except httpx.RequestError:
             return False
 
+    async def signing_keys_check(self) -> bool:
+        """Verify asymmetric JWT keys are reachable, or a legacy HS256 secret is configured."""
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.get(settings.supabase_jwks_url)
+            if response.is_success:
+                payload = response.json()
+                keys = payload.get("keys") if isinstance(payload, dict) else None
+                if isinstance(keys, list) and any(
+                    isinstance(key, dict) and key.get("kid") and key.get("kty")
+                    for key in keys
+                ):
+                    return True
+        except (httpx.RequestError, ValueError):
+            pass
+        return bool(
+            settings.supabase_jwt_secret
+            and settings.supabase_jwt_secret.get_secret_value()
+        )
+
     async def signup(self, email: str, password: str, display_name: str | None) -> dict[str, Any]:
         metadata = {"display_name": display_name} if display_name else {}
         return await self._request(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import secrets
 from typing import Annotated, Any
@@ -15,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims
+from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.redis import redis_client
 from app.services.idempotency import (
@@ -37,6 +39,15 @@ from app.services.workspace_authorization import (
 
 router = APIRouter()
 Db = Depends(get_db_session)
+
+
+async def require_bff(request: Request) -> None:
+    expected = settings.bff_shared_secret_value
+    supplied = request.headers.get("X-Graphytion-BFF-Secret", "")
+    if not expected or not supplied:
+        raise HTTPException(status_code=503, detail="Secure session gateway is not configured")
+    if not hmac.compare_digest(expected, supplied):
+        raise HTTPException(status_code=403, detail="Secure session gateway authentication failed")
 
 
 async def auth_rate_limit(request: Request) -> None:
@@ -231,7 +242,7 @@ async def audit(
     )
 
 
-@router.post("/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit)])
+@router.post("/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
 async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.signup(payload.email, payload.password, payload.display_name)
     auth_user = result.get("user") or {}
@@ -253,7 +264,7 @@ async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     return result
 
 
-@router.post("/auth/login", dependencies=[Depends(auth_rate_limit)])
+@router.post("/auth/login", dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
 async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.login(payload.email, payload.password)
     auth_user = result.get("user") or {}
@@ -275,7 +286,7 @@ async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
     return result
 
 
-@router.post("/auth/refresh", dependencies=[Depends(auth_rate_limit)])
+@router.post("/auth/refresh", dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
 async def refresh(payload: RefreshRequest):
     return await supabase_auth.refresh(payload.refresh_token)
 
@@ -331,7 +342,7 @@ async def recovery(payload: EmailRequest, request: Request, db: AsyncSession = D
     return result
 
 
-@router.post("/auth/verify", dependencies=[Depends(auth_rate_limit)])
+@router.post("/auth/verify", dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
 async def verify_email(payload: VerifyEmail, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.verify_email(payload.token_hash, payload.type)
     user = result.get("user") or {}

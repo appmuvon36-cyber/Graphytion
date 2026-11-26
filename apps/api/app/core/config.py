@@ -109,14 +109,15 @@ class Settings(BaseSettings):
 
         db_url = urlparse(self.database_url_value)
         if (
-            db_url.scheme not in {"postgresql+asyncpg", "postgresql"}
+            db_url.scheme != "postgresql+asyncpg"
             or db_url.hostname != "db.xtjwmezfzexvupbfsdqt.supabase.co"
             or db_url.username != "graphytion_api"
             or not db_url.password
             or "CHANGE_ME" in self.database_url_value
         ):
             raise ValueError(
-                "DATABASE_URL must use a dedicated non-administrative PostgreSQL login and a real password"
+                "DATABASE_URL must use a dedicated non-administrative PostgreSQL "
+                "login and a real password"
             )
         if "ssl=require" not in self.database_url_value and "sslmode=require" not in self.database_url_value:
             raise ValueError("DATABASE_URL must require TLS with ssl=require")

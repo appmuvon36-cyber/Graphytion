@@ -113,12 +113,6 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 except Exception:
                     logger.exception("creative_retry_signal_failed", extra={"run_id": str(claimed["run_id"])})
             return True
-        finally:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
         except Exception:
             logger.exception("creative_worker_unhandled_failure", extra={"run_id": str(claimed["run_id"])})
             await db.rollback()
@@ -136,6 +130,12 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             """), {"task": task_id})
             await db.commit()
             return True
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _ensure_group() -> None:

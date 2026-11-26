@@ -161,6 +161,9 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             return True
         except Exception:
             logger.exception("creative_worker_unhandled_failure", extra={"run_id": str(claimed["run_id"])})
+            if not processing_task.done():
+                processing_task.cancel()
+                await asyncio.gather(processing_task, return_exceptions=True)
             await db.rollback()
             await db.execute(text("""
                 update public.production_runs

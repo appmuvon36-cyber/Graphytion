@@ -43,7 +43,11 @@ class Worker:
   beat=asyncio.create_task(self.heartbeat(job_id))
   try:
    audio,mime=await self.provider.synthesize(text=job["input_text"],voice=job["voice_key"],model=job.get("model_key") or self.model_default)
-   alignment=await self.provider.align_words(audio=audio)
+   try:
+    alignment=await self.provider.align_words(audio=audio)
+   except Exception:
+    log.exception("word_alignment_unavailable",extra={"generation_id":job_id})
+    alignment={"status":"unavailable","provider":"openai","reason":"alignment_adapter_failed","words":[]}
    metadata,waveform=await asyncio.to_thread(analyze_audio_bytes,audio)
    await self.api("/internal/media-jobs/"+job_id+"/artifact",method="POST",params={"worker_id":WORKER_ID},
     data={"alignment_json":json.dumps(alignment),"media_metadata":json.dumps(metadata)},

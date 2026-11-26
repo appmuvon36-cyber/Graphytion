@@ -1009,22 +1009,32 @@ async def cancel_queued_creative_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Creative run not found")
     await _project_scope(db, run["project_id"], actor, "project.update")
-    if run["status"] != "queued":
-        raise HTTPException(status_code=409, detail="Only queued creative runs can be cancelled; running provider calls are not interruptible")
-    await db.execute(text("""
-        update public.production_runs set status='cancelled',cancelled_at=now(),
-            completed_at=now(),worker_id=null,lease_expires_at=null
-        where id=:run and status='queued'
-    """), {"run": run_id})
-    await db.execute(text("""
-        update public.agent_tasks set status='cancelled',completed_at=now()
-        where production_run_id=:run and status in ('queued','pending','retry_wait')
-    """), {"run": run_id})
+    if run["status"] == "queued":
+        next_status = "cancelled"
+        await db.execute(text("""
+            update public.production_runs set status='cancelled',cancelled_at=now(),
+                completed_at=now(),worker_id=null,lease_expires_at=null
+            where id=:run and status='queued'
+        """), {"run": run_id})
+        await db.execute(text("""
+            update public.agent_tasks set status='cancelled',completed_at=now()
+            where production_run_id=:run and status in ('queued','pending','retry_wait')
+        """), {"run": run_id})
+    elif run["status"] in ("planning", "scripting", "storyboarding"):
+        next_status = "cancel_requested"
+        await db.execute(text("""
+            update public.production_runs set status='cancel_requested',cancel_requested_at=now()
+            where id=:run and status in ('planning','scripting','storyboarding')
+        """), {"run": run_id})
+    else:
+        raise HTTPException(status_code=409, detail=f"Creative run cannot be cancelled from status {run['status']}")
     await db.execute(text("""
         insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
-        values (:run,'stage.cancelled','{}'::jsonb,
+        values (:run,'stage.cancel_requested',cast(:payload as jsonb),
           (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
-    """), {"run": run_id})
-    await _audit(db, request, actor, run["workspace_id"], "creative.run.cancelled", "production_run", run_id)
+    """), {"run": run_id, "payload": json.dumps({"status": next_status})})
+    await _audit(db, request, actor, run["workspace_id"], "creative.run.cancel_requested", "production_run", run_id)
     await db.commit()
+    return {"data": {"run_id": str(run_id), "status": next_status}}
+
     return {"data": {"run_id": str(run_id), "status": "cancelled"}}

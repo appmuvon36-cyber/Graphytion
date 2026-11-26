@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.routes import creative, health, identity, platform_admin, render, system, webhooks
+from app.api.v1.routes import assets, creative, health, identity, platform_admin, render, system, webhooks
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -10,5 +10,6 @@ api_router.include_router(
 )
 api_router.include_router(platform_admin.router, prefix="/admin", tags=["platform administration"])
 api_router.include_router(render.router, tags=["render jobs", "render workers"])
+api_router.include_router(assets.router, tags=["project assets"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])

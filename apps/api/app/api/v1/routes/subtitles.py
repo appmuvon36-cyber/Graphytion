@@ -498,8 +498,12 @@ async def split_subtitle_segment(
     first = _snapshot(await _get_segment(db, track_id, segment_id))
     second_index = int(old["segment_index"]) + 1
     await db.execute(
-        text("update public.subtitle_segments set segment_index=segment_index+1 where track_id=:track and segment_index>=:idx"),
+        text("update public.subtitle_segments set segment_index=segment_index+10000 where track_id=:track and segment_index>=:idx"),
         {"track": track_id, "idx": second_index},
+    )
+    await db.execute(
+        text("update public.subtitle_segments set segment_index=segment_index-9999 where track_id=:track and segment_index>=:offset"),
+        {"track": track_id, "offset": second_index + 10000},
     )
     created = await _insert_segment(
         db, track_id,
@@ -539,13 +543,16 @@ async def merge_subtitle_segments(
     if any(rows[i]["end_ms"] > rows[i + 1]["start_ms"] for i in range(len(rows) - 1)):
         raise HTTPException(422, "Overlapping segments cannot be merged")
     survivor = rows[0]
+    if len({str(row["audio_asset_id"]) for row in rows}) > 1:
+        raise HTTPException(422, "Segments linked to different audio assets cannot be merged")
     for row in rows:
         await _revision(db, track_id, row["id"], "merged", _snapshot(row), actor, request)
     merged_text = payload.separator.join(row["text"] for row in rows)
+    merged_words = [word for row in rows for word in (row["word_timings"] or [])]
     await db.execute(
-        text("""update public.subtitle_segments set end_ms=:end,text=:text,word_timings='[]'::jsonb,
+        text("""update public.subtitle_segments set end_ms=:end,text=:text,word_timings=cast(:words as jsonb),
         version=version+1,updated_at=now() where id=:id"""),
-        {"end": rows[-1]["end_ms"], "text": merged_text, "id": survivor["id"]},
+        {"end": rows[-1]["end_ms"], "text": merged_text, "words": json.dumps(merged_words), "id": survivor["id"]},
     )
     await db.execute(
         text("delete from public.subtitle_segments where track_id=:track and id=any(:ids) and id<>:keep"),
@@ -576,15 +583,18 @@ async def reorder_subtitle_segments(
     if len(set(payload.segment_ids)) != len(payload.segment_ids) or set(payload.segment_ids) != existing_ids:
         raise HTTPException(422, "Reorder must contain every existing segment exactly once")
     by_id = {row["id"]: row for row in rows}
+    await db.execute(
+        text("update public.subtitle_segments set segment_index=segment_index+10000 where track_id=:track"),
+        {"track": track_id},
+    )
     for index, segment_id in enumerate(payload.segment_ids):
         row = by_id[segment_id]
-        if row["segment_index"] != index:
-            await db.execute(
-                text("update public.subtitle_segments set segment_index=:idx,version=version+1,updated_at=now() where id=:id"),
-                {"idx": index, "id": segment_id},
-            )
-            updated = _snapshot({**dict(row), "segment_index": index, "version": row["version"] + 1})
-            await _revision(db, track_id, segment_id, "reordered", updated, actor, request)
+        await db.execute(
+            text("update public.subtitle_segments set segment_index=:idx,version=version+1,updated_at=now() where id=:id"),
+            {"idx": index, "id": segment_id},
+        )
+        updated = _snapshot({**dict(row), "segment_index": index, "version": row["version"] + 1})
+        await _revision(db, track_id, segment_id, "reordered", updated, actor, request)
     await _bump_track(db, track_id)
     await _audit(db, workspace, actor, "subtitle_segment.reordered", track_id, request)
     await db.commit()

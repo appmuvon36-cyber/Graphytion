@@ -347,7 +347,7 @@ insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
 values ('avatars','avatars',false,5242880,array['image/png','image/jpeg','image/webp'])
 on conflict (id) do nothing;
 
-do $$
+do $avatars$
 begin
   if exists (
     select 1 from storage.buckets
@@ -361,7 +361,7 @@ begin
     raise exception 'Existing avatars bucket configuration is incompatible; reconcile it before migration';
   end if;
 end
-$$;
+$avatars$;
 
 drop policy if exists graphytion_avatar_read_own on storage.objects;
 create policy graphytion_avatar_read_own on storage.objects for select to authenticated

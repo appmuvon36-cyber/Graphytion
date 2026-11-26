@@ -14,6 +14,18 @@ class SupabaseStorage:
             raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is not configured")
         return {"Authorization": f"Bearer {key}", "apikey": key}
 
+    async def health_check(self, bucket: str = "avatars") -> bool:
+        try:
+            base_url = settings.supabase_url.rstrip("/")
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(
+                    f"{base_url}/storage/v1/bucket/{quote(bucket, safe='')}",
+                    headers=self._headers(),
+                )
+            return response.is_success
+        except (httpx.RequestError, RuntimeError):
+            return False
+
     async def upload(
         self, *, bucket: str, object_path: str, content: bytes, content_type: str
     ) -> None:

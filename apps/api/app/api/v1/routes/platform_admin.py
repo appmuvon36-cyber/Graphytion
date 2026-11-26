@@ -14,6 +14,7 @@ from app.core.database import set_rls_subject
 from app.services.supabase_auth import supabase_auth
 from app.services.llm_gateway import model_router
 from app.core.config import settings
+from app.services.queue_notifications import notify_worker
 
 router = APIRouter()
 
@@ -626,3 +627,71 @@ async def admin_list_media_jobs(claims:AuthenticatedClaims,page:int=Query(defaul
       order by a.created_at desc limit :limit offset :offset
     """),{"status":status,"limit":per_page,"offset":(page-1)*per_page})).mappings().all()
     return {"data":[dict(r) for r in rows],"page":{"number":page,"size":per_page}}
+
+@router.post("/render-jobs/{render_job_id}/retry", status_code=202)
+async def admin_retry_render_job(
+    render_job_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        update public.render_jobs
+        set status='queued',
+            progress_percent=0,
+            max_attempts=greatest(max_attempts, attempt_count + 1),
+            error_code=null,
+            error_message_safe=null,
+            worker_id=null,
+            lease_expires_at=null,
+            completed_at=null
+        where id=:job and status='failed'
+        returning id, attempt_count, max_attempts
+    """), {"job": render_job_id})).mappings().first()
+    if row is None:
+        exists = await db.scalar(text("select exists(select 1 from public.render_jobs where id=:job)"),
+                                 {"job": render_job_id})
+        if not exists:
+            raise HTTPException(status_code=404, detail="Render job not found")
+        raise HTTPException(status_code=409, detail="Only failed render jobs can be retried")
+    await _audit(db, request, actor, "platform.render_job.retried", "render_job",
+                 render_job_id, {"attempt_count": row["attempt_count"], "max_attempts": row["max_attempts"]})
+    await db.commit()
+    await notify_worker("render", str(render_job_id))
+    return {"data": {"render_job_id": str(render_job_id), "status": "queued"}}
+
+
+@router.post("/media-jobs/{generation_id}/retry", status_code=202)
+async def admin_retry_media_job(
+    generation_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        update public.audio_generations
+        set status='queued',
+            max_attempts=greatest(max_attempts, attempt_count + 1),
+            error_code=null,
+            worker_id=null,
+            lease_expires_at=null,
+            completed_at=null
+        where id=:job and status in ('failed','provider_unavailable')
+        returning id, attempt_count, max_attempts
+    """), {"job": generation_id})).mappings().first()
+    if row is None:
+        exists = await db.scalar(text("select exists(select 1 from public.audio_generations where id=:job)"),
+                                 {"job": generation_id})
+        if not exists:
+            raise HTTPException(status_code=404, detail="Media job not found")
+        raise HTTPException(status_code=409, detail="Only failed or unavailable media jobs can be retried")
+    await _audit(db, request, actor, "platform.media_job.retried", "audio_generation",
+                 generation_id, {"attempt_count": row["attempt_count"], "max_attempts": row["max_attempts"]})
+    await db.commit()
+    await notify_worker("media", str(generation_id))
+    return {"data": {"generation_id": str(generation_id), "status": "queued"}}
+

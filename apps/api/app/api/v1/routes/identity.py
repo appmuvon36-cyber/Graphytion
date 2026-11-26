@@ -16,6 +16,11 @@ from app.core.database import get_db_session
 from app.core.redis import redis_client
 from app.services.supabase_auth import supabase_auth
 from app.services.supabase_storage import SupabaseStorage
+from app.services.idempotency import (
+    complete_idempotency,
+    reserve_idempotency,
+    validate_idempotency_key,
+)
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -426,10 +431,24 @@ async def list_workspaces(claims: AuthenticatedClaims, db: AsyncSession = Db):
 
 @router.post("/workspaces", status_code=201)
 async def create_workspace(
-    payload: WorkspaceCreate, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
+    payload: WorkspaceCreate,
+    request: Request,
+    claims: AuthenticatedClaims,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = Db,
 ):
     user_id = uid(claims)
     try:
+        reservation_id, cached = await reserve_idempotency(
+            db,
+            actor_user_id=user_id,
+            operation="workspace.create",
+            key=validate_idempotency_key(idempotency_key),
+            payload=payload.model_dump(),
+        )
+        if cached is not None:
+            await db.rollback()
+            return cached
         row = (
             (
                 await db.execute(
@@ -451,8 +470,10 @@ async def create_workspace(
             {"workspace": row["id"], "user": user_id},
         )
         await audit(db, user_id, row["id"], "workspace.created", "workspace", row["id"], request)
+        response_body = {"data": dict(row)}
+        await complete_idempotency(db, reservation_id, response_body)
         await db.commit()
-        return {"data": dict(row)}
+        return response_body
     except Exception:
         await db.rollback()
         raise
@@ -874,11 +895,22 @@ async def create_project(
     payload: ProjectCreate,
     request: Request,
     claims: AuthenticatedClaims,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
     await require_workspace(db, actor, workspace_id, {"owner", "admin", "editor", "member"})
     try:
+        reservation_id, cached = await reserve_idempotency(
+            db,
+            actor_user_id=actor,
+            operation=f"project.create:{workspace_id}",
+            key=validate_idempotency_key(idempotency_key),
+            payload={"workspace_id": str(workspace_id), **payload.model_dump()},
+        )
+        if cached is not None:
+            await db.rollback()
+            return cached
         row = (
             (
                 await db.execute(
@@ -918,8 +950,10 @@ async def create_project(
             {"id": row["id"], "settings": __import__("json").dumps(payload.settings)},
         )
         await audit(db, actor, workspace_id, "project.created", "video_project", row["id"], request)
+        response_body = {"data": dict(row)}
+        await complete_idempotency(db, reservation_id, response_body)
         await db.commit()
-        return {"data": dict(row)}
+        return response_body
     except Exception:
         await db.rollback()
         raise

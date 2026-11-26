@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
 import type {
-  CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi,
+  CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi,
 } from '@graphytion/contracts';
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
 const field: React.CSSProperties = { width: '100%', padding: '11px 13px', border: '1px solid #dce3ed', borderRadius: 9, fontSize: 14, background: '#fff', color: '#142033' };
 const button: React.CSSProperties = { border: 0, borderRadius: 9, padding: '10px 14px', background: '#173f72', color: '#fff', fontWeight: 700, cursor: 'pointer' };
-type CreativeRunItem = { id: string; status: string; current_stage?: string | null; progress_percent?: number; error_code?: string | null; created_at: string };
-type RenderItem = { id: string; status: string; progress_percent: number; output_path?: string | null; error_code?: string | null; created_at: string };
+type CreativeRunItem = ProductionRunApi;
+type RenderItem = RenderJobApi;
 const panel: React.CSSProperties = { background: '#fff', border: '1px solid #e5eaf1', borderRadius: 14, padding: 18, marginBottom: 14 };
 
 export default function CreativeStudio({ projectId }: { projectId: string }) {

@@ -20,9 +20,9 @@ async def set_rls_subject(session: AsyncSession, user_id: str | None) -> None:
         text("""
             select
               set_config('request.jwt.claim.sub', :subject, false),
-              set_config('request.jwt.claim.role', 'authenticated', false)
+              set_config('request.jwt.claim.role', :role, false)
         """),
-        {"subject": user_id or ""},
+        {"subject": user_id or "", "role": "authenticated" if user_id else ""},
     )
 
 

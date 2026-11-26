@@ -52,6 +52,9 @@ create policy render_jobs_api_tenant on public.render_jobs
   for all to graphytion_api
   using (private.graphytion_is_workspace_member(workspace_id))
   with check (private.graphytion_is_workspace_member(workspace_id));
+drop policy if exists render_jobs_platform_admin_read on public.render_jobs;
+create policy render_jobs_platform_admin_read on public.render_jobs
+  for select to graphytion_api using (private.graphytion_is_platform_admin());
 
 revoke all on public.render_jobs from public, anon, authenticated, service_role;
 grant select,insert,update,delete on public.render_jobs to graphytion_api;

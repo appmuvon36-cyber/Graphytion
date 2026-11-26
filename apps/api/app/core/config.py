@@ -80,10 +80,10 @@ class Settings(BaseSettings):
             for name, value in (
                 ("APP_PUBLIC_URL", self.app_public_url),
                 ("CORS_ORIGINS", self.cors_origins),
-                ("SUPABASE_ANON_KEY", self.supabase_anon_key),
-                ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key),
-                ("BFF_SHARED_SECRET", self.bff_shared_secret),
-                ("RESEND_API_KEY", self.resend_api_key),
+                ("SUPABASE_ANON_KEY", self.supabase_anon_key_value),
+                ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key_value),
+                ("BFF_SHARED_SECRET", self.bff_shared_secret_value),
+                ("RESEND_API_KEY", self.resend_api_key_value),
                 ("INVITATION_FROM_EMAIL", self.invitation_from_email),
             )
             if not value
@@ -98,6 +98,8 @@ class Settings(BaseSettings):
         origins = self.cors_origin_list
         if not origins or any(urlparse(origin).scheme != "https" or "*" in origin for origin in origins):
             raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins; wildcards are forbidden")
+        if app_url.origin not in origins:
+            raise ValueError("APP_PUBLIC_URL origin must be included in CORS_ORIGINS")
 
         db_url = urlparse(self.database_url_value)
         if (

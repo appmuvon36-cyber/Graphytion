@@ -19,6 +19,7 @@ ROLE_PERMISSIONS: dict[WorkspaceRole, frozenset[str]] = {
         {
             "workspace.read",
             "workspace.update",
+            "workspace.delete",
             "member.read",
             "member.manage",
             "project.read",

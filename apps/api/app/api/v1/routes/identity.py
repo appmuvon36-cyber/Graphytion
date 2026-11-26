@@ -298,20 +298,16 @@ async def resend_verification(payload: EmailRequest):
 @router.get("/me")
 async def current_user(claims: AuthenticatedClaims, db: AsyncSession = Db):
     user_id = uid(claims)
-    auth_user = await supabase_auth.verify_user(claims["_access_token"])
     row = (
         (
             await db.execute(
                 text("""
-      insert into public.profiles(id,display_name)
-      values (:id,:display_name)
+      insert into public.profiles(id)
+      values (:id)
       on conflict (id) do update set updated_at=now()
       returning id,display_name,avatar_path,bio,locale,timezone,created_at,updated_at
     """),
-                {
-                    "id": user_id,
-                    "display_name": (auth_user.get("user_metadata") or {}).get("display_name"),
-                },
+                {"id": user_id},
             )
         )
         .mappings()

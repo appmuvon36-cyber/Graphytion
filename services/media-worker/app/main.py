@@ -145,7 +145,7 @@ class Worker:
         return True
 
     async def run(self) -> None:
-        log.info("media_worker_started", extra={"worker_id": WORKER_ID, "queue": "postgresql"})
+        log.info("media_worker_started", extra={"worker_id": WORKER_ID, "queue": "postgresql+redis-wakeup"})
         last_recovery = 0.0
         while not self.stop.is_set():
             processed = await self.process()

@@ -535,6 +535,14 @@ async def create_invitation(
 ):
     actor = uid(claims)
     await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    await db.execute(
+        text("""
+            update public.workspace_invitations set cancelled_at=now()
+            where workspace_id=:workspace and lower(email)=lower(:email)
+              and accepted_at is null and cancelled_at is null and expires_at<=now()
+        """),
+        {"workspace": workspace_id, "email": payload.email},
+    )
     raw = secrets.token_urlsafe(36)
     digest = hashlib.sha256(raw.encode()).hexdigest()
     row = (
@@ -694,7 +702,7 @@ async def cancel_invitation(
 
 @router.post("/invitations/accept")
 async def accept_invitation(
-    payload: InviteAccept, claims: AuthenticatedClaims, db: AsyncSession = Db
+    payload: InviteAccept, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
 ):
     actor = uid(claims)
     digest = hashlib.sha256(payload.token.encode()).hexdigest()
@@ -729,6 +737,9 @@ async def accept_invitation(
             text("update public.workspace_invitations set accepted_at=now() where id=:id"),
             {"id": row["id"]},
         )
+        await audit(
+            db, actor, row["workspace_id"], "workspace.invitation.accepted", "invitation", row["id"], request
+        )
         await db.commit()
         return {
             "data": {
@@ -743,7 +754,9 @@ async def accept_invitation(
 
 
 @router.post("/workspaces/{workspace_id}/leave", status_code=204)
-async def leave_workspace(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
+async def leave_workspace(
+    workspace_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
+):
     actor = uid(claims)
     role = await require_workspace(db, actor, workspace_id)
     if role == "owner":
@@ -755,6 +768,7 @@ async def leave_workspace(workspace_id: UUID, claims: AuthenticatedClaims, db: A
     """),
         {"workspace": workspace_id, "user": actor},
     )
+    await audit(db, actor, workspace_id, "workspace.member.left", "workspace_member", None, request)
     await db.commit()
     return None
 

@@ -11,7 +11,7 @@ import uuid
 import httpx
 
 from app.audio_analysis import analyze_audio_bytes
-from app.providers import OpenAITTSProvider
+from app.providers import GeminiTTSProvider, OpenAITTSProvider
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("graphytion.media-worker")
@@ -30,8 +30,6 @@ class Worker:
             headers={"Authorization": "Bearer " + TOKEN},
             timeout=httpx.Timeout(180, connect=15),
         )
-        self.provider = OpenAITTSProvider(os.environ.get("OPENAI_API_KEY", ""))
-        self.model_default = os.environ.get("OPENAI_TTS_MODEL", "tts-1")
         self.stop = asyncio.Event()
 
     async def api(self, path: str, **kwargs):
@@ -74,24 +72,35 @@ class Worker:
             return False
 
         job_id = job["id"]
-        if not self.provider.configured():
+        provider_key = job.get("provider_key", "openai")
+        if provider_key == "gemini":
+            provider = GeminiTTSProvider(os.environ.get("GEMINI_API_KEY", ""))
+            model_default = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+        elif provider_key == "openai":
+            provider = OpenAITTSProvider(os.environ.get("OPENAI_API_KEY", ""))
+            model_default = os.environ.get("OPENAI_TTS_MODEL", "tts-1")
+        else:
+            await self.fail(job_id, "TTS_PROVIDER_UNSUPPORTED", False)
+            return True
+        if not provider.configured():
             await self.fail(job_id, "TTS_PROVIDER_NOT_CONFIGURED", False)
             return True
 
         heartbeat_task = asyncio.create_task(self.heartbeat(job_id))
         try:
-            audio, mime = await self.provider.synthesize(
+            audio, mime = await provider.synthesize(
                 text=job["input_text"],
                 voice=job["voice_key"],
-                model=job.get("model_key") or self.model_default,
+                model=job.get("model_key") or model_default,
+                language=job.get("language") or "id-ID",
             )
             try:
-                alignment = await self.provider.align_words(audio=audio)
+                alignment = await provider.align_words(audio=audio)
             except Exception:
                 log.exception("word_alignment_unavailable", extra={"generation_id": job_id})
                 alignment = {
                     "status": "unavailable",
-                    "provider": "openai",
+                    "provider": provider_key,
                     "reason": "alignment_adapter_failed",
                     "words": [],
                 }

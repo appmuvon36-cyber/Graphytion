@@ -37,3 +37,12 @@ The following values are intentionally not configured in this phase:
 - Media worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, GEMINI_API_KEY and optional GEMINI_TTS_MODEL (default `gemini-3.8-flash-tts`); OPENAI_API_KEY remains optional for Whisper word alignment and OpenAI fallback TTS.
 
 Apply the new migration only during the separately authorized deployment/database rollout. No migration, secret update, Railway change or deployment was performed as part of this implementation.
+
+
+## Snapshot identity and editor asset resolution
+
+- The Customer Studio preview and Node render worker both use the registered `GraphytionTimeline` composition from `@graphytion/motion-components`. The title-only demo composition is not registered.
+- Render MP4 must be submitted from the current editor snapshot through `POST /projects/{project_id}/renders`. The compatibility storyboard-render endpoint also requires the caller to submit that exact snapshot; it does not reconstruct clips from storyboard scene metadata.
+- `PUT /projects/{project_id}/timeline` returns a new short-lived `resolved_assets` map after validating project ownership. The client replaces its preview resolver map with that response. Signed URLs remain transient and are not written into the immutable snapshot.
+- Interactive preview displays an explicit missing-media placeholder when an asset URL is not resolved. The render API continues to reject missing, foreign-project, or unavailable asset references before queuing a render.
+- Timeline Editor exposes clip-level trim/playback rate, transition-in/out, paired crossfade, crop geometry, and keyframe controls. Crossfade pairing adjusts the next clip start to create the required exact overlap.

@@ -332,11 +332,19 @@ async def fail_render_job(
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
-        select requested_by,attempt_count,max_attempts from public.render_jobs
+        select requested_by,attempt_count,max_attempts,status from public.render_jobs
         where id=:job and worker_id=:worker
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
+    if row["status"] == "cancel_requested":
+        await db.execute(text("""
+            update public.render_jobs set status='cancelled',completed_at=now(),
+                worker_id=null,lease_expires_at=null
+            where id=:job and worker_id=:worker
+        """), {"job": render_job_id, "worker": worker_id})
+        await db.commit()
+        return {"data": {"render_job_id": str(render_job_id), "status": "cancelled"}}
     retry = payload.retryable and row["attempt_count"] < row["max_attempts"]
     await db.execute(text("""
         update public.render_jobs set status=:status,error_code=:code,error_message_safe=:message,

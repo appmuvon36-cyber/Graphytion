@@ -13,11 +13,29 @@ from sqlalchemy import text
 from app.api.v1.routes.creative import CreativeRunRequest, _process_creative_run
 from app.core.database import SessionLocal, set_rls_subject
 from app.core.redis import redis_client
-from app.services.creative_queue import CREATIVE_GROUP, CREATIVE_STREAM
+from app.services.creative_queue import CREATIVE_GROUP, CREATIVE_STREAM, enqueue_creative_run
 
 logger = logging.getLogger("graphytion.creative_worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
 LEASE_SECONDS = 180
+
+
+async def _heartbeat(run_id: str, actor_id: str, task_id: str) -> None:
+    while True:
+        await asyncio.sleep(30)
+        async with SessionLocal() as heartbeat_db:
+            await set_rls_subject(heartbeat_db, actor_id)
+            await heartbeat_db.execute(text("""
+                update public.production_runs
+                set lease_expires_at=now()+make_interval(secs => :lease)
+                where id=:run and worker_id=:worker
+            """), {"run": run_id, "worker": WORKER_ID, "lease": LEASE_SECONDS})
+            await heartbeat_db.execute(text("""
+                update public.agent_tasks
+                set lease_expires_at=now()+make_interval(secs => :lease)
+                where id=:task and status='running'
+            """), {"task": task_id, "lease": LEASE_SECONDS})
+            await heartbeat_db.commit()
 
 
 async def _claim_and_execute(run_id: str | None = None) -> bool:
@@ -65,6 +83,11 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
         stage = str(snapshot.get("stage", ""))
         payload = CreativeRunRequest.model_validate(snapshot)
         request = SimpleNamespace(state=SimpleNamespace(request_id=str(uuid4())))
+        heartbeat_task = asyncio.create_task(
+            _heartbeat(str(claimed["run_id"]), str(claimed["requested_by"]), str(task_id))
+        )
+        run_context = dict(claimed)
+        run_context["id"] = claimed["run_id"]
         try:
             await _process_creative_run(
                 db=db,
@@ -74,7 +97,7 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 project_id=claimed["project_id"],
                 stage=stage,
                 payload=payload,
-                run=claimed,
+                run=run_context,
                 task=task_id,
             )
             return True
@@ -83,7 +106,19 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 "creative_run_failed",
                 extra={"run_id": str(claimed["run_id"]), "status_code": exc.status_code},
             )
+            if exc.status_code in (502, 504):
+                await asyncio.sleep(min(2 ** int(claimed["attempt_count"]), 15))
+                try:
+                    await enqueue_creative_run(str(claimed["run_id"]))
+                except Exception:
+                    logger.exception("creative_retry_signal_failed", extra={"run_id": str(claimed["run_id"])})
             return True
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
         except Exception:
             logger.exception("creative_worker_unhandled_failure", extra={"run_id": str(claimed["run_id"])})
             await db.rollback()

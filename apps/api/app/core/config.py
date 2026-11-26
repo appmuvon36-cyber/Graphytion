@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     invitation_from_email: str | None = None
     log_level: str = "INFO"
     internal_worker_token: SecretStr | None = Field(default=None, repr=False)
+    openai_api_key: SecretStr | None = Field(default=None, repr=False)
+    llm_model_key: str = "gpt-4.1-mini"
+    llm_timeout_seconds: int = Field(default=60, ge=5, le=180)
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -74,6 +77,10 @@ class Settings(BaseSettings):
     @property
     def resend_api_key_value(self) -> str | None:
         return self.resend_api_key.get_secret_value() if self.resend_api_key else None
+
+    @property
+    def openai_api_key_value(self) -> str | None:
+        return self.openai_api_key.get_secret_value() if self.openai_api_key else None
 
     @property
     def resend_webhook_secret_value(self) -> str | None:

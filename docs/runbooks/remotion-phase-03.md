@@ -64,3 +64,25 @@ The Super Admin `/admin` control plane manages the singleton `platform_render_se
 ## Worker presence and Admin visibility
 
 Media Worker and Render Worker send authenticated presence to `POST /api/v1/internal/workers/heartbeat` every 30 seconds using `INTERNAL_WORKER_TOKEN`. The worker registry is private in PostgreSQL; only the server-authorized Admin endpoint reads it. Admin marks a worker stale after 90 seconds without a heartbeat. A missing heartbeat is not reported as a running worker.
+
+
+## First platform administrator bootstrap
+
+The initial Supabase production project currently has no Auth users or platform-admin rows. After the owner creates and confirms the first Graphytion account through the normal signup flow, run the following once in the Supabase SQL Editor, replacing the email with the confirmed account email:
+
+```sql
+insert into public.platform_admins(user_id, role, status, reason)
+select id, 'super_admin', 'active', 'Initial Graphytion platform administrator bootstrap'
+from auth.users
+where lower(email)=lower('<YOUR_CONFIRMED_SIGNUP_EMAIL>')
+  and email_confirmed_at is not null
+on conflict (user_id) do update
+set role='super_admin', status='active', revoked_at=null,
+    reason='Initial Graphytion platform administrator bootstrap';
+```
+
+This is a one-time owner action; do not expose a public self-service admin promotion endpoint.
+
+## Invitation email activation
+
+Set `RESEND_API_KEY` and `INVITATION_FROM_EMAIL` on the API service only after the sender domain is verified in Resend. Until both are configured, invitation creation returns a provider-configuration error and does not expose the raw invitation token to Admin or Customer clients.

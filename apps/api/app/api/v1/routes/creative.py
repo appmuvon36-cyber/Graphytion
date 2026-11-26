@@ -836,8 +836,9 @@ async def _process_creative_run(
             exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) else "Creative stage could not be completed"
         )
         task_state = (await db.execute(text("""
-            select attempt_count,max_attempts from public.agent_tasks where id=:task
-        """), {"task": task})).mappings().first()
+            select attempt_count,max_attempts from public.agent_tasks
+            where id=:task and worker_id=:worker
+        """), {"task": task, "worker": run["worker_id"]})).mappings().first()
         retryable = (
             isinstance(exc, HTTPException)
             and exc.status_code in (502, 504)
@@ -845,16 +846,21 @@ async def _process_creative_run(
             and task_state["attempt_count"] < task_state["max_attempts"]
         )
         if retryable:
+            retry_transition = await db.execute(text("""
+                update public.production_runs set status='queued',error_code=:code,
+                    error_message_safe=:message,worker_id=null,lease_expires_at=null
+                where id=:run and worker_id=:worker returning id
+            """), {"code": safe_code, "message": str(safe_message)[:500],
+                   "run": run["id"], "worker": run["worker_id"]})
+            if retry_transition.scalar_one_or_none() is None:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail="Creative worker lease was lost before retry scheduling")
             await db.execute(text("""
                 update public.agent_tasks set status='retry_wait',error_code=:code,
                     error_detail_internal=:detail,lease_expires_at=null,worker_id=null
                 where id=:task and worker_id=:worker
-            """), {"code": safe_code, "detail": str(exc)[:1000], "task": task, "worker": run["worker_id"]})
-            await db.execute(text("""
-                update public.production_runs set status='queued',error_code=:code,
-                    error_message_safe=:message,worker_id=null,lease_expires_at=null
-                where id=:run and worker_id=:worker
-            """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"], "worker": run["worker_id"]})
+            """), {"code": safe_code, "detail": str(exc)[:1000],
+                   "task": task, "worker": run["worker_id"]})
             await db.execute(text("""
                 insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
                 values (:run,'stage.retry_scheduled',cast(:payload as jsonb),
@@ -862,16 +868,21 @@ async def _process_creative_run(
             """), {"run": run["id"], "payload": json.dumps({"stage": stage, "error_code": safe_code})})
             await db.commit()
             raise
+        failure_transition = await db.execute(text("""
+            update public.production_runs set status='failed',error_code=:code,
+                error_message_safe=:message,completed_at=now(),worker_id=null,lease_expires_at=null
+            where id=:run and worker_id=:worker returning id
+        """), {"code": safe_code, "message": str(safe_message)[:500],
+               "run": run["id"], "worker": run["worker_id"]})
+        if failure_transition.scalar_one_or_none() is None:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Creative worker lease was lost before failure persistence")
         await db.execute(text("""
             update public.agent_tasks set status='failed',error_code=:code,
                 error_detail_internal=:detail,completed_at=now(),lease_expires_at=null,worker_id=null
-            where id=:task
-        """), {"code": safe_code, "detail": str(exc)[:1000], "task": task})
-        await db.execute(text("""
-            update public.production_runs set status='failed',error_code=:code,
-                error_message_safe=:message,completed_at=now(),worker_id=null,lease_expires_at=null
-            where id=:run
-        """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"]})
+            where id=:task and worker_id=:worker
+        """), {"code": safe_code, "detail": str(exc)[:1000],
+               "task": task, "worker": run["worker_id"]})
         await db.execute(text("""
             insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
             values (:run,'stage.failed',cast(:payload as jsonb),

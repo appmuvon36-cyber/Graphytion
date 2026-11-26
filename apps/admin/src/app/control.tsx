@@ -2,9 +2,10 @@
 
 import { useCallback,useEffect,useMemo,useState } from 'react';
 import { ApiClientError,createApiClient } from '@graphytion/api-client';
-type Workspace={id:string;name:string;slug:string;role:string};
-type Member={id:string;user_id:string;display_name:string|null;role:string;status:string};
-type Invitation={id:string;email:string;role:string;expires_at:string;created_at:string};
+import type { WorkspaceApi, WorkspaceMemberApi, WorkspaceInvitationApi } from '@graphytion/contracts';
+type Workspace=WorkspaceApi;
+type Member=WorkspaceMemberApi;
+type Invitation=WorkspaceInvitationApi;
 const apiBase=process.env.NEXT_PUBLIC_API_BASE_URL||'http://localhost:8000/api/v1';
 export default function ControlPlane(){
  const [token,setToken]=useState('');const [workspaces,setWorkspaces]=useState<Workspace[]>([]);const [workspaceId,setWorkspaceId]=useState('');const [members,setMembers]=useState<Member[]>([]);const [invitations,setInvitations]=useState<Invitation[]>([]);const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [role,setRole]=useState('member');const [message,setMessage]=useState('');const [error,setError]=useState('');

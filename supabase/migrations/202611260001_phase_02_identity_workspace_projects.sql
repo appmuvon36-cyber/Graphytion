@@ -262,6 +262,10 @@ drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles for update to authenticated
 using (id=auth.uid()) with check (id=auth.uid());
 
+-- Prevent direct clients from changing server-managed avatar paths or identity keys.
+revoke update on table public.profiles from anon, authenticated;
+grant update (display_name,bio,locale,timezone) on table public.profiles to authenticated;
+
 drop policy if exists workspaces_select_member on public.workspaces;
 create policy workspaces_select_member on public.workspaces for select to authenticated
 using (public.graphytion_is_workspace_member(id));

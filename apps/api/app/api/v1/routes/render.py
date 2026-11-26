@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from typing import Any
-from uuid import UUID, NAMESPACE_URL, uuid5
+from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field

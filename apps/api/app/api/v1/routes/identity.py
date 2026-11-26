@@ -22,7 +22,11 @@ from app.services.idempotency import (
     reserve_idempotency,
     validate_idempotency_key,
 )
-from app.services.workspace_authorization import WorkspacePermissionResolver
+from app.services.workspace_authorization import (
+    ROLE_PERMISSIONS,
+    WorkspacePermissionResolver,
+    WorkspaceRole,
+)
 
 router = APIRouter()
 Db = Depends(get_db_session)
@@ -588,6 +592,20 @@ async def delete_workspace(
     )
     await db.commit()
     return None
+
+
+@router.get("/workspaces/{workspace_id}/permissions")
+async def get_workspace_permissions(
+    workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db
+):
+    role = await require_permission(db, uid(claims), workspace_id, "workspace.read")
+    return {
+        "data": {
+            "workspace_id": str(workspace_id),
+            "role": role,
+            "permissions": sorted(ROLE_PERMISSIONS[WorkspaceRole(role)]),
+        }
+    }
 
 
 @router.get("/workspaces/{workspace_id}/members")
@@ -1183,7 +1201,7 @@ async def _set_project_status(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    await require_permission(db, actor, row["workspace_id"], "project.update")
+    await require_permission(db, actor, row["workspace_id"], "project.archive")
     if new_status == "archived" and row["status"] not in ("draft", "active"):
         raise HTTPException(status_code=409, detail="Only draft or active projects can be archived")
     if new_status == "draft" and row["status"] != "archived":

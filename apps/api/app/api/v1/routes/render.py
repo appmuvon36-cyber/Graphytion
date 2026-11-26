@@ -405,7 +405,7 @@ async def render_approved_storyboard(
             "startFrame": cursor,
             "durationFrames": duration_frames,
             "componentKey": "core.title-card.v1",
-            "props": {"title": str(scene["title"]), "background": background},
+            "props": {"title": str(scene["title"]), "subtitle": str(visual.get("description") or "")[:500], "background": background},
         })
         cursor += duration_frames
     snapshot = {

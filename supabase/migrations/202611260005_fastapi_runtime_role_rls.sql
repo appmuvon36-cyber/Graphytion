@@ -212,6 +212,7 @@ create policy workspace_invitations_select_runtime
 on public.workspace_invitations for select to graphytion_runtime
 using (
   private.graphytion_workspace_role(workspace_id) in ('owner','admin')
+  or private.graphytion_is_resend_webhook()
   or (
     private.graphytion_invitation_matches_user(email,auth.uid())
     and accepted_at is null and cancelled_at is null and expires_at>now()
@@ -239,6 +240,7 @@ using (
 )
 with check (
   private.graphytion_workspace_role(workspace_id) in ('owner','admin')
+  or private.graphytion_is_resend_webhook()
   or (
     private.graphytion_invitation_matches_user(email,auth.uid())
     and accepted_at is not null and cancelled_at is null
@@ -292,6 +294,16 @@ with check (
   )
 );
 
+create or replace function private.graphytion_is_resend_webhook()
+returns boolean
+language sql stable
+set search_path = public
+as $resend_context$
+  select coalesce(current_setting('app.graphytion.internal',true),'')='resend_webhook'
+$resend_context$;
+revoke all on function private.graphytion_is_resend_webhook() from public,anon,authenticated;
+grant execute on function private.graphytion_is_resend_webhook() to graphytion_runtime;
+
 create or replace function public.graphytion_protect_invitation_update()
 returns trigger
 language plpgsql
@@ -310,6 +322,24 @@ begin
   then
     raise exception 'invitation identity and role are immutable'
       using errcode = '42501';
+  end if;
+
+  if private.graphytion_is_resend_webhook() then
+    if new.email is distinct from old.email
+      or new.role is distinct from old.role
+      or new.token_hash is distinct from old.token_hash
+      or new.expires_at is distinct from old.expires_at
+      or new.accepted_at is distinct from old.accepted_at
+      or new.cancelled_at is distinct from old.cancelled_at
+      or new.delivery_attempts is distinct from old.delivery_attempts
+      or new.provider_message_id is distinct from old.provider_message_id
+      or new.sent_at is distinct from old.sent_at
+      or new.last_delivery_attempt_at is distinct from old.last_delivery_attempt_at
+    then
+      raise exception 'provider webhook may only update delivery state'
+        using errcode = '42501';
+    end if;
+    return new;
   end if;
 
   if actor_role in ('owner','admin') then
@@ -357,6 +387,19 @@ on public.audit_logs for insert to graphytion_runtime
 with check (
   (actor_user_id=auth.uid() and (workspace_id is null or private.graphytion_is_workspace_member(workspace_id)))
   or (actor_user_id is null and workspace_id is null)
+  or (
+    actor_user_id is null
+    and workspace_id is not null
+    and action in (
+      'workspace.invitation.email_sent',
+      'workspace.invitation.email_delivered',
+      'workspace.invitation.email_delivery_delayed',
+      'workspace.invitation.email_bounced',
+      'workspace.invitation.email_complained',
+      'workspace.invitation.email_failed'
+    )
+    and private.graphytion_is_resend_webhook()
+  )
 );
 
 -- Keep the API login role non-administrative and unable to create schema objects.

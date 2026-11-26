@@ -15,3 +15,8 @@ line-length = 100
 target-version = "py312"
 [tool.ruff.lint]
 select = ["E","F","I","UP","B"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["migrations*", "scripts*"]

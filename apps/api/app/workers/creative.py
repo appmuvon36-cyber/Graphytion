@@ -46,8 +46,8 @@ async def _heartbeat(run_id: str, actor_id: str, task_id: str) -> None:
             await heartbeat_db.execute(text("""
                 update public.agent_tasks
                 set lease_expires_at=now()+make_interval(secs => :lease)
-                where id=:task and status='running'
-            """), {"task": task_id, "lease": LEASE_SECONDS})
+                where id=:task and status='running' and worker_id=:worker
+            """), {"task": task_id, "lease": LEASE_SECONDS, "worker": WORKER_ID})
             await heartbeat_db.commit()
 
 
@@ -80,18 +80,18 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 set status='failed',error_code='TASK_NOT_FOUND',
                     error_message_safe='Creative task record is missing',
                     completed_at=now(),worker_id=null,lease_expires_at=null
-                where id=:run
-            """), {"run": claimed["run_id"]})
+                where id=:run and worker_id=:worker
+            """), {"run": claimed["run_id"], "worker": WORKER_ID})
             await db.commit()
             return True
 
         await db.execute(text("""
             update public.agent_tasks
-            set status='running',attempt_count=attempt_count+1,
+            set status='running',worker_id=:worker,attempt_count=attempt_count+1,
                 started_at=coalesce(started_at,now()),
                 lease_expires_at=now()+make_interval(secs => :lease)
             where id=:task
-        """), {"task": task_id, "lease": LEASE_SECONDS})
+        """), {"task": task_id, "lease": LEASE_SECONDS, "worker": WORKER_ID})
         await db.commit()
 
         snapshot = dict(claimed["input_snapshot"])
@@ -135,8 +135,8 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                     await db.execute(text("""
                         update public.agent_tasks set status='cancelled',completed_at=now(),
                             lease_expires_at=null
-                        where id=:task
-                    """), {"task": task_id})
+                        where id=:task and worker_id=:worker
+                    """), {"task": task_id, "worker": WORKER_ID})
                     await db.execute(text("""
                         insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
                         values (:run,'stage.cancelled','{}'::jsonb,
@@ -172,8 +172,8 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             await db.execute(text("""
                 update public.agent_tasks set status='failed',
                     error_code='WORKER_UNHANDLED',completed_at=now(),lease_expires_at=null
-                where id=:task
-            """), {"task": task_id})
+                where id=:task and worker_id=:worker
+            """), {"task": task_id, "worker": WORKER_ID})
             await db.commit()
             return True
         finally:

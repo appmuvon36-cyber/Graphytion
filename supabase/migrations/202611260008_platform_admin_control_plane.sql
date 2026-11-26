@@ -36,6 +36,13 @@ alter table public.platform_admins enable row level security;
 drop policy if exists platform_admins_platform_admin_only on public.platform_admins;
 create policy platform_admins_platform_admin_only on public.platform_admins
   for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists platform_admins_platform_admin_insert on public.platform_admins;
+create policy platform_admins_platform_admin_insert on public.platform_admins
+  for insert to graphytion_api with check (private.graphytion_is_platform_admin());
+drop policy if exists platform_admins_platform_admin_update on public.platform_admins;
+create policy platform_admins_platform_admin_update on public.platform_admins
+  for update to graphytion_api using (private.graphytion_is_platform_admin())
+  with check (private.graphytion_is_platform_admin());
 
 drop policy if exists profiles_platform_admin_read on public.profiles;
 create policy profiles_platform_admin_read on public.profiles

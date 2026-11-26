@@ -110,8 +110,7 @@ class Settings(BaseSettings):
         db_url = urlparse(self.database_url_value)
         if (
             db_url.scheme not in {"postgresql+asyncpg", "postgresql"}
-            or not db_url.hostname
-            or db_url.hostname in {"localhost", "127.0.0.1"}
+            or db_url.hostname != "db.xtjwmezfzexvupbfsdqt.supabase.co"
             or db_url.username != "graphytion_api"
             or not db_url.password
             or "CHANGE_ME" in self.database_url_value

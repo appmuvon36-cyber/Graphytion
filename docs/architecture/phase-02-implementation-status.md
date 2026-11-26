@@ -11,6 +11,7 @@
 ### API runtime and database boundary
 
 - Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, managed Redis TLS, HTTPS CORS allowlist, BFF shared secret and Resend configuration.
+- Readiness checks PostgreSQL, Redis, Supabase Auth, JWT/JWKS signing-key availability and private Storage as separate dependencies.
 - Database connection uses a secret-safe URL accessor and a named SQLAlchemy application connection.
 - Per-request authenticated subject is set in PostgreSQL session claims and cleared before pooled connection release. This supports tenant RLS rather than using a superuser or RLS-bypass role.
 - Liveness and readiness endpoints are separate. Readiness checks PostgreSQL, Redis, Supabase Auth and private Storage independently and returns 503 if any dependency is unavailable.
@@ -30,7 +31,8 @@
 - Login/signup/verification token exchange is restricted to requests carrying the server-only BFF shared secret.
 - Access and refresh tokens are set as host-only HttpOnly cookies; production cookies are Secure, SameSite=Lax and Path=/.
 - Refresh and logout are handled server-side. CSRF uses a separate random cookie, request header and exact Origin check.
-- Legacy `sessionStorage` and `localStorage` token persistence was removed from the inspected Customer Studio and Admin Control Plane components.
+- Legacy `sessionStorage` and `localStorage` token persistence was removed from the inspected Customer Studio and Admin Control Plane components. A repository scan of the 16 Web/Admin/API-client TypeScript files found no `sessionStorage` or `localStorage` references.
+- Browser API client no longer accepts or injects bearer tokens; only the same-origin BFF reads HttpOnly cookies and attaches upstream Authorization. BFF auth responses expose only user ID/email, and the verification callback is non-cacheable with a no-referrer policy.
 - Supabase confirmation/recovery email templates must be changed to the server-side token-hash callback; the existing project settings were not changed.
 
 ## Production migrations applied
@@ -46,9 +48,9 @@ The following additive migrations are committed to `main` but have NOT been appl
 | Migration | Purpose | Status |
 |---|---|---|
 | `202611260004_invitation_email_delivery.sql` | Invitation provider delivery status, attempt count, provider ID and webhook state columns | Awaiting explicit Production migration authorization |
-| `202611260005_fastapi_runtime_role_rls.sql` | `graphytion_runtime` / `graphytion_api` roles, profile email sync, scoped RLS policies and invitation webhook policy | Awaiting explicit Production migration authorization |
+| `202611260005_fastapi_runtime_role_rls.sql` | `graphytion_runtime` / `graphytion_api` roles, profile email sync, scoped RLS policies, invitation webhook policy and least-privilege column grants | Awaiting explicit Production migration authorization |
 
-The runtime role migration deliberately creates `graphytion_api` as NOLOGIN. After migration approval/application, the project owner must set a unique password and enable LOGIN out-of-band, then set the server `DATABASE_URL`. No password is committed.
+The runtime role migration deliberately creates `graphytion_api` as NOLOGIN. It now grants only the operations/columns used by FastAPI, removes the legacy `service_role` grants from public business tables, and leaves the service-role key for the private Storage adapter only. After migration approval/application, the project owner must set a unique password and enable LOGIN out-of-band, then set the server `DATABASE_URL`. No password is committed.
 
 ## Latest live Supabase inspection
 

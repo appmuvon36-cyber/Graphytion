@@ -42,8 +42,8 @@ The workflow committed the final Python formatting changes to `main` as `095ed6d
 ## Phase boundary and production safety
 
 - Phase 01 itself creates no production schema and applies no migration.
-- The Phase 02 migration is version-controlled separately at `supabase/migrations/202611260001_phase_02_identity_workspace_projects.sql`; it has **not** been applied to Supabase.
-- No production data, Auth users, Storage objects, or deployment targets were changed by Phase 01 verification.
+- Phase 02 schema activation is tracked in `docs/architecture/phase-02-implementation-status.md`.
+- Phase 01 verification did not mutate production data or trigger deployments.
 - Worker task consumers and persistent workflow execution remain in their dedicated later phases.
 
-Phase 01 dependency, typecheck, build and startup completion gates are closed. Phase 02 database activation is tracked separately and requires explicit production migration authorization.
+Phase 01 dependency, typecheck, build and startup completion gates are closed. Phase 02 is now deployed at the database-schema level; its application-level verification remains tracked separately.

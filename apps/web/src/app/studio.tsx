@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
+import type { ProfileApi, WorkspaceApi, VideoProjectApi } from '@graphytion/contracts';
 
-type Profile = { id:string; display_name:string|null; bio:string|null; avatar_path:string|null; locale:string; timezone:string };
-type Workspace = { id:string; name:string; slug:string; role:string; owner_user_id:string };
-type Project = { id:string; workspace_id:string; name:string; description:string|null; status:string; production_mode:string; updated_at:string };
+type Profile = ProfileApi;
+type Workspace = WorkspaceApi;
+type Project = VideoProjectApi;
 type AuthResult = { access_token:string; refresh_token:string; expires_in:number; user:{id:string;email:string} };
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
 

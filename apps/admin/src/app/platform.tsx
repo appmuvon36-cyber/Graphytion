@@ -106,6 +106,20 @@ export default function PlatformAdmin() {
     finally { setBusy(false); }
   }
 
+  async function updateProjectStatus(project: Project, status: 'draft' | 'archived') {
+    const reason = window.prompt(status === 'archived' ? 'Reason to archive this project:' : 'Reason to restore this project:');
+    if (!reason || reason.trim().length < 3) return;
+    setBusy(true); setError('');
+    try {
+      await request('/admin/projects/' + project.id + '/status', {
+        method: 'PATCH', body: JSON.stringify({ status, reason: reason.trim() }),
+      });
+      setNotice('Project lifecycle updated.');
+      await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Project lifecycle update failed'); }
+    finally { setBusy(false); }
+  }
+
   async function cancelInvitation(invitation: Invitation) {
     if (!window.confirm('Cancel invitation for ' + invitation.email + '?')) return;
     setBusy(true); setError('');
@@ -187,7 +201,7 @@ export default function PlatformAdmin() {
         {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>
       <section style={panel}><h2>Invitation administration</h2>{invitations.filter(inv => !inv.accepted_at && !inv.cancelled_at).map(invitation => <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{invitation.email}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{invitation.workspace_name} · {invitation.role} · {invitation.delivery_status} · expires {new Date(invitation.expires_at).toLocaleString()}</div></div><button disabled={busy} onClick={() => void cancelInvitation(invitation)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Cancel</button></div>)}</section>
-      <section style={panel}><h2>Project oversight</h2>{projects.map(project => <div key={project.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5' }}><strong>{project.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{project.workspace_name} · {project.production_mode} · {project.status}</div></div>)}</section>
+      <section style={panel}><h2>Project oversight</h2>{projects.map(project => <div key={project.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{project.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{project.workspace_name} · {project.production_mode} · {project.status}</div></div>{project.status === 'archived' ? <button disabled={busy} onClick={() => void updateProjectStatus(project, 'draft')} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Restore</button> : <button disabled={busy || project.status === 'deleted'} onClick={() => void updateProjectStatus(project, 'archived')} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Archive</button>}</div>)}</section>
       <section style={panel}><h2>Platform audit trail</h2>{audit.map(entry => <div key={entry.id} style={{ padding: '9px 0', borderTop: '1px solid #edf0f5' }}><strong>{entry.action}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{entry.resource_type}:{entry.resource_id} · actor {entry.actor_user_id} · {new Date(entry.created_at).toLocaleString()}</div></div>)}</section>
     </>}
   </main>;

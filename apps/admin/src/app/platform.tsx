@@ -9,6 +9,7 @@ type Workspace = { id: string; name: string; slug: string; active_members: numbe
 type Project = { id: string; name: string; workspace_name: string; status: string; production_mode: string };
 type Audit = { id: string; action: string; actor_user_id: string; resource_type: string; resource_id: string; created_at: string };
 type Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
+type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number };
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -28,6 +29,7 @@ export default function PlatformAdmin() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
@@ -47,14 +49,15 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a] = await Promise.all([
+      const [o, u, w, p, a, i] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Project>>('/admin/projects?page=1&per_page=50&q=' + encodeURIComponent(query)),
         request<Page<Audit>>('/admin/audit-logs?page=1&per_page=30'),
+        request<Page<Invitation>>('/admin/invitations?page=1&per_page=50'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -100,6 +103,17 @@ export default function PlatformAdmin() {
       await loadMembers(selectedWorkspace);
       setNotice('Workspace member role updated.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Perubahan role gagal'); }
+    finally { setBusy(false); }
+  }
+
+  async function cancelInvitation(invitation: Invitation) {
+    if (!window.confirm('Cancel invitation for ' + invitation.email + '?')) return;
+    setBusy(true); setError('');
+    try {
+      await request('/admin/invitations/' + invitation.id, { method: 'DELETE' });
+      setNotice('Invitation cancelled.');
+      await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Invitation cancellation failed'); }
     finally { setBusy(false); }
   }
 
@@ -172,6 +186,7 @@ export default function PlatformAdmin() {
       <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div>)}
         {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>
+      <section style={panel}><h2>Invitation administration</h2>{invitations.filter(inv => !inv.accepted_at && !inv.cancelled_at).map(invitation => <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{invitation.email}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{invitation.workspace_name} · {invitation.role} · {invitation.delivery_status} · expires {new Date(invitation.expires_at).toLocaleString()}</div></div><button disabled={busy} onClick={() => void cancelInvitation(invitation)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Cancel</button></div>)}</section>
       <section style={panel}><h2>Project oversight</h2>{projects.map(project => <div key={project.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5' }}><strong>{project.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{project.workspace_name} · {project.production_mode} · {project.status}</div></div>)}</section>
       <section style={panel}><h2>Platform audit trail</h2>{audit.map(entry => <div key={entry.id} style={{ padding: '9px 0', borderTop: '1px solid #edf0f5' }}><strong>{entry.action}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{entry.resource_type}:{entry.resource_id} · actor {entry.actor_user_id} · {new Date(entry.created_at).toLocaleString()}</div></div>)}</section>
     </>}

@@ -53,13 +53,13 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
  on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
  if row is None:
-  old=(await db.execute(text("select id,status,input_text,voice_key,model_key,subtitle_segment_id from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
-  if not old or old["input_text"]!=payload.text or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key or old["subtitle_segment_id"]!=payload.subtitle_segment_id:raise HTTPException(409,"Idempotency key was used for a different voiceover request")
+  old=(await db.execute(text("select id,status,input_text,provider_key,voice_key,model_key,subtitle_segment_id from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
+  if not old or old["input_text"]!=payload.text or old["provider_key"]!=payload.provider_key or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key or old["subtitle_segment_id"]!=payload.subtitle_segment_id:raise HTTPException(409,"Idempotency key was used for a different voiceover request")
   return {"data":{"voiceover_id":str(old["id"]),"status":old["status"],"replayed":True}}
  await db.execute(text("insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata) values(:actor,:workspace,'voiceover.requested','audio_generation',:id,:request,cast(:metadata as jsonb))"),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"status":status})})
  await db.commit()
  # The committed audio_generations row is polled directly by the media worker.
- return {"data":{"voiceover_id":str(row["id"]),"status":status,"provider_configured":"worker_resolves_provider_credentials"}}
+ return {"data":{"voiceover_id":str(row["id"]),"status":status}}
 @router.get("/projects/{project_id}/voiceovers")
 async def list_voiceovers(project_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_actor(claims);await _scope(db,project_id,actor,"project.read")

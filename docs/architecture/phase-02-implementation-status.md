@@ -4,56 +4,97 @@
 **Repository:** `appmuvon36-cyber/Graphytion`  
 **Branch:** `main`  
 **Supabase:** `xtjwmezfzexvupbfsdqt` (Graphytion, ap-northeast-1)  
-**Status:** DATABASE SCHEMA APPLIED; APPLICATION E2E GATE STILL OPEN.
+**Status:** Core schema and security migrations applied. Finalization code is committed; Production runtime, provider configuration, pending migrations and real-account E2E are NOT verified. Do not mark Phase 02 complete.
 
 ## Implemented in the repository
 
-- Supabase Auth REST adapter for signup, login, refresh, logout, recovery, verification, resend verification, password update and live user-session validation.
-- JWT signature, issuer, audience, expiry and authenticated-subject validation using Supabase JWKS or configured HS256 secret.
-- FastAPI identity endpoints for current profile, private avatar upload/signed URL, workspace CRUD, member role management, invitations, leave/accept flows and video-project CRUD/search/filter/sort/pagination/archive/restore/soft-delete.
-- Database-backed workspace role/permission resolver for Owner, Admin, Editor, Member, Viewer and Billing.
-- Idempotency records for workspace/project creation, audit events, Redis-backed fail-closed auth rate limiting and typed TypeScript/Python contracts.
-- Customer and workspace-admin UI flows call the typed FastAPI API client; business operations do not write directly to Supabase from the browser.
+### API runtime and database boundary
+
+- Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, managed Redis TLS, HTTPS CORS allowlist, BFF shared secret and Resend configuration.
+- Database connection uses a secret-safe URL accessor and a named SQLAlchemy application connection.
+- Per-request authenticated subject is set in PostgreSQL session claims and cleared before pooled connection release. This supports tenant RLS rather than using a superuser or RLS-bypass role.
+- Liveness and readiness endpoints are separate. Readiness checks PostgreSQL, Redis, Supabase Auth and private Storage independently and returns 503 if any dependency is unavailable.
+- Supabase Auth and Storage adapters expose real connectivity probes. Service-role key remains server-side only.
+
+### Invitation lifecycle
+
+- Resend adapter sends a secure, expiring, single-use invitation link. Raw token is hashed in the database and only exists in memory during email delivery.
+- API responses and Admin UI no longer return or display raw invitation tokens.
+- Provider idempotency key, send-attempt tracking, delivery state, explicit resend eligibility, cancellation, duplicate prevention and audit events are implemented.
+- Signed Resend webhook validates Svix signature and replay timestamp, then updates sent/delivered/delayed/bounced/complained/failed states.
+- Production delivery is not proven until owner configures a verified sender domain, API key and webhook signing secret.
+
+### Browser session boundary
+
+- Customer Web and Admin use same-origin Next.js BFF routes.
+- Login/signup/verification token exchange is restricted to requests carrying the server-only BFF shared secret.
+- Access and refresh tokens are set as host-only HttpOnly cookies; production cookies are Secure, SameSite=Lax and Path=/.
+- Refresh and logout are handled server-side. CSRF uses a separate random cookie, request header and exact Origin check.
+- Legacy `sessionStorage` and `localStorage` token persistence was removed from the inspected Customer Studio and Admin Control Plane components.
+- Supabase confirmation/recovery email templates must be changed to the server-side token-hash callback; the existing project settings were not changed.
 
 ## Production migrations applied
 
 | Migration | Purpose | Supabase migration version |
 |---|---|---|
-| `202611260001_phase_02_identity_workspace_projects` | Identity/profile, workspace, member, invitation, video project, settings, idempotency, audit, RLS and private avatar bucket | `20261126095034` |
-| `202611260002_phase_02_security_hardening` | Move SECURITY DEFINER RLS helpers into non-exposed `private` schema, restrict function execution, optimize profile RLS predicates | `20261126095112` |
-| `202611260003_phase_02_least_privilege_grants` | Remove broad default Data API table grants and restore least-privilege grants | `20261126095238` |
+| `202611260001_identity_workspace_projects` | Identity, workspace, membership, invitation, project, RLS and private avatar bucket | `20261126095034` |
+| `202611260002_security_hardening` | Private RLS helper functions and restricted execution | `20261126095112` |
+| `202611260003_least_privilege_grants` | Remove broad anon/authenticated table grants | `20261126095238` |
 
-All three migrations completed successfully and are present in Supabase migration history.
+The following additive migrations are committed to `main` but have NOT been applied to Production:
 
-## Production verification evidence
+| Migration | Purpose | Status |
+|---|---|---|
+| `202611260004_invitation_email_delivery.sql` | Invitation provider delivery status, attempt count, provider ID and webhook state columns | Awaiting explicit Production migration authorization |
+| `202611260005_fastapi_runtime_role_rls.sql` | `graphytion_runtime` / `graphytion_api` roles, profile email sync, scoped RLS policies and invitation webhook policy | Awaiting explicit Production migration authorization |
 
-- Eight application tables exist: `profiles`, `workspaces`, `workspace_members`, `workspace_invitations`, `video_projects`, `project_settings`, `api_idempotency_keys`, and `audit_logs`.
-- RLS is enabled on all eight tables.
-- Foreign keys and primary keys are present as defined by the migration.
-- The `avatars` Storage bucket exists, is private, has a 5 MiB limit, and accepts PNG/JPEG/WebP.
-- Avatar object policies are scoped to the authenticated user's own folder.
-- `anon` has no table privileges on the eight Graphytion application tables.
-- `authenticated` has read-only table access where policies permit; column-level updates are limited to profile display fields and workspace name/settings. It has no direct insert/delete access or direct write access to invitations/idempotency.
-- `service_role` retains server-side table privileges for server-side Supabase API use. The current FastAPI SQLAlchemy adapter connects through `DATABASE_URL`; its actual database login/role must be confirmed from the production runtime secret configuration and should be a dedicated least-privilege login rather than assuming the PostgREST `service_role` is the SQLAlchemy connection identity.
-- SECURITY DEFINER RLS helper functions are in the non-exposed `private` schema. Public execution of the existing `rls_auto_enable()` function was revoked.
-- Security Advisor now reports only two INFO findings: `workspace_invitations` and `api_idempotency_keys` have RLS enabled with no policies. This is intentional because these tables are server-only and have no anon/authenticated table grants.
-- Performance Advisor reports unused indexes on the new, empty schema; retain them until real query workload justifies a change. Health Advisor returned no findings.
+The runtime role migration deliberately creates `graphytion_api` as NOLOGIN. After migration approval/application, the project owner must set a unique password and enable LOGIN out-of-band, then set the server `DATABASE_URL`. No password is committed.
 
-## Remaining completion gates — do not claim Phase 02 fully complete yet
+## Latest live Supabase inspection
 
-1. Configure production API secrets/connection settings (`DATABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, Redis URL, CORS origin) in the API runtime; no deployment was performed.
-2. Confirm/configure the production API database login. Prefer a dedicated least-privilege PostgreSQL login with only required table/sequence privileges; do not assume that granting the PostgREST `service_role` role also configures the SQLAlchemy direct connection.
-3. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
-4. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
-5. Run a controlled end-to-end check with an authorized, verified Graphytion user after runtime configuration: signup/login/refresh/logout, profile, workspace create/list/update, role enforcement, invitation acceptance, project CRUD, avatar upload/signed URL. The production Auth schema currently contains zero users; do not create synthetic users or fake production records without explicit direction.
-6. Confirm actual API-to-Postgres and Redis connectivity using the production runtime after its environment is configured. No staging environment or deployment is authorized by this status update.
+Project `xtjwmezfzexvupbfsdqt` reported `ACTIVE_HEALTHY`, PostgreSQL 17.12.0.002.
 
-## Data safety and recovery
+- Migration history contains exactly the three applied migrations above.
+- Auth users: **0**
+- Profiles: **0**
+- Workspaces: **0**
+- Video projects: **0**
+- Invitations: **0**
+- Roles `graphytion_runtime` and `graphytion_api`: not present yet.
+- Invitation delivery columns from migration 004: not present yet.
 
-- The migrations are additive and preserve existing Auth users and Storage objects.
-- The profile backfill only inserts missing profiles and preserves existing display names.
-- Production inspection found zero Auth users, profiles, workspaces and video projects at the time of verification.
-- No production Auth user, project, workspace, Storage object or customer data was created or deleted as a test.
-- The GitHub verification workflow was updated to parse every versioned SQL migration, not only the original Phase 02 migration.
-- No rollback/drop migration was run. If an application issue is discovered, prefer a forward corrective migration; do not drop the newly applied schema as a rollback shortcut.
-- No deployment or staging environment was created or triggered.
+No real account or production test record was created.
+
+## Owner-gated completion work
+
+1. Explicitly authorize applying migrations `202611260004` and `202611260005` to Supabase Production. They are additive and contain no DROP/DELETE data operations, but are not applied under the current no-migration-without-authorization rule.
+2. After migration 005, enable LOGIN and set a unique password for `graphytion_api` in Supabase SQL editor/secret manager; configure API `DATABASE_URL` with this role and TLS.
+3. Configure API hosting secrets: `APP_ENV`, `APP_PUBLIC_URL`, `CORS_ORIGINS`, Supabase anon/service keys, `BFF_SHARED_SECRET`, database URL, managed `rediss://` URL, Resend API key, verified sender and webhook secret.
+4. Configure both Next.js services with their own `APP_PUBLIC_URL`, server-only `GRAPHYTION_API_URL` and the matching `GRAPHYTION_BFF_SHARED_SECRET`.
+5. Configure Supabase Auth Site URL, redirect allowlist and signup/recovery templates to call `/api/auth/callback?token_hash={{ .TokenHash }}&type=...`.
+6. Configure Resend sender domain and register `https://<api-domain>/api/v1/webhooks/resend`.
+7. After deployment is separately authorized, verify `/api/v1/ready` from the real API runtime. No hosting secrets or deployments were changed by this work.
+8. Use a real Graphytion user who completes email verification to run Auth, session, profile, workspace, invitation, all RBAC roles, project CRUD, tenant-isolation/IDOR, CSRF, expiry/revocation and audit/database consistency checks. No user email was available in this task, so no account was created.
+
+## Current completion gate
+
+| Gate | Status |
+|---|---|
+| Phase 01 foundation/build gates | Complete (previous passing CI evidence) |
+| Existing Phase 02 schema and RLS migrations | Applied and verified |
+| Production runtime secrets/connectivity | Not configured/verified |
+| Dedicated FastAPI DB login | Migration prepared; role not created yet |
+| Resend email and delivery webhooks | Adapter implemented; provider not configured or tested |
+| HttpOnly BFF and CSRF | Code implemented; production domain/runtime not deployed or browser-tested |
+| Real verified-user E2E and RBAC/IDOR tests | Not run; Production Auth user count is zero |
+| Phase 02 overall | **OPEN — NOT COMPLETE** |
+
+## Data safety
+
+- No production user, workspace, project or invitation was created, changed or deleted during this finalization work.
+- No production secrets were read or changed.
+- Migrations 004 and 005 were not applied.
+- No staging environment or deployment was created or triggered.
+- Prefer forward corrective migrations; do not drop existing Phase 02 schema as a rollback shortcut.
+
+See [Phase 02 Production Runtime Runbook](../operations/phase-02-production-runtime-runbook.md) for the exact owner-side configuration steps.

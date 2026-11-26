@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
-import type { ProfileApi, WorkspaceApi, VideoProjectApi, WorkspacePermissionsApi } from '@graphytion/contracts';
+import type { ProfileApi, WorkspaceApi, VideoProjectApi, WorkspacePermissionsApi, WorkspaceMemberApi, WorkspaceInvitationApi } from '@graphytion/contracts';
 
 type Profile = ProfileApi;
 type Workspace = WorkspaceApi;
-type Project = VideoProjectApi;
+type Project = VideoProjectApi;\ntype Member = WorkspaceMemberApi;\ntype Invitation = WorkspaceInvitationApi & { delivery_status?: string; delivery_attempts?: number; sent_at?: string | null };
 type AuthResult = { authenticated?:boolean; user?:{id:string;email:string}|null };
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
 
@@ -18,7 +18,7 @@ export default function Studio() {
   const [displayName,setDisplayName] = useState('');
   const [mode,setMode] = useState<'login'|'signup'>('login');
   const [workspaces,setWorkspaces] = useState<Workspace[]>([]);
-  const [permissions,setPermissions] = useState<string[]>([]);
+  const [permissions,setPermissions] = useState<string[]>([]);\n  const [members,setMembers] = useState<Member[]>([]);\n  const [invitations,setInvitations] = useState<Invitation[]>([]);\n  const [inviteEmail,setInviteEmail] = useState('');\n  const [inviteRole,setInviteRole] = useState<'member'|'viewer'|'editor'|'admin'|'billing'>('member');
   const [workspaceId,setWorkspaceId] = useState('');
   const [projects,setProjects] = useState<Project[]>([]);
   const [projectTotal,setProjectTotal] = useState(0);
@@ -87,7 +87,7 @@ export default function Studio() {
     const selected=workspaceId && ws.data.some(w=>w.id===workspaceId) ? workspaceId : (ws.data[0]?.id||'');
     setWorkspaceId(selected);
     setWorkspaceEditName(ws.data.find(w=>w.id===selected)?.name||'');
-    if(selected){const permissionResult=await call<{data:WorkspacePermissionsApi}>('/workspaces/'+selected+'/permissions');setPermissions(permissionResult.data.permissions);await loadWorkspaceData(selected);}else{setPermissions([]);setProjects([]);}
+    if(selected){const permissionResult=await call<{data:WorkspacePermissionsApi}>('/workspaces/'+selected+'/permissions');const allowed=permissionResult.data.permissions;setPermissions(allowed);const [m,i]=await Promise.all([allowed.includes('member.read')?call<{data:Member[]}>('/workspaces/'+selected+'/members'):Promise.resolve({data:[] as Member[]}),allowed.includes('member.manage')?call<{data:Invitation[]}>('/workspaces/'+selected+'/invitations'):Promise.resolve({data:[] as Invitation[]})]);setMembers(m.data);setInvitations(i.data);await loadWorkspaceData(selected);}else{setPermissions([]);setProjects([]);setMembers([]);setInvitations([]);}
   },[call,loadWorkspaceData,workspaceId]);
 
   useEffect(()=>{
@@ -181,6 +181,26 @@ export default function Studio() {
     try{await call('/workspaces/'+workspaceId+'/leave',{method:'POST'});setWorkspaceId('');await loadAccount();setNotice('Anda telah keluar dari workspace.');}
     catch(e){setError(e instanceof Error?e.message:'Tidak dapat keluar dari workspace');}finally{setBusy(false);}
   }
+  async function createInvitation(event:React.FormEvent<HTMLFormElement>){
+    event.preventDefault();if(!workspaceId||!permissions.includes('member.manage'))return;setBusy(true);setError('');setNotice('');
+    try{const result=await call<{data:{delivery_status?:string}}>('/workspaces/'+workspaceId+'/invitations',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({email:inviteEmail,role:inviteRole})});setInviteEmail('');setNotice(result.data.delivery_status==='sent'?'Provider menerima permintaan pengiriman invitation.':'Invitation dibuat; status pengiriman belum terkonfirmasi.');await loadAccount();}
+    catch(e){setError(e instanceof Error?e.message:'Gagal membuat invitation');}finally{setBusy(false);}
+  }
+  async function changeMemberRole(member:Member,nextRole:string){
+    if(!workspaceId)return;setBusy(true);setError('');
+    try{await call('/workspaces/'+workspaceId+'/members/'+member.id,{method:'PATCH',body:JSON.stringify({role:nextRole})});await loadAccount();setNotice('Role anggota diperbarui.');}
+    catch(e){setError(e instanceof Error?e.message:'Gagal memperbarui role anggota');}finally{setBusy(false);}
+  }
+  async function removeMember(member:Member){
+    if(!workspaceId||!window.confirm('Keluarkan anggota ini dari workspace?'))return;setBusy(true);setError('');
+    try{await call('/workspaces/'+workspaceId+'/members/'+member.id,{method:'DELETE'});await loadAccount();setNotice('Anggota dikeluarkan dari workspace.');}
+    catch(e){setError(e instanceof Error?e.message:'Gagal mengeluarkan anggota');}finally{setBusy(false);}
+  }
+  async function cancelInvitation(invitation:Invitation){
+    if(!workspaceId||!window.confirm('Batalkan invitation untuk '+invitation.email+'?'))return;setBusy(true);setError('');
+    try{await call('/workspaces/'+workspaceId+'/invitations/'+invitation.id,{method:'DELETE'});await loadAccount();setNotice('Invitation dibatalkan.');}
+    catch(e){setError(e instanceof Error?e.message:'Gagal membatalkan invitation');}finally{setBusy(false);}
+  }
   async function createProject(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();if(!workspaceId)return;setBusy(true);setError('');
     try{await call('/workspaces/'+workspaceId+'/projects',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:projectName,description:projectDescription||null,production_mode:'motion_graphic',default_language:'id-ID',aspect_ratio:'16:9',width:1920,height:1080,fps:30,settings:{}})});setProjectName('');setProjectDescription('');await loadWorkspaceData(workspaceId,{q:search,status:projectStatus,sort:projectSort,offset:projectOffset});setNotice('Project tersimpan.');}
@@ -252,7 +272,7 @@ export default function Studio() {
     </header>
     {error&&<p role="alert" style={{padding:12,background:'#fff1f0',color:'#b42318',borderRadius:10}}>{error}</p>}{notice&&<p role="status" style={{padding:12,background:'#ecfdf3',color:'#176b45',borderRadius:10}}>{notice}</p>}{loadingAccount&&<p role="status" style={{color:'#68788e'}}>Memuat profil dan workspace…</p>}
     <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:16,marginBottom:20}}>
-      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Workspace</h2><select aria-label="Pilih workspace" value={workspaceId} onChange={e=>{const id=e.target.value;setWorkspaceId(id);setWorkspaceEditName(workspaces.find(w=>w.id===id)?.name||'');if(id){Promise.all([loadWorkspaceData(id),call<{data:WorkspacePermissionsApi}>('/workspaces/'+id+'/permissions')]).then(([,p])=>setPermissions(p.data.permissions)).catch(x=>setError(String(x)));}else{setPermissions([]);setProjects([]);}}} style={field}><option value="">Pilih workspace</option>{workspaces.map(w=><option key={w.id} value={w.id}>{w.name} · {w.role}</option>)}</select><p style={{color:'#68788e',fontSize:13}}>{workspaces.length} workspace tersedia</p>{workspaceId&&<><form onSubmit={updateWorkspace} style={{display:'flex',gap:8,marginTop:8}}><input aria-label="Ubah nama workspace" value={workspaceEditName||workspaces.find(w=>w.id===workspaceId)?.name||''} onChange={e=>setWorkspaceEditName(e.target.value)} style={field}/><button disabled={busy||!permissions.includes('workspace.update')} style={button}>Simpan nama</button></form>{selectedRole!=='owner'&&<button onClick={leaveWorkspace} disabled={busy} style={{...button,background:'#fff1f0',color:'#b42318',marginTop:8}}>Keluar workspace</button>}{permissions.includes('workspace.delete')&&<button onClick={deleteWorkspace} disabled={busy} style={{...button,background:'#fff1f0',color:'#b42318',marginTop:8}}>Hapus workspace</button>}</>}<form onSubmit={createWorkspace} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Nama workspace" placeholder="Nama workspace baru" value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} required style={field}/><input aria-label="Slug workspace" placeholder="slug-workspace" value={workspaceSlug} onChange={e=>setWorkspaceSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))} required style={field}/><button disabled={busy} style={button}>Buat workspace</button></form></div>
+      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Workspace</h2><select aria-label="Pilih workspace" value={workspaceId} onChange={e=>{const id=e.target.value;setWorkspaceId(id);setWorkspaceEditName(workspaces.find(w=>w.id===id)?.name||'');if(id){Promise.all([loadWorkspaceData(id),call<{data:WorkspacePermissionsApi}>('/workspaces/'+id+'/permissions')]).then(async([,p])=>{setPermissions(p.data.permissions);const [m,i]=await Promise.all([p.data.permissions.includes('member.read')?call<{data:Member[]}>('/workspaces/'+id+'/members'):Promise.resolve({data:[] as Member[]}),p.data.permissions.includes('member.manage')?call<{data:Invitation[]}>('/workspaces/'+id+'/invitations'):Promise.resolve({data:[] as Invitation[]})]);setMembers(m.data);setInvitations(i.data);}).catch(x=>setError(String(x)));}else{setPermissions([]);setProjects([]);setMembers([]);setInvitations([]);}}} style={field}><option value="">Pilih workspace</option>{workspaces.map(w=><option key={w.id} value={w.id}>{w.name} · {w.role}</option>)}</select><p style={{color:'#68788e',fontSize:13}}>{workspaces.length} workspace tersedia</p>{workspaceId&&<><form onSubmit={updateWorkspace} style={{display:'flex',gap:8,marginTop:8}}><input aria-label="Ubah nama workspace" value={workspaceEditName||workspaces.find(w=>w.id===workspaceId)?.name||''} onChange={e=>setWorkspaceEditName(e.target.value)} style={field}/><button disabled={busy||!permissions.includes('workspace.update')} style={button}>Simpan nama</button></form>{selectedRole!=='owner'&&<button onClick={leaveWorkspace} disabled={busy} style={{...button,background:'#fff1f0',color:'#b42318',marginTop:8}}>Keluar workspace</button>}{permissions.includes('workspace.delete')&&<button onClick={deleteWorkspace} disabled={busy} style={{...button,background:'#fff1f0',color:'#b42318',marginTop:8}}>Hapus workspace</button>}</>}<form onSubmit={createWorkspace} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Nama workspace" placeholder="Nama workspace baru" value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} required style={field}/><input aria-label="Slug workspace" placeholder="slug-workspace" value={workspaceSlug} onChange={e=>setWorkspaceSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))} required style={field}/><button disabled={busy} style={button}>Buat workspace</button></form></div>
       <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Profil akun</h2>{avatarUrl&&<img src={avatarUrl} alt="Avatar profil" width={72} height={72} style={{width:72,height:72,objectFit:'cover',borderRadius:'50%',marginBottom:10}}/>}<form onSubmit={saveProfile} style={{display:'grid',gap:8}}><input aria-label="Nama tampilan" placeholder="Nama tampilan" value={profileName} onChange={e=>setProfileName(e.target.value)} style={field}/><textarea aria-label="Bio" placeholder="Bio singkat" value={profileBio} onChange={e=>setProfileBio(e.target.value)} rows={3} style={field}/><button disabled={busy} style={button}>Simpan profil</button></form><form onSubmit={uploadAvatar} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Avatar PNG JPEG WebP" type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>setAvatarFile(e.target.files?.[0]||null)}/><button disabled={busy||!avatarFile} style={{...button,background:'#edf3f9',color:'#173f72'}}>Upload avatar private</button></form>{profile?.avatar_path&&<p style={{fontSize:12,color:'#68788e'}}>Avatar: {profile.avatar_path}</p>}{passwordRecovery&&<form onSubmit={changePassword} style={{display:'grid',gap:8,marginTop:16}}><strong>Atur password baru</strong><input aria-label="Password baru" type="password" minLength={10} required value={newPassword} onChange={e=>setNewPassword(e.target.value)} style={field}/><button disabled={busy} style={button}>Simpan password baru</button></form>}</div>
     </section>
     {invitationToken&&<section style={{...card,marginBottom:18}}><h2 style={{marginTop:0,fontSize:18}}>Undangan workspace</h2><p style={{color:'#68788e',fontSize:14}}>Tautan undangan terdeteksi. Pastikan Anda masuk menggunakan alamat email yang menerima undangan.</p><button type="button" onClick={acceptInvitation} disabled={busy} style={button}>{busy?'Memproses…':'Terima undangan'}</button></section>}

@@ -33,9 +33,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_ROLE_KEY"),
     )
     bff_shared_secret: SecretStr | None = Field(default=None, repr=False)
+    # Keep the administrative/migration connection separate from the API runtime.
+    # GRAPHYTION_RUNTIME_DATABASE_URL takes precedence; DATABASE_URL remains a
+    # backwards-compatible fallback for environments already using a dedicated role.
     database_url: SecretStr = Field(
         default=SecretStr("postgresql+asyncpg://graphytion_api:CHANGE_ME@localhost:5432/postgres"),
         repr=False,
+        validation_alias=AliasChoices("GRAPHYTION_RUNTIME_DATABASE_URL", "DATABASE_URL"),
     )
     redis_url: SecretStr | None = Field(default=None, repr=False)
     invitation_email_provider: str = "resend"

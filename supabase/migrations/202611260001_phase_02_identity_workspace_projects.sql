@@ -221,4 +221,25 @@ drop policy if exists audit_logs_workspace_read on public.audit_logs;
 create policy audit_logs_workspace_read on public.audit_logs for select to authenticated
 using (workspace_id is not null and public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
 
+
+-- Private profile avatar storage. Objects are namespaced by auth user UUID.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values ('avatars','avatars',false,5242880,array['image/png','image/jpeg','image/webp'])
+on conflict (id) do update set public=false,file_size_limit=5242880,
+  allowed_mime_types=array['image/png','image/jpeg','image/webp'];
+
+drop policy if exists graphytion_avatar_read_own on storage.objects;
+create policy graphytion_avatar_read_own on storage.objects
+for select to authenticated
+using (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+drop policy if exists graphytion_avatar_insert_own on storage.objects;
+create policy graphytion_avatar_insert_own on storage.objects
+for insert to authenticated
+with check (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+drop policy if exists graphytion_avatar_delete_own on storage.objects;
+create policy graphytion_avatar_delete_own on storage.objects
+for delete to authenticated
+using (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+
+
 commit;

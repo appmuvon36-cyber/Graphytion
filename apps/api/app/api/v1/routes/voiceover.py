@@ -3,7 +3,7 @@ import hashlib,hmac,json
 from typing import Any
 from uuid import UUID,uuid4
 from fastapi import APIRouter,File,Form,Header,HTTPException,Query,Request,UploadFile
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,model_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims,DbSession
@@ -24,6 +24,19 @@ class VoiceoverCreate(BaseModel):
  scene_id:UUID|None=None
  generation_config:dict[str,Any]=Field(default_factory=dict)
  subtitle_segment_id:UUID|None=None
+
+ @model_validator(mode="after")
+ def validate_provider_options(self):
+  if self.provider_key=="gemini":
+   voices={"Kore","Puck","Charon","Fenrir","Aoede","Leda","Orus","Zephyr","Callirrhoe","Autonoe","Enceladus","Iapetus","Umbriel","Algieba","Despina","Erinome","Algenib","Rasalgethi","Laomedeia","Achernar","Alnilam","Schedar","Gacrux","Pulcherrima","Achird","Zubenelgenubi","Vindemiatrix","Sadachbia","Sadaltager","Sulafat"}
+   if not self.model_key.startswith("gemini-") or not self.model_key.endswith("-tts") or self.voice_key not in voices:
+    raise ValueError("Gemini TTS requires a Gemini TTS model and a supported prebuilt voice")
+  else:
+   voices={"alloy","ash","coral","echo","fable","onyx","nova","sage","shimmer","verse"}
+   if self.model_key not in {"tts-1","tts-1-hd","gpt-4o-mini-tts"} or self.voice_key not in voices:
+    raise ValueError("OpenAI TTS requires a supported model and voice")
+  return self
+
 class VoiceoverFailure(BaseModel):
  error_code:str=Field(min_length=1,max_length=100)
  retryable:bool=False

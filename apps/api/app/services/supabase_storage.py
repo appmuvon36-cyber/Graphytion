@@ -75,4 +75,5 @@ class SupabaseStorage:
         url = f"{base_url}/storage/v1/object/{bucket_segment}/{object_segment}"
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.delete(url, headers=self._headers())
-            response.raise_for_status()
+            if response.status_code != 404:
+                response.raise_for_status()

@@ -254,14 +254,14 @@ grant execute on function public.graphytion_workspace_role(uuid) to authenticate
 grant execute on function public.graphytion_workspace_owner(uuid) to authenticated;
 
 create or replace function public.graphytion_protect_project_tenant()
-returns trigger language plpgsql set search_path = public as $$
+returns trigger language plpgsql set search_path = public as $project_guard$
 begin
   if new.workspace_id <> old.workspace_id or new.created_by <> old.created_by then
     raise exception 'project tenant and creator are immutable' using errcode = '42501';
   end if;
   return new;
 end
-$;
+$project_guard$;
 revoke all on function public.graphytion_protect_project_tenant() from public, anon, authenticated;
 drop trigger if exists video_projects_protect_tenant on public.video_projects;
 create trigger video_projects_protect_tenant before update on public.video_projects

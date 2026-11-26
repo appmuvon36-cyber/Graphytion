@@ -180,13 +180,35 @@ async def audit(
 
 
 @router.post("/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit)])
-async def signup(payload: AuthSignup):
-    return await supabase_auth.signup(payload.email, payload.password, payload.display_name)
+async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
+    result = await supabase_auth.signup(payload.email, payload.password, payload.display_name)
+    auth_user = result.get("user") or {}
+    if auth_user.get("id"):
+        await db.execute(
+            text("""
+                insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+                values (:actor,'auth.signup','user',:resource,:request_id)
+            """),
+            {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
+        )
+        await db.commit()
+    return result
 
 
 @router.post("/auth/login", dependencies=[Depends(auth_rate_limit)])
-async def login(payload: AuthLogin):
-    return await supabase_auth.login(payload.email, payload.password)
+async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
+    result = await supabase_auth.login(payload.email, payload.password)
+    auth_user = result.get("user") or {}
+    if auth_user.get("id"):
+        await db.execute(
+            text("""
+                insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+                values (:actor,'auth.login','user',:resource,:request_id)
+            """),
+            {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
+        )
+        await db.commit()
+    return result
 
 
 @router.post("/auth/refresh", dependencies=[Depends(auth_rate_limit)])
@@ -195,8 +217,22 @@ async def refresh(payload: RefreshRequest):
 
 
 @router.post("/auth/logout", status_code=204, dependencies=[Depends(auth_rate_limit)])
-async def logout(claims: AuthenticatedClaims, authorization: str = Header()):
+async def logout(
+    request: Request,
+    claims: AuthenticatedClaims,
+    authorization: str = Header(),
+    db: AsyncSession = Db,
+):
+    actor = uid(claims)
     await supabase_auth.logout(authorization.removeprefix("Bearer ").strip())
+    await db.execute(
+        text("""
+            insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+            values (:actor,'auth.logout','user',:resource,:request_id)
+        """),
+        {"actor": actor, "resource": actor, "request_id": getattr(request.state, "request_id", None)},
+    )
+    await db.commit()
     return None
 
 

@@ -35,7 +35,7 @@ export default function Studio() {
   const [editName,setEditName] = useState('');
   const [editDescription,setEditDescription] = useState('');
 
-  const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>access || (typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null)}),[access]);
+  const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>(typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null) || access}),[access]);
   const call = useCallback(async <T,>(path:string,init:RequestInit={})=>{
     try { return await api.request<T>(path,init); }
     catch (e) {

@@ -154,6 +154,16 @@ drop trigger if exists graphytion_auth_user_profile on auth.users;
 create trigger graphytion_auth_user_profile after insert on auth.users
 for each row execute function public.graphytion_sync_auth_profile();
 
+-- Backfill profiles for existing Auth users without changing existing profile values.
+insert into public.profiles(id,display_name)
+select
+  u.id,
+  nullif(btrim(coalesce(u.raw_user_meta_data->>'display_name',u.raw_user_meta_data->>'full_name','')), '')
+from auth.users u
+on conflict (id) do update set
+  display_name = coalesce(public.profiles.display_name,excluded.display_name),
+  updated_at = now();
+
 create or replace function public.graphytion_is_workspace_member(target_workspace uuid)
 returns boolean language sql stable security definer set search_path = public, auth as $$
   select exists (

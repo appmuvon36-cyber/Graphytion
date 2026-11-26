@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.database import set_rls_subject
 from app.services.supabase_auth import supabase_auth
+from app.services.llm_gateway import model_router
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -461,3 +463,18 @@ async def revoke_platform_admin(
     await _audit(db, request, actor, "platform.admin.revoked", "platform_admin", user_id)
     await db.commit()
     return None
+
+
+@router.get("/llm/providers")
+async def platform_llm_providers(
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    return {"data": {
+        "available_providers": model_router.available(),
+        "configured_model": settings.llm_model_key,
+        "openai_credential_configured": bool(settings.openai_api_key_value),
+        "generation_ready": "openai" in model_router.available(),
+    }}

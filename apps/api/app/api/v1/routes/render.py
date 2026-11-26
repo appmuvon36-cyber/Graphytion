@@ -432,11 +432,7 @@ async def fail_render_job(
            "message": payload.error_message, "retry": retry, "job": render_job_id})
     await db.execute(text("update public.render_attempts set status='failed',ended_at=now(),error_code=:code,diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"code":payload.error_code,"diagnostics":json.dumps({"message":payload.error_message,"retryable":payload.retryable}),"job":render_job_id})
     await db.commit()
-    if retry:
-        try:
-            await redis_client.xadd(RENDER_STREAM, {"render_job_id": str(render_job_id)}, maxlen=10000, approximate=True)
-        except Exception:
-            pass
+    # PostgreSQL polling discovers retryable jobs after the failure transaction commits.
     return {"data": {"render_job_id": str(render_job_id), "status": "queued" if retry else "failed"}}
 
 

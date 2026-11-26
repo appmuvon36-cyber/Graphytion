@@ -935,7 +935,7 @@ async def execute_creative_stage(
     })).scalar_one()
     await db.execute(text("""
         insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
-        values (:run,'stage.started',cast(:payload as jsonb),1)
+        values (:run,'stage.queued',cast(:payload as jsonb),1)
     """), {"run": run["id"], "payload": json.dumps({"stage": stage})})
     await db.commit()
 

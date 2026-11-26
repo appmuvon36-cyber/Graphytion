@@ -167,8 +167,8 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 set status='failed',error_code='WORKER_UNHANDLED',
                     error_message_safe='Creative worker failed unexpectedly',
                     completed_at=now(),worker_id=null,lease_expires_at=null
-                where id=:run
-            """), {"run": claimed["run_id"]})
+                where id=:run and worker_id=:worker
+            """), {"run": claimed["run_id"], "worker": WORKER_ID})
             await db.execute(text("""
                 update public.agent_tasks set status='failed',
                     error_code='WORKER_UNHANDLED',completed_at=now(),lease_expires_at=null

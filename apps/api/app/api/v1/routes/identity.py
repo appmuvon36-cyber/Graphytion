@@ -52,7 +52,19 @@ async def require_bff(request: Request) -> None:
 
 
 async def auth_rate_limit(request: Request) -> None:
-    client_ip = request.client.host if request.client else "unknown"
+    # Trust the browser IP supplied by the same-origin BFF only when its
+    # server-to-server secret is valid. Direct API callers cannot spoof this value.
+    expected = settings.bff_shared_secret_value or ""
+    supplied = request.headers.get("X-Graphytion-BFF-Secret", "")
+    forwarded_ip = request.headers.get("X-Graphytion-Client-IP", "")
+    trusted_bff = bool(
+        expected and supplied and hmac.compare_digest(expected, supplied)
+    )
+    client_ip = (
+        forwarded_ip
+        if trusted_bff and forwarded_ip and len(forwarded_ip) <= 64
+        else request.client.host if request.client else "unknown"
+    )
     key = f"graphytion:ratelimit:auth:{client_ip}:{request.url.path}"
     try:
         count = await redis_client.incr(key)
@@ -246,7 +258,7 @@ async def audit(
 
 
 @router.post(
-    "/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit), Depends(require_bff)]
+    "/auth/signup", status_code=201, dependencies=[Depends(require_bff), Depends(auth_rate_limit)]
 )
 async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.signup(payload.email, payload.password, payload.display_name)

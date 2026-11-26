@@ -422,8 +422,20 @@ using (workspace_id is not null and public.graphytion_workspace_role(workspace_i
 -- Private profile avatar storage. Objects are namespaced by auth user UUID.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
 values ('avatars','avatars',false,5242880,array['image/png','image/jpeg','image/webp'])
-on conflict (id) do update set public=false,file_size_limit=5242880,
-  allowed_mime_types=array['image/png','image/jpeg','image/webp'];
+on conflict (id) do nothing;
+do $
+begin
+  if exists (
+    select 1 from storage.buckets
+    where id='avatars' and (
+      public
+      or file_size_limit is distinct from 5242880
+      or allowed_mime_types is distinct from array['image/png','image/jpeg','image/webp']
+    )
+  ) then
+    raise exception 'Existing avatars bucket configuration is incompatible; reconcile it before migration';
+  end if;
+end $;
 
 drop policy if exists graphytion_avatar_read_own on storage.objects;
 create policy graphytion_avatar_read_own on storage.objects

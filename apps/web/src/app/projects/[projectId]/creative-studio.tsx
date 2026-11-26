@@ -43,6 +43,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [voiceText,setVoiceText]=useState('');
   const [voiceKey,setVoiceKey]=useState('alloy');
   const [voiceModel,setVoiceModel]=useState('tts-1');
+  const [selectedVoiceSubtitleSegmentId,setSelectedVoiceSubtitleSegmentId]=useState('');
+  const [newSubtitleText,setNewSubtitleText]=useState('');
   const [subtitleImport,setSubtitleImport]=useState('');
   const [subtitleFormat,setSubtitleFormat]=useState<'srt'|'webvtt'>('srt');
   const [assetFile, setAssetFile] = useState<File | null>(null);
@@ -227,7 +229,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     try{
       const result=await call<{data:{voiceover_id:string;status:string;provider_configured:boolean}}>('/projects/'+projectId+'/voiceovers',{
         method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
-        body:JSON.stringify({text:voiceText,provider_key:'openai',model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID'}),
+        body:JSON.stringify({text:voiceText,provider_key:'openai',model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID',...(selectedVoiceSubtitleSegmentId?{subtitle_segment_id:selectedVoiceSubtitleSegmentId}:{})}),
       });
       setNotice(result.data.status==='provider_unavailable'?'Voiceover job tersimpan, tetapi provider credentials belum dikonfigurasi. Tidak ada audio yang dibuat.':'Voiceover job queued · '+result.data.voiceover_id);
       await load();
@@ -236,6 +238,18 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   }
   function updateSubtitleDraft(segment:SubtitleSegmentItem,patch:Partial<{text:string;start_ms:number;end_ms:number}>) {
     setSubtitleDrafts(current=>({...current,[segment.id]:{text:current[segment.id]?.text??segment.text,start_ms:current[segment.id]?.start_ms??segment.start_ms,end_ms:current[segment.id]?.end_ms??segment.end_ms,...patch}}));
+  }
+  async function createSubtitleSegment(track:SubtitleTrackItem) {
+    const start=track.segments.length?Math.max(...track.segments.map(item=>item.end_ms)):0;
+    if(!newSubtitleText.trim())return;
+    setBusy(true);setError('');
+    try {
+      await call('/projects/'+projectId+'/subtitles/'+track.id+'/segments',{
+        method:'POST',body:JSON.stringify({segment_index:track.segments.length,start_ms:start,end_ms:start+2000,text:newSubtitleText.trim()}),
+      });
+      setNewSubtitleText('');setNotice('New subtitle segment created.');await load();
+    } catch(e) {setError(e instanceof Error?e.message:'Subtitle segment creation failed');}
+    finally {setBusy(false);}
   }
   async function saveSubtitleSegment(track:SubtitleTrackItem,segment:SubtitleSegmentItem) {
     const draft=subtitleDrafts[segment.id]??{text:segment.text,start_ms:segment.start_ms,end_ms:segment.end_ms};
@@ -507,6 +521,14 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       <p style={{fontSize:13,color:'#68788e'}}>Provider-independent TTS lifecycle. Jika credentials belum tersedia, request akan tersimpan sebagai provider_unavailable dan tidak menghasilkan audio palsu.</p>
       <form onSubmit={generateVoiceover} style={{display:'grid',gap:8}}>
         <textarea aria-label="Voice-over text" rows={4} required value={voiceText} onChange={e=>setVoiceText(e.target.value)} placeholder="Masukkan narasi voice-over…" style={field}/>
+        <select aria-label="Regenerate subtitle segment" value={selectedVoiceSubtitleSegmentId} onChange={event=>{
+          const id=event.target.value;setSelectedVoiceSubtitleSegmentId(id);
+          const selected=subtitleTracks.flatMap(track=>track.segments).find(segment=>segment.id===id);
+          if(selected)setVoiceText(selected.text);
+        }} style={field}>
+          <option value="">Generate whole voice-over (no subtitle segment link)</option>
+          {subtitleTracks.flatMap(track=>track.segments.map(segment=><option key={segment.id} value={segment.id}>{track.language} · #{segment.segment_index+1} · {segment.text.slice(0,70)}</option>))}
+        </select>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8}}>
           <select aria-label="TTS model" value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} style={field}><option value="tts-1">TTS Standard</option><option value="tts-1-hd">TTS HD</option><option value="gpt-4o-mini-tts">GPT-4o mini TTS</option></select>
           <select aria-label="TTS voice" value={voiceKey} onChange={e=>setVoiceKey(e.target.value)} style={field}>{['alloy','ash','coral','echo','fable','onyx','nova','sage','shimmer','verse'].map(v=><option key={v}>{v}</option>)}</select>
@@ -528,6 +550,10 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       </form>
       {subtitleTracks.map(track=><article key={track.id} style={{padding:10,border:'1px solid #edf0f5',borderRadius:9,marginTop:10}}>
         <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><div><strong>{track.language} · {track.format.toUpperCase()} · v{track.version}</strong><div style={{fontSize:12,color:'#68788e'}}>{track.segments.length} segments</div></div><div style={{display:'flex',gap:6}}><button type="button" onClick={()=>void exportSubtitleTrack(track)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Export</button><button type="button" disabled={!previewSnapshot} onClick={()=>attachSubtitleTrack(track)} style={button}>Attach to timeline</button></div></div>
+        <div style={{display:'flex',gap:7,marginTop:10}}>
+          <input aria-label="New subtitle segment text" value={newSubtitleText} onChange={event=>setNewSubtitleText(event.target.value)} placeholder="New subtitle segment text…" style={field}/>
+          <button type="button" disabled={busy||!newSubtitleText.trim()} onClick={()=>void createSubtitleSegment(track)} style={button}>Add segment</button>
+        </div>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginTop:10}}>
           <span style={{fontSize:11,color:'#68788e'}}>Segment editor · stable IDs · revision history</span>
           <button type="button" disabled={busy||selectedSubtitleSegments.length<2} onClick={()=>void mergeSelectedSubtitleSegments(track)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Merge selected ({selectedSubtitleSegments.length})</button>

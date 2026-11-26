@@ -203,7 +203,19 @@ export async function handleSessionProxy(
   if (path === 'auth/logout' && method === 'POST') {
     let token = accessToken;
     if (token) {
-      const revoked = await upstream('/auth/logout', { method: 'POST' }, token);
+      const revoked = await upstream(
+        '/auth/logout',
+        {
+          method: 'POST',
+          headers: {
+            'X-Graphytion-Client-IP': request.headers.get('x-real-ip')
+              ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+              ?? 'unknown',
+            'X-Graphytion-BFF-Secret': config().bffSecret,
+          },
+        },
+        token,
+      );
       if (!revoked.ok) token = undefined;
     }
     if (!token) {

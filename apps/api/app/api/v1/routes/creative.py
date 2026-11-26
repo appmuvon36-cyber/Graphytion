@@ -505,7 +505,7 @@ class CreativeRunRequest(BaseModel):
     approved_component_candidates: list[str] = Field(default_factory=list, max_length=100)
 
 
-@router.post("/projects/{project_id}/creative-runs/{stage}", status_code=202)
+@router.post("/projects/{project_id}/creative-runs/{stage}")
 async def execute_creative_stage(
     project_id: UUID,
     stage: Literal["brief", "script", "storyboard"],
@@ -762,3 +762,50 @@ async def execute_creative_stage(
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=500, detail="Creative stage failed") from exc
+
+
+@router.get("/projects/{project_id}/creative-runs")
+async def list_creative_runs(
+    project_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _project_scope(db, project_id, actor, "project.read")
+    rows = (await db.execute(text("""
+        select id,project_id,workspace_id,requested_by,status,current_stage,
+               progress_percent,error_code,error_message_safe,started_at,completed_at,created_at,updated_at
+        from public.production_runs where project_id=:project
+        order by created_at desc limit 50
+    """), {"project": project_id})).mappings().all()
+    return {"data": [_json_safe(dict(row)) for row in rows]}
+
+
+@router.get("/creative-runs/{run_id}")
+async def get_creative_run(
+    run_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    run = (await db.execute(text("""
+        select * from public.production_runs where id=:run
+    """), {"run": run_id})).mappings().first()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Creative run not found")
+    await _project_scope(db, run["project_id"], actor, "project.read")
+    tasks = (await db.execute(text("""
+        select id,agent_key,task_type,status,input_artifact_id,output_artifact_id,
+               attempt_count,max_attempts,started_at,completed_at,error_code,created_at
+        from public.agent_tasks where production_run_id=:run order by created_at
+    """), {"run": run_id})).mappings().all()
+    events = (await db.execute(text("""
+        select event_type,event_payload,sequence_number,created_at
+        from public.workflow_events where production_run_id=:run order by sequence_number
+    """), {"run": run_id})).mappings().all()
+    checkpoints = (await db.execute(text("""
+        select stage_key,checkpoint_key,content_hash,created_at
+        from public.workflow_checkpoints where production_run_id=:run order by created_at
+    """), {"run": run_id})).mappings().all()
+    return {"data": {
+        "run": _json_safe(dict(run)),
+        "tasks": [_json_safe(dict(row)) for row in tasks],
+        "events": [_json_safe(dict(row)) for row in events],
+        "checkpoints": [_json_safe(dict(row)) for row in checkpoints],
+    }}

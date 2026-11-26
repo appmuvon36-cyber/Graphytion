@@ -151,6 +151,19 @@ $$;
 -- Tenant and identity keys are immutable after resource creation. All writes
 -- are mediated by FastAPI; these triggers also protect against accidental
 -- direct authenticated SQL updates that might otherwise cross tenant scope.
+create or replace function public.graphytion_protect_workspace_owner()
+returns trigger language plpgsql set search_path = public as $
+begin
+  if new.owner_user_id <> old.owner_user_id then
+    raise exception 'workspace ownership transfer requires a dedicated workflow' using errcode = '42501';
+  end if;
+  return new;
+end $;
+drop trigger if exists workspaces_protect_owner on public.workspaces;
+create trigger workspaces_protect_owner
+before update on public.workspaces
+for each row execute function public.graphytion_protect_workspace_owner();
+
 create or replace function public.graphytion_protect_membership_identity()
 returns trigger language plpgsql set search_path = public as $$
 begin

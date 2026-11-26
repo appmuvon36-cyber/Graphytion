@@ -120,32 +120,32 @@ alter table public.artifact_versions enable row level security;
 drop policy if exists creative_briefs_api_tenant on public.creative_briefs;
 create policy creative_briefs_api_tenant on public.creative_briefs
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 drop policy if exists video_scripts_api_tenant on public.video_scripts;
 create policy video_scripts_api_tenant on public.video_scripts
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 drop policy if exists storyboards_api_tenant on public.storyboards;
 create policy storyboards_api_tenant on public.storyboards
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 drop policy if exists storyboard_scenes_api_tenant on public.storyboard_scenes;
 create policy storyboard_scenes_api_tenant on public.storyboard_scenes
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 drop policy if exists artifact_versions_api_tenant on public.artifact_versions;
 create policy artifact_versions_api_tenant on public.artifact_versions
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 revoke all on public.creative_briefs, public.video_scripts, public.storyboards,
   public.storyboard_scenes, public.artifact_versions from public, anon, authenticated, service_role;

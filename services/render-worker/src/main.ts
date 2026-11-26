@@ -73,10 +73,11 @@ async function processJob(jobId?: string): Promise<boolean> {
         const now = Date.now();
         if (progress >= 1 || now - lastProgressAt >= 5000) {
           lastProgressAt = now;
-          await api(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
+          const update = await api<{cancel_requested?: boolean}>(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
             method: 'PATCH',
             body: JSON.stringify({progress_percent: Math.min(99.9, Math.max(0, progress * 100))}),
           });
+          if (update.cancel_requested) throw new Error('RENDER_CANCEL_REQUESTED');
         }
       },
     });

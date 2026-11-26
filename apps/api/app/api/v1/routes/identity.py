@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
@@ -186,7 +186,9 @@ async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     if auth_user.get("id"):
         await db.execute(
             text("""
-                insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+                insert into public.audit_logs(
+                    actor_user_id, action, resource_type, resource_id, request_id
+                )
                 values (:actor,'auth.signup','user',:resource,:request_id)
             """),
             {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
@@ -313,7 +315,7 @@ async def update_profile(
 @router.post("/me/avatar", status_code=201)
 async def upload_avatar(
     claims: AuthenticatedClaims,
-    file: UploadFile = File(...),
+    file: Annotated[UploadFile, File()],
     db: AsyncSession = Db,
 ):
     user_id = uid(claims)

@@ -55,6 +55,22 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  async function generateStage(stage: 'brief' | 'script' | 'storyboard') {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const body = stage === 'brief' ? { input_prompt: prompt }
+        : stage === 'script' ? { brief_id: selectedBrief }
+        : { script_id: selectedScript };
+      const result = await call<{data:{run_id:string;status:string;artifact_type?:string}}>('/projects/' + projectId + '/creative-runs/' + stage, {
+        method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
+      });
+      setNotice('Creative run ' + result.data.run_id + ' selesai pada status ' + result.data.status + '.');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Creative generation tidak dapat dijalankan.');
+    } finally { setBusy(false); }
+  }
+
   async function createBrief(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
@@ -131,7 +147,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <textarea aria-label="Prompt brief" placeholder="Tuliskan tujuan video, pesan utama, audiens, dan konteks…" value={prompt} onChange={e=>setPrompt(e.target.value)} required rows={4} style={field}/>
         <label style={{fontSize:13,fontWeight:700}}>Structured brief JSON</label>
         <textarea aria-label="Structured brief JSON" value={briefJson} onChange={e=>setBriefJson(e.target.value)} rows={6} style={{...field,fontFamily:'monospace',fontSize:12}}/>
-        <button disabled={busy} style={button}>Simpan brief draft</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy} style={button}>Simpan brief draft</button><button type="button" disabled={busy||!prompt.trim()} onClick={()=>void generateStage("brief")} style={{...button,background:"#0d6b54"}}>Generate brief dengan AI</button></div>
       </form>
       <div style={{marginTop:16,display:'grid',gap:8}}>{briefs.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10,display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><strong>Brief v{b.version}</strong><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>{b.input_prompt}</p><small>{b.status} · {new Date(b.created_at).toLocaleString()}</small></div><div style={{display:'flex',gap:8,alignItems:'center'}}><button type="button" onClick={()=>setSelectedBrief(b.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Pilih</button>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveBrief(b.id)} style={button}>Approve</button>}</div></article>)}</div>
     </section>
@@ -143,7 +159,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <input aria-label="Judul script" placeholder="Judul script" required value={scriptTitle} onChange={e=>setScriptTitle(e.target.value)} style={field}/>
         <label style={{fontSize:13,fontWeight:700}}>Script body JSON</label>
         <textarea aria-label="Script JSON" value={scriptText} onChange={e=>setScriptText(e.target.value)} rows={7} style={{...field,fontFamily:'monospace',fontSize:12}}/>
-        <button disabled={busy} style={button}>Simpan script draft</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy} style={button}>Simpan script draft</button><button type="button" disabled={busy||!briefs.some(b=>b.id===selectedBrief&&b.status==="approved")} onClick={()=>void generateStage("script")} style={{...button,background:"#0d6b54"}}>Generate script dengan AI</button></div>
       </form>
       <div style={{marginTop:16,display:'grid',gap:8}}>{scripts.map(s=><article key={s.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10,display:'flex',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}><div><strong>{s.title} · v{s.version}</strong><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>{s.language} · {s.status} · {s.estimated_duration_ms ? Math.round(s.estimated_duration_ms/1000)+' detik' : 'Durasi belum ditentukan'}</p></div><div style={{display:'flex',gap:8,alignItems:'center'}}><button type="button" onClick={()=>setSelectedScript(s.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Pilih</button>{s.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveScript(s.id)} style={button}>Approve</button>}</div></article>)}</div>
     </section>
@@ -154,10 +170,10 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <select aria-label="Approved script" value={selectedScript} onChange={e=>setSelectedScript(e.target.value)} style={field}><option value="">Pilih script disetujui</option>{scripts.filter(s=>s.status==='approved').map(s=><option key={s.id} value={s.id}>{s.title} · v{s.version}</option>)}</select>
         <label style={{fontSize:13,fontWeight:700}}>Storyboard scenes JSON</label>
         <textarea aria-label="Storyboard scenes JSON" value={sceneJson} onChange={e=>setSceneJson(e.target.value)} rows={10} style={{...field,fontFamily:'monospace',fontSize:12}}/>
-        <button disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} style={button}>Simpan storyboard</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} style={button}>Simpan storyboard</button><button type="button" disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} onClick={()=>void generateStage("storyboard")} style={{...button,background:"#0d6b54"}}>Generate storyboard dengan AI</button></div>
       </form>
       <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5'}}><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div>)}</article>)}</div>
     </section>
-    <p style={{fontSize:12,color:'#68788e'}}>AI generation, model routing, and asynchronous agent execution are not represented as complete here. The saved artifact APIs are connected to FastAPI; provider-backed generation remains a separate implementation gate.</p>
+    <p style={{fontSize:12,color:'#68788e'}}>AI generation berjalan melalui FastAPI Model Router dengan structured output, prompt version, dan persisted run lifecycle. Jika provider adapter belum diregistrasikan pada runtime, API mengembalikan status unavailable dan tidak membuat hasil AI palsu.</p>
   </main>;
 }

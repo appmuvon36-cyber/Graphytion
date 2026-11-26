@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import text
@@ -9,7 +10,7 @@ from app.core.config import settings
 _database_url = settings.database_url_value
 _database_host = urlparse(_database_url).hostname or ""
 _is_supavisor_pooler = _database_host.endswith(".pooler.supabase.com")
-_connect_args = {"server_settings": {"application_name": "graphytion-api"}}
+_connect_args: dict[str, Any] = {"server_settings": {"application_name": "graphytion-api"}}
 if _is_supavisor_pooler:
     _connect_args["prepared_statement_cache_size"] = 0
 

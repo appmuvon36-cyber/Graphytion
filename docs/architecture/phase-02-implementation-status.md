@@ -6,15 +6,19 @@
 **Supabase:** `xtjwmezfzexvupbfsdqt` (Graphytion, ap-northeast-1)  
 **Status:** Core schema and security migrations applied. Finalization code is committed; Production runtime, provider configuration, pending migrations and real-account E2E are NOT verified. Do not mark Phase 02 complete.
 
+## Queue architecture decision
+
+Redis has been removed from the production architecture. Render, media and creative jobs are persisted in Supabase PostgreSQL and claimed directly by workers through FastAPI using transactional leases, heartbeats and expired-lease recovery. No Redis service or `REDIS_URL` is required.
+
 ## Implemented in the repository
 
 ### API runtime and database boundary
 
-- Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, managed Redis TLS, HTTPS CORS allowlist, BFF shared secret and Resend configuration.
-- Readiness checks PostgreSQL, Redis, Supabase Auth, JWT/JWKS signing-key availability and private Storage as separate dependencies.
+- Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, PostgreSQL-backed worker queue, HTTPS CORS allowlist, BFF shared secret and Resend configuration.
+- Readiness checks PostgreSQL, Supabase Auth, JWT/JWKS signing-key availability and private Storage as separate dependencies.
 - Database connection uses a secret-safe URL accessor and a named SQLAlchemy application connection.
 - Per-request authenticated subject is set in PostgreSQL session claims and cleared before pooled connection release. This supports tenant RLS rather than using a superuser or RLS-bypass role.
-- Liveness and readiness endpoints are separate. Readiness checks PostgreSQL, Redis, Supabase Auth and private Storage independently and returns 503 if any dependency is unavailable.
+- Liveness and readiness endpoints are separate. Readiness checks PostgreSQL, Supabase Auth and private Storage independently and returns 503 if any dependency is unavailable.
 - Supabase Auth and Storage adapters expose real connectivity probes. Service-role key remains server-side only.
 
 ### Invitation lifecycle
@@ -71,7 +75,7 @@ No real account or production test record was created.
 
 1. Explicitly authorize applying migrations `202611260004` and `202611260005` to Supabase Production. They are additive and contain no DROP/DELETE data operations, but are not applied under the current no-migration-without-authorization rule.
 2. After migration 005, enable LOGIN and set a unique password for `graphytion_api` in Supabase SQL editor/secret manager; configure API `DATABASE_URL` with this role and TLS.
-3. Configure API hosting secrets: `APP_ENV`, `APP_PUBLIC_URL`, `CORS_ORIGINS`, Supabase anon/service keys, `BFF_SHARED_SECRET`, database URL, managed `rediss://` URL, Resend API key, verified sender and webhook secret.
+3. Configure API hosting secrets: `APP_ENV`, `APP_PUBLIC_URL`, `CORS_ORIGINS`, Supabase anon/service keys, `BFF_SHARED_SECRET`, database URL, Resend API key, verified sender and webhook secret.
 4. Configure both Next.js services with their own `APP_PUBLIC_URL`, server-only `GRAPHYTION_API_URL` and the matching `GRAPHYTION_BFF_SHARED_SECRET`.
 5. Configure Supabase Auth Site URL, redirect allowlist and signup/recovery templates to call `/api/auth/callback?token_hash={{ .TokenHash }}&type=...`.
 6. Configure Resend sender domain and register `https://<api-domain>/api/v1/webhooks/resend`.

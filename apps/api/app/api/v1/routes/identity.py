@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import secrets
@@ -967,7 +969,19 @@ async def list_projects(
     direction: str = Query(default="desc", pattern="^(asc|desc)$"),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    cursor: str | None = Query(default=None, max_length=128),
 ):
+    if cursor:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            decoded_offset = int(base64.urlsafe_b64decode(padded.encode()).decode())
+            if decoded_offset < 0:
+                raise ValueError("negative cursor")
+            if offset not in (0, decoded_offset):
+                raise ValueError("cursor and offset conflict")
+            offset = decoded_offset
+        except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+            raise HTTPException(status_code=400, detail="Invalid project pagination cursor") from exc
     await require_permission(db, uid(claims), workspace_id, "project.read")
     rows = (
         (
@@ -1009,6 +1023,11 @@ async def list_projects(
             "offset": offset,
             "total": total,
             "has_more": offset + len(rows) < total,
+            "next_cursor": (
+                base64.urlsafe_b64encode(str(offset + len(rows)).encode()).decode().rstrip("=")
+                if offset + len(rows) < total
+                else None
+            ),
         },
     }
 

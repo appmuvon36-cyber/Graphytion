@@ -56,6 +56,9 @@ create policy video_projects_platform_admin_read on public.video_projects
 drop policy if exists audit_logs_platform_admin_read on public.audit_logs;
 create policy audit_logs_platform_admin_read on public.audit_logs
   for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists audit_logs_platform_admin_insert on public.audit_logs;
+create policy audit_logs_platform_admin_insert on public.audit_logs
+  for insert to graphytion_api with check (private.graphytion_is_platform_admin());
 
 revoke all on public.platform_admins from public, anon, authenticated, service_role;
 grant select on public.platform_admins to graphytion_api;

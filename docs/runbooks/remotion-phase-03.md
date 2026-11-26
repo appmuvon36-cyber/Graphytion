@@ -27,13 +27,13 @@ The migration seeds Draft Preview, Standard, High Quality, Full HD and 4K global
 
 ## Worker lifecycle
 
-Redis Streams are wake-up signals only. PostgreSQL render/audio job rows and leases are authoritative. Render workers claim with FOR UPDATE SKIP LOCKED, heartbeat leases, report progress, validate output with ffprobe and upload artifacts through authenticated FastAPI endpoints. Voice-over generation runs in the separate media worker; FastAPI writes generated MP3 files into private project storage and creates project-asset metadata. Both workers support retry/recovery without client-side database access.
+PostgreSQL render/audio job rows are both the durable queue and source of truth. Workers poll authenticated FastAPI claim endpoints backed by `FOR UPDATE SKIP LOCKED`, heartbeat leases, recover expired jobs, report progress, validate output with ffprobe and upload artifacts through authenticated FastAPI endpoints. Voice-over generation runs in the separate media worker; FastAPI writes generated MP3 files into private project storage and creates project-asset metadata. Both workers support retry/recovery without client-side database access.
 
 ## Deployment-only configuration
 
 The following values are intentionally not configured in this phase:
-- FastAPI INTERNAL_WORKER_TOKEN, Supabase service credentials and Redis TLS URL.
-- Render worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, REDIS_URL, optional REMOTION_BROWSER_EXECUTABLE.
-- Media worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, REDIS_URL, OPENAI_API_KEY, optional OPENAI_TTS_MODEL.
+- FastAPI INTERNAL_WORKER_TOKEN and Supabase service credentials.
+- Render worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, optional REMOTION_BROWSER_EXECUTABLE.
+- Media worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, OPENAI_API_KEY, optional OPENAI_TTS_MODEL.
 
 Apply the new migration only during the separately authorized deployment/database rollout. No migration, secret update, Railway change or deployment was performed as part of this implementation.

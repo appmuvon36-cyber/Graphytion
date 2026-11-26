@@ -727,7 +727,20 @@ async def deliver_invitation(
     role: str,
     raw_token: str,
     digest: str,
+    attempt_reserved: bool = False,
 ) -> dict[str, Any]:
+    if not attempt_reserved:
+        await db.execute(
+            text("""
+                update public.workspace_invitations
+                set delivery_attempts=delivery_attempts+1,
+                    last_delivery_attempt_at=now(),
+                    delivery_status='pending'
+                where id=:id
+            """),
+            {"id": invitation_id},
+        )
+        await db.commit()
     try:
         provider_message_id = await invitation_email.send(
             recipient=recipient,
@@ -741,17 +754,29 @@ async def deliver_invitation(
             text("""
                 update public.workspace_invitations
                 set delivery_status='failed',
-                    delivery_attempts=delivery_attempts+1,
-                    last_delivery_attempt_at=now(),
                     last_delivery_error=:error
                 where id=:id
             """),
-            {"id": invitation_id, "error": "provider_not_configured" if isinstance(
-                exc, InvitationEmailConfigurationError
-            ) else "provider_delivery_failed"},
+            {
+                "id": invitation_id,
+                "error": "provider_not_configured" if isinstance(
+                    exc, InvitationEmailConfigurationError
+                ) else "provider_delivery_failed",
+            },
         )
         await db.commit()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        await db.execute(
+            text("""
+                update public.workspace_invitations
+                set delivery_status='failed',last_delivery_error='provider_delivery_failed'
+                where id=:id
+            """),
+            {"id": invitation_id},
+        )
+        await db.commit()
+        raise HTTPException(status_code=502, detail="Invitation email delivery failed") from exc
 
     row = (
         (
@@ -759,10 +784,8 @@ async def deliver_invitation(
                 text("""
                     update public.workspace_invitations
                     set delivery_status='sent',
-                        delivery_attempts=delivery_attempts+1,
                         provider_message_id=:message_id,
                         sent_at=now(),
-                        last_delivery_attempt_at=now(),
                         last_delivery_error=null
                     where id=:id
                     returning id,workspace_id,email,role,expires_at,created_at,
@@ -776,7 +799,6 @@ async def deliver_invitation(
     )
     await db.commit()
     return dict(row)
-
 
 @router.post(
     "/workspaces/{workspace_id}/members", status_code=201, dependencies=[Depends(auth_rate_limit)]
@@ -893,6 +915,7 @@ async def create_invitation(
         role=payload.role,
         raw_token=raw,
         digest=digest,
+        attempt_reserved=True,
     )
     await audit(
         db, actor, workspace_id, "workspace.invitation.email_accepted", "invitation",
@@ -925,7 +948,8 @@ async def resend_invitation(
         (
             await db.execute(
                 text("""
-                    select i.email,i.role,w.name as workspace_name
+                    select i.email,i.role,i.delivery_status,i.expires_at,
+                           i.last_delivery_attempt_at,w.name as workspace_name
                     from public.workspace_invitations i
                     join public.workspaces w on w.id=i.workspace_id
                     where i.id=:invitation and i.workspace_id=:workspace
@@ -940,6 +964,22 @@ async def resend_invitation(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Pending invitation not found")
+    if row["delivery_status"] in ("bounced", "complained"):
+        raise HTTPException(
+            status_code=409,
+            detail="Provider reported a recipient problem; correct the address before sending again",
+        )
+    if row["delivery_status"] == "pending" and row["last_delivery_attempt_at"] is not None:
+        recent = (
+            await db.execute(
+                text("select :attempt_at > now() - interval '2 minutes'"),
+                {"attempt_at": row["last_delivery_attempt_at"]},
+            )
+        ).scalar_one()
+        if recent:
+            raise HTTPException(status_code=409, detail="Invitation email is already being processed")
+    if row["delivery_status"] not in ("failed", "pending") and row["expires_at"] > datetime.now(UTC):
+        raise HTTPException(status_code=409, detail="Invitation was already accepted by the email provider")
     if row["role"] == "admin":
         actor_role = await require_permission(db, actor, workspace_id, "member.manage")
         if actor_role != "owner":
@@ -953,7 +993,8 @@ async def resend_invitation(
         text("""
             update public.workspace_invitations
             set token_hash=:digest,expires_at=now()+interval '7 days',
-                delivery_status='pending',provider_message_id=null,
+                delivery_status='pending',provider_message_id=null,sent_at=null,
+                delivery_attempts=delivery_attempts+1,last_delivery_attempt_at=now(),
                 last_delivery_error=null
             where id=:id
         """),

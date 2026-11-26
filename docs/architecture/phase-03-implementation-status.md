@@ -214,3 +214,32 @@ This section supersedes older runtime observations above where they conflict. It
 - The owner’s latest execution instruction now requests one real job cycle after API activation. No TTS/render/job cycle has yet been executed because the API remains offline; once available, perform one real cycle with persisted private artifact and completion evidence, without synthetic records.
 
 **Current completion status:** Phase 03 remains OPEN. Implemented source and existing worker deployments are not equivalent to integrated runtime verification. Immediate critical dependency is a LOGIN-enabled least-privilege `graphytion_api` credential plus the API-only `GRAPHYTION_RUNTIME_DATABASE_URL`; secondary blockers are Redis service provisioning, Resend credentials, and first confirmed Admin identity.
+
+
+## System development priority reset — 2026-11-27
+
+The owner has explicitly reprioritized Phase 03: continue system/backend implementation without treating Railway availability, Redis provisioning, private DNS, or production runtime credentials as development blockers. Infrastructure activation and production E2E verification remain deferred workstreams; no deployment is authorized by this priority change.
+
+### Implemented source correction
+
+- The previous `services/ai-worker` container only launched an idle process and did not execute creative production runs.
+- The AI Worker Dockerfile now builds from the monorepo root, installs the canonical `apps/api` package, and starts the existing `graphytion-creative-worker` entry point. This reuses the same prompt registry, structured-output validation, PostgreSQL claim/lease lifecycle, and persistence logic rather than duplicating business rules in a second worker implementation.
+- Added `services/ai-worker/README.md` with the required root build context, Dockerfile path, runtime configuration contract, and verification boundary.
+- This is a source-level implementation only. The worker has not been deployed or run against production in this change.
+
+### Next implementation sequence
+
+1. Complete the AI production-run vertical slice: persist stage inputs/checkpoints, worker claim/lease/heartbeat, prompt/model provenance, validated output, usage/cost ledger, approval gates, retry/cancel/recovery, and workflow events.
+2. Complete the creative domain lifecycle: source/reference ingestion, brief → script → story arc → storyboard → scene-level revision, artifact version history, and conversion of approved scenes into timeline clips without losing provenance.
+3. Complete asset operations: upload validation/quarantine, ownership, metadata extraction, asset search/selection, generated asset provider adapters, signed URL refresh, deletion/retention, and timeline references.
+4. Complete voice/audio/subtitle operations: provider routing, TTS jobs, alignment, subtitle revisions/import/export, audio mix/ducking, and media artifact linkage.
+5. Complete timeline and render orchestration: compiler diagnostics, render preflight, profile pinning, job lifecycle, preview/thumbnail artifacts, output QC, retries, cancellation, and download authorization.
+6. Complete product operations required by the PRD MVP: model/provider registry, prompt registry administration, quotas/usage metering/cost estimates, templates, brand settings, audit visibility, and user-facing failure recovery.
+7. Complete typed API-client and Studio integration for every implemented workflow; preserve existing UI and do not add fake/demo fallbacks.
+
+### Current constraints
+
+- Canonical source remains `main`; no feature/staging branch.
+- No production schema migration or Supabase mutation was made in this source change.
+- No Railway deployment, service creation, secret change, or Redis provisioning was performed.
+- Phase 03 remains OPEN. Buildability and runtime behavior must be verified separately; no production completion is claimed.

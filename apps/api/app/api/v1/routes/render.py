@@ -450,56 +450,42 @@ async def render_approved_storyboard(
     storyboard_id: UUID,
     request: Request,
     claims: AuthenticatedClaims,
+    payload: RenderCreate | None = None,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
     workspace_id = await _project_workspace(db, project_id, actor, "project.update")
-    source = (await db.execute(text("""
-        select sb.id,sb.global_visual_direction,p.width,p.height,p.fps
-        from public.storyboards sb
-        join public.video_projects p on p.id=sb.project_id
-        join public.video_scripts vs on vs.id=sb.script_id
-        where sb.id=:storyboard and sb.project_id=:project
-          and sb.workspace_id=:workspace and sb.status='approved' and vs.status='approved'
-    """), {"storyboard": storyboard_id, "project": project_id, "workspace": workspace_id})).mappings().first()
-    if source is None:
+    approved = await db.scalar(text("""
+        select exists(
+            select 1 from public.storyboards sb
+            join public.video_scripts vs on vs.id=sb.script_id
+            where sb.id=:storyboard and sb.project_id=:project
+              and sb.workspace_id=:workspace and sb.status='approved' and vs.status='approved'
+        )
+    """), {"storyboard": storyboard_id, "project": project_id, "workspace": workspace_id})
+    if not approved:
         raise HTTPException(status_code=409, detail="Only an approved storyboard based on an approved script can be rendered")
-    scenes = (await db.execute(text("""
-        select id,scene_index,title,duration_ms,visual_direction
-        from public.storyboard_scenes
-        where storyboard_id=:storyboard and project_id=:project
-        order by scene_index
-    """), {"storyboard": storyboard_id, "project": project_id})).mappings().all()
-    if not scenes:
-        raise HTTPException(status_code=409, detail="Storyboard has no scenes to render")
-    fps = int(source["fps"] or 30)
-    track_id = str(uuid5(NAMESPACE_URL, f"graphytion:{storyboard_id}:main"))
-    clips = []
-    cursor = 0
-    for scene in scenes:
-        duration_frames = max(1, round(int(scene["duration_ms"]) * fps / 1000))
-        visual = dict(scene["visual_direction"] or {})
-        background = visual.get("background", "#102F60")
-        if not isinstance(background, str) or not background.startswith("#") or len(background) not in (4, 7):
-            background = "#102F60"
-        clips.append({
-            "id": str(scene["id"]),
-            "trackId": track_id,
-            "startFrame": cursor,
-            "durationFrames": duration_frames, "trimStartFrames": 0, "playbackRate": 1,
-            "componentKey": "core.title-card.v1", "componentVersion": "1.1.0",
-            "props": {"title": str(scene["title"]), "subtitle": str(visual.get("description") or "")[:500], "background": background},
-        })
-        cursor += duration_frames
-    snapshot = {
-        "version": 2, "compositionVersion": "2.0.0", "fps": fps,
-        "width": int(source["width"]), "height": int(source["height"]),
-        "durationFrames": cursor, "tracks": [{"id":track_id,"kind":"typography","name":"Storyboard scenes","zIndex":10,"visible":True,"locked":False,"muted":False,"volume":1}], "clips": clips, "assetRefs": [], "background": "#101828",
-    }
+
+    # Legacy storyboard route must never synthesize a second composition from scene metadata.
+    # It accepts the exact editor snapshot, or falls back only to the latest immutable project snapshot.
+    if payload is None:
+        saved = (await db.execute(text("""
+            select snapshot from public.video_timelines
+            where project_id=:project and workspace_id=:workspace
+            order by version desc limit 1
+        """), {"project": project_id, "workspace": workspace_id})).mappings().first()
+        if saved is None:
+            raise HTTPException(status_code=409, detail="Open and save the Remotion timeline before rendering this storyboard")
+        snapshot = dict(saved["snapshot"])
+        payload = RenderCreate(
+            snapshot=snapshot,
+            composition_version=str(snapshot.get("compositionVersion", "2.0.0")),
+        )
+
     return await create_render(
         project_id=project_id,
-        payload=RenderCreate(snapshot=snapshot),
+        payload=payload,
         request=request,
         claims=claims,
         idempotency_key=idempotency_key,

@@ -912,16 +912,24 @@ async def create_invitation(
             status_code=409, detail="A pending invitation already exists for this email"
         ) from exc
 
-    result = await deliver_invitation(
-        db=db,
-        invitation_id=invitation_id,
-        recipient=email,
-        workspace_name=workspace_name,
-        role=payload.role,
-        raw_token=raw,
-        digest=digest,
-        attempt_reserved=True,
-    )
+    try:
+        result = await deliver_invitation(
+            db=db,
+            invitation_id=invitation_id,
+            recipient=email,
+            workspace_name=workspace_name,
+            role=payload.role,
+            raw_token=raw,
+            digest=digest,
+            attempt_reserved=True,
+        )
+    except HTTPException:
+        await audit(
+            db, actor, workspace_id, "workspace.invitation.email_failed",
+            "invitation", invitation_id, request
+        )
+        await db.commit()
+        raise
     await audit(
         db, actor, workspace_id, "workspace.invitation.email_accepted", "invitation",
         invitation_id, request
@@ -1006,16 +1014,24 @@ async def resend_invitation(
         {"id": invitation_id, "digest": digest},
     )
     await db.commit()
-    result = await deliver_invitation(
-        db=db,
-        invitation_id=invitation_id,
-        recipient=row["email"],
-        workspace_name=row["workspace_name"],
-        role=row["role"],
-        raw_token=raw,
-        digest=digest,
-        attempt_reserved=True,
-    )
+    try:
+        result = await deliver_invitation(
+            db=db,
+            invitation_id=invitation_id,
+            recipient=row["email"],
+            workspace_name=row["workspace_name"],
+            role=row["role"],
+            raw_token=raw,
+            digest=digest,
+            attempt_reserved=True,
+        )
+    except HTTPException:
+        await audit(
+            db, actor, workspace_id, "workspace.invitation.email_failed",
+            "invitation", invitation_id, request
+        )
+        await db.commit()
+        raise
     await audit(
         db, actor, workspace_id, "workspace.invitation.resent", "invitation",
         invitation_id, request

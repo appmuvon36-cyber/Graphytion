@@ -1,4 +1,3 @@
-import {createClient} from 'redis';
 import {makeCancelSignal, selectComposition, renderMedia, renderStill} from '@remotion/renderer';
 import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
 import {execFile as execFileCallback} from 'node:child_process';
@@ -7,11 +6,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
-const redisUrl = process.env.REDIS_URL;
 const apiBaseUrl = process.env.GRAPHYTION_API_BASE_URL ?? (() => { throw new Error('GRAPHYTION_API_BASE_URL is required'); })();
 const workerToken = process.env.INTERNAL_WORKER_TOKEN;
 const serveUrl = process.env.REMOTION_SERVE_URL ?? '/workspace/apps/remotion-studio/build';
-if (!redisUrl) throw new Error('REDIS_URL is required');
 if (!workerToken) throw new Error('INTERNAL_WORKER_TOKEN is required');
 const execFile = promisify(execFileCallback);
 const renderConcurrency = Number(process.env.REMOTION_RENDER_CONCURRENCY ?? 2);
@@ -26,10 +23,6 @@ if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeou
 }
 
 const workerId = `render:${process.env.HOSTNAME ?? 'worker'}:${process.pid}:${randomUUID().slice(0, 8)}`;
-const stream = 'graphytion:render:jobs';
-const group = 'graphytion:render-workers';
-const client = createClient({url: redisUrl});
-client.on('error', error => console.error('redis_connection_error', error.message));
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -212,45 +205,25 @@ async function processJob(jobId?: string): Promise<boolean> {
 }
 
 async function main() {
-  await client.connect();
-  try {
-    await client.xGroupCreate(stream, group, '0', {MKSTREAM: true});
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('BUSYGROUP')) throw error;
-  }
-  console.info('graphytion_render_worker_started', {worker_id: workerId});
+  console.info('graphytion_render_worker_started', {worker_id: workerId, queue: 'postgresql'});
   let lastRecoveryScan = 0;
   while (true) {
     try {
-      const batches = await client.xReadGroup(group, workerId, [{key: stream, id: '>'}], {
-        COUNT: 1,
-        BLOCK: 5000,
-      }) as Array<{name:string;messages:Array<{id:string;message:Record<string,string>}>}> | null;
-      for (const batch of batches ?? []) {
-        for (const message of batch.messages) {
-          const jobId = message.message.render_job_id;
-          try {
-            await processJob(jobId);
-            await client.xAck(stream, group, message.id);
-          } catch (error) {
-            console.error('render_stream_message_failed', {id: message.id, error});
-          }
-        }
-      }
       if (Date.now() - lastRecoveryScan >= 15000) {
         lastRecoveryScan = Date.now();
         await api('internal/render-jobs/recover', {method: 'POST'});
-        await processJob();
       }
+      const processed = await processJob();
+      if (!processed) await new Promise(resolve => setTimeout(resolve, 3000));
     } catch (error) {
-      console.error('render_worker_loop_error', error);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.error('render_worker_poll_error', error);
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
 }
 
 async function shutdown() {
-  if (client.isOpen) await client.quit();
+  console.info('graphytion_render_worker_stopping', {worker_id: workerId});
   process.exit(0);
 }
 process.once('SIGINT', shutdown);

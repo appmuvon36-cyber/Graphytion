@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: graphytion-main-verification
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   verify:

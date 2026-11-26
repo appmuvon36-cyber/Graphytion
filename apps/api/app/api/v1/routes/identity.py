@@ -711,14 +711,6 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
     return {"data": [dict(row) for row in rows]}
 
 
-@router.post(
-    "/workspaces/{workspace_id}/members", status_code=201, dependencies=[Depends(auth_rate_limit)]
-)
-@router.post(
-    "/workspaces/{workspace_id}/invitations",
-    status_code=201,
-    dependencies=[Depends(auth_rate_limit)],
-)
 async def deliver_invitation(
     *,
     db: AsyncSession,

@@ -300,7 +300,7 @@ export default function PlatformAdmin() {
           <label style={{fontSize:12}}>Concurrent render jobs<input aria-label="Maximum concurrent render jobs" type="number" min={1} max={8} value={renderSettings.max_concurrent_jobs} onChange={e=>setRenderSettings(v=>({...v,max_concurrent_jobs:Number(e.target.value)}))} style={input}/></label>
           <label style={{fontSize:12}}>Worker lease seconds<input aria-label="Worker lease seconds" type="number" min={60} max={3600} value={renderSettings.lease_seconds} onChange={e=>setRenderSettings(v=>({...v,lease_seconds:Number(e.target.value)}))} style={input}/></label>
           <label style={{fontSize:12}}>Maximum attempts<input aria-label="Maximum render attempts" type="number" min={1} max={10} value={renderSettings.max_attempts} onChange={e=>setRenderSettings(v=>({...v,max_attempts:Number(e.target.value)}))} style={input}/></label>
-          <label style={{fontSize:12}}>Maximum output bytes<input aria-label="Maximum output bytes" type="number" min={1048576} max={2147483648} step={1048576} value={renderSettings.max_output_bytes} onChange={e=>setRenderSettings(v=>({...v,max_output_bytes:Number(e.target.value)}))} style={input}/></label>
+          <label style={{fontSize:12}}>Maximum output bytes<input aria-label="Maximum output bytes" type="number" min={1048576} max={536870912} step={1048576} value={renderSettings.max_output_bytes} onChange={e=>setRenderSettings(v=>({...v,max_output_bytes:Number(e.target.value)}))} style={input}/></label>
           <button disabled={busy} style={button}>Save global settings</button>
         </form>
         {renderSettings.updated_at&&<p style={{fontSize:11,color:'#68788e'}}>Last updated {new Date(renderSettings.updated_at).toLocaleString()}</p>}

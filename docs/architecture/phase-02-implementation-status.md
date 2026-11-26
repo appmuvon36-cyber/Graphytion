@@ -34,7 +34,7 @@ All three migrations completed successfully and are present in Supabase migratio
 - Avatar object policies are scoped to the authenticated user's own folder.
 - `anon` has no table privileges on the eight Graphytion application tables.
 - `authenticated` has read-only table access where policies permit; column-level updates are limited to profile display fields and workspace name/settings. It has no direct insert/delete access or direct write access to invitations/idempotency.
-- `service_role` retains server-side table privileges for FastAPI.
+- `service_role` retains server-side table privileges for server-side Supabase API use. The current FastAPI SQLAlchemy adapter connects through `DATABASE_URL`; its actual database login/role must be confirmed from the production runtime secret configuration and should be a dedicated least-privilege login rather than assuming the PostgREST `service_role` is the SQLAlchemy connection identity.
 - SECURITY DEFINER RLS helper functions are in the non-exposed `private` schema. Public execution of the existing `rls_auto_enable()` function was revoked.
 - Security Advisor now reports only two INFO findings: `workspace_invitations` and `api_idempotency_keys` have RLS enabled with no policies. This is intentional because these tables are server-only and have no anon/authenticated table grants.
 - Performance Advisor reports unused indexes on the new, empty schema; retain them until real query workload justifies a change. Health Advisor returned no findings.
@@ -44,13 +44,18 @@ All three migrations completed successfully and are present in Supabase migratio
 1. Configure production API secrets/connection settings (`DATABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, Redis URL, CORS origin) in the API runtime; no deployment was performed.
 2. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
 3. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
-4. Run a controlled end-to-end check with an authorized, verified Graphytion user after runtime configuration: signup/login/refresh/logout, profile, workspace create/list/update, role enforcement, invitation acceptance, project CRUD, avatar upload/signed URL. Do not create synthetic users or fake production records.
-5. Confirm actual API-to-Postgres and Redis connectivity using the production runtime after its environment is configured. No staging environment or deployment is authorized by this status update.
+4. Confirm/configure the production API database login. Prefer a dedicated least-privilege PostgreSQL login with only required table/sequence privileges; do not assume that granting the PostgREST `service_role` role also configures the SQLAlchemy direct connection.
+5. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
+6. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
+7. Run a controlled end-to-end check with an authorized, verified Graphytion user after runtime configuration: signup/login/refresh/logout, profile, workspace create/list/update, role enforcement, invitation acceptance, project CRUD, avatar upload/signed URL. The production Auth schema currently contains zero users; do not create synthetic users or fake production records without explicit direction.
+8. Confirm actual API-to-Postgres and Redis connectivity using the production runtime after its environment is configured. No staging environment or deployment is authorized by this status update.
 
 ## Data safety and recovery
 
 - The migrations are additive and preserve existing Auth users and Storage objects.
 - The profile backfill only inserts missing profiles and preserves existing display names.
+- Production inspection found zero Auth users, profiles, workspaces and video projects at the time of verification.
 - No production Auth user, project, workspace, Storage object or customer data was created or deleted as a test.
+- The GitHub verification workflow was updated to parse every versioned SQL migration, not only the original Phase 02 migration.
 - No rollback/drop migration was run. If an application issue is discovered, prefer a forward corrective migration; do not drop the newly applied schema as a rollback shortcut.
 - No deployment or staging environment was created or triggered.

@@ -52,8 +52,8 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
   exists=await db.scalar(text("select exists(select 1 from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace)"),{"segment":payload.subtitle_segment_id,"project":project_id,"workspace":workspace})
   if not exists:raise HTTPException(404,"Subtitle segment does not belong to this project")
  status="queued" if provider.configured() else "provider_unavailable"
- row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
- values(:workspace,:project,:scene,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
+ row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,subtitle_segment_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
+ values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
  on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
  if row is None:
   old=(await db.execute(text("select id,status,input_text,voice_key,model_key from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()

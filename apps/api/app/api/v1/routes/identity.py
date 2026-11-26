@@ -495,6 +495,9 @@ async def create_workspace(
         await complete_idempotency(db, reservation_id, response_body)
         await db.commit()
         return response_body
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Workspace slug is already in use") from exc
     except Exception:
         await db.rollback()
         raise

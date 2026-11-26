@@ -70,7 +70,10 @@ async def platform_overview(
           (select count(*) from public.workspace_members where status='active') as active_memberships,
           (select count(*) from public.video_projects where status <> 'deleted') as projects,
           (select count(*) from public.audit_logs where created_at >= now()-interval '24 hours') as audit_events_24h,
-          (select count(*) from public.production_runs where status in ('planning','scripting','storyboarding','queued','running')) as active_creative_runs
+          (select count(*) from public.production_runs where status in ('planning','scripting','storyboarding','queued','running')) as active_creative_runs,
+          (select count(*) from public.render_jobs where status in ('queued','rendering','cancel_requested')) as active_render_jobs,
+          (select coalesce(sum(input_tokens),0) from public.ai_usage_events where created_at >= now()-interval '24 hours') as input_tokens_24h,
+          (select coalesce(sum(output_tokens),0) from public.ai_usage_events where created_at >= now()-interval '24 hours') as output_tokens_24h
     """))).mappings().one()
     return {"data": dict(result)}
 

@@ -38,15 +38,15 @@ export default function Studio() {
   const [projectDetail,setProjectDetail] = useState<Record<string,unknown>|null>(null);
 
   const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>(typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null) || access}),[access]);
+  const publicApi = useMemo(()=>createApiClient({baseUrl:apiBase}),[]);
   const call = useCallback(async <T,>(path:string,init:RequestInit={})=>{
     try { return await api.request<T>(path,init); }
     catch (e) {
       if (e instanceof ApiClientError && e.status===401 && typeof window!=='undefined') {
         const refreshToken=sessionStorage.getItem('graphytion.refresh');
         if (refreshToken) {
-          const refreshed=await fetch(apiBase+'/auth/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refresh_token:refreshToken})});
-          if (refreshed.ok) {
-            const tokens=await refreshed.json() as AuthResult;
+          const tokens=await publicApi.request<AuthResult>('/auth/refresh',{method:'POST',body:JSON.stringify({refresh_token:refreshToken})});
+          {
             sessionStorage.setItem('graphytion.access',tokens.access_token);
             sessionStorage.setItem('graphytion.refresh',tokens.refresh_token);
             setAccess(tokens.access_token);
@@ -57,7 +57,7 @@ export default function Studio() {
       }
       throw e;
     }
-  },[api]);
+  },[api,publicApi]);
 
   const loadWorkspaceData=useCallback(async(id:string)=>{
     if(!id){setProjects([]);return;}
@@ -90,9 +90,7 @@ export default function Studio() {
   async function authenticate(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
-      const result=await fetch(apiBase+(mode==='login'?'/auth/login':'/auth/signup'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mode==='login'?{email,password}:{email,password,display_name:displayName})});
-      const body=await result.json();
-      if(!result.ok) throw new Error(body?.error?.message||body?.detail||'Autentikasi gagal');
+      const body=await publicApi.request<AuthResult>(mode==='login'?'/auth/login':'/auth/signup',{method:'POST',body:JSON.stringify(mode==='login'?{email,password}:{email,password,display_name:displayName})});
       if(!body.access_token){setNotice('Akun berhasil didaftarkan. Periksa email untuk verifikasi, lalu masuk setelah akun aktif.');setMode('login');return;}
       const tokens=body as AuthResult;
       sessionStorage.setItem('graphytion.access',tokens.access_token); sessionStorage.setItem('graphytion.refresh',tokens.refresh_token); setAccess(tokens.access_token); setNotice('Berhasil masuk.');
@@ -104,7 +102,7 @@ export default function Studio() {
   }
   async function recover(){
     setBusy(true);setError('');setNotice('');
-    try{await fetch(apiBase+'/auth/recovery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});setNotice('Jika email terdaftar, instruksi pemulihan akan dikirim.');}
+    try{await publicApi.request('/auth/recovery',{method:'POST',body:JSON.stringify({email})});setNotice('Jika email terdaftar, instruksi pemulihan akan dikirim.');}
     catch{setError('Permintaan pemulihan tidak dapat diproses.');}finally{setBusy(false);}
   }
   async function createWorkspace(event:React.FormEvent<HTMLFormElement>){

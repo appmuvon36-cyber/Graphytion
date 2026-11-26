@@ -1,5 +1,5 @@
 import {createClient} from 'redis';
-import {makeCancelSignal, selectComposition, renderMedia} from '@remotion/renderer';
+import {makeCancelSignal, selectComposition, renderMedia, renderStill} from '@remotion/renderer';
 import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
 import {execFile as execFileCallback} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -129,6 +129,26 @@ async function processJob(jobId?: string): Promise<boolean> {
         }
       },
     });
+    if (claimed.render_config.thumbnail_enabled !== false) {
+      const thumbnailPath = join(directory, claimed.id + '.jpg');
+      await renderStill({
+        composition,
+        serveUrl,
+        output: thumbnailPath,
+        frame: 0,
+        inputProps,
+        imageFormat: 'jpeg',
+        browserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE,
+        timeoutInMilliseconds: 60000,
+      });
+      const thumbnailBytes = await readFile(thumbnailPath);
+      const thumbnailForm = new FormData();
+      thumbnailForm.set('file', new Blob([Uint8Array.from(thumbnailBytes)], {type:'image/jpeg'}), 'thumbnail.jpg');
+      await api('internal/render-jobs/' + claimed.id + '/artifacts?artifact_type=thumbnail&worker_id=' + encodeURIComponent(workerId), {
+        method: 'POST',
+        body: thumbnailForm,
+      });
+    }
     const probe = await execFile('ffprobe', ['-v','error','-show_entries','format=format_name,duration:stream=codec_type,codec_name,width,height','-of','json',outputPath], {timeout:30000, maxBuffer:1024*1024});
     const metadata = JSON.parse(probe.stdout) as {format?:{format_name?:string;duration?:string};streams?:Array<{codec_type?:string;codec_name?:string;width?:number;height?:number}>};
     const video = metadata.streams?.find(stream => stream.codec_type === 'video');

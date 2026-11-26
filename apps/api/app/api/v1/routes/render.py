@@ -462,17 +462,25 @@ async def cancel_queued_render(
     if row is None:
         raise HTTPException(status_code=404, detail="Render job not found")
     await _project_workspace(db, row["project_id"], actor, "project.update")
-    if row["status"] != "queued":
-        raise HTTPException(status_code=409, detail="Only queued render jobs can be cancelled; active Remotion renders are not interruptible")
-    await db.execute(text("""
-        update public.render_jobs set status='cancelled',completed_at=now(),
-            worker_id=null,lease_expires_at=null
-        where id=:job and status='queued'
-    """), {"job": render_job_id})
+    if row["status"] == "queued":
+        next_status = "cancelled"
+        await db.execute(text("""
+            update public.render_jobs set status='cancelled',completed_at=now(),
+                worker_id=null,lease_expires_at=null
+            where id=:job and status='queued'
+        """), {"job": render_job_id})
+    elif row["status"] == "rendering":
+        next_status = "cancel_requested"
+        await db.execute(text("""
+            update public.render_jobs set status='cancel_requested'
+            where id=:job and status='rendering'
+        """), {"job": render_job_id})
+    else:
+        raise HTTPException(status_code=409, detail=f"Render job cannot be cancelled from status {row['status']}")
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
-        values (:actor,:workspace,'render.cancelled','render_job',:job,:request_id)
+        values (:actor,:workspace,'render.cancel_requested','render_job',:job,:request_id)
     """), {"actor": actor, "workspace": row["workspace_id"], "job": render_job_id,
            "request_id": request.state.request_id})
     await db.commit()
-    return {"data": {"render_job_id": str(render_job_id), "status": "cancelled"}}
+    return {"data": {"render_job_id": str(render_job_id), "status": next_status}}

@@ -1,0 +1,113 @@
+# Graphytion Phase 02 — Production Runtime Runbook
+
+**Repository:** `appmuvon36-cyber/Graphytion`  
+**Branch:** `main`  
+**Supabase project:** `xtjwmezfzexvupbfsdqt`  
+**Status:** Application code prepared; external runtime secrets, two additive migrations and real-account E2E remain owner-gated. No deployment or secret mutation was performed.
+
+## 1. Runtime configuration
+
+Configure secrets in the hosting provider's server-side environment manager. Do not put production values in Git, browser-exposed `NEXT_PUBLIC_*` variables, build logs, or chat.
+
+### FastAPI service
+
+Required variables:
+
+- `APP_ENV=production`
+- `APP_PUBLIC_URL=https://<customer-web-domain>`
+- `CORS_ORIGINS=https://<customer-web-domain>,https://<admin-domain>`
+- `SUPABASE_URL=https://xtjwmezfzexvupbfsdqt.supabase.co`
+- `SUPABASE_JWT_ISSUER=https://xtjwmezfzexvupbfsdqt.supabase.co/auth/v1`
+- `SUPABASE_JWKS_URL=https://xtjwmezfzexvupbfsdqt.supabase.co/auth/v1/.well-known/jwks.json`
+- `SUPABASE_ANON_KEY` — Supabase publishable/anon key, server-side only.
+- `SUPABASE_SERVICE_ROLE_KEY` — server-side only; used only by the FastAPI Storage adapter.
+- `DATABASE_URL` — PostgreSQL TLS connection using the dedicated `graphytion_api` login, not `postgres` or `supabase_admin`.
+- `REDIS_URL` — managed Redis `rediss://` endpoint with TLS.
+- `BFF_SHARED_SECRET` — high-entropy secret, at least 32 characters.
+- `INVITATION_EMAIL_PROVIDER=resend`
+- `RESEND_API_KEY`
+- `RESEND_WEBHOOK_SECRET`
+- `INVITATION_FROM_EMAIL` — sender identity on a domain verified by Resend.
+
+The API rejects production startup configuration when a critical setting is absent, the database user is not `graphytion_api`, TLS is not required, Redis is not TLS, Supabase project/JWT URLs mismatch, CORS includes wildcards/non-HTTPS origins, or the sender is a placeholder domain.
+
+### Customer Web and Admin Next.js services
+
+Each frontend requires server-only variables:
+
+- `GRAPHYTION_API_URL=https://<api-domain>/api/v1`
+- `GRAPHYTION_BFF_SHARED_SECRET` — exactly the same secret as FastAPI `BFF_SHARED_SECRET`.
+- `APP_PUBLIC_URL` — the exact origin of that frontend (customer domain for Web, admin domain for Admin).
+
+Do not configure `NEXT_PUBLIC_API_BASE_URL` to point at FastAPI. Browser requests must use the same-origin `/api` BFF. Host-only cookies are issued separately for each frontend origin.
+
+## 2. Database runtime role
+
+Migration `202611260005_fastapi_runtime_role_rls.sql` creates:
+
+- `graphytion_runtime`: non-login privilege group, inherits the Supabase `authenticated` role and has no superuser, database-creation, role-creation, schema-create or RLS-bypass privileges.
+- `graphytion_api`: non-login database identity, member of `graphytion_runtime`.
+
+After the migration is explicitly approved and applied, the project owner must set a strong password and enable login out-of-band in the Supabase SQL editor/secret manager:
+
+```sql
+ALTER ROLE graphytion_api LOGIN PASSWORD '<unique-generated-secret>';
+```
+
+Store that password only in the API secret manager and set `DATABASE_URL` to the `graphytion_api` login with `ssl=require`. Do not grant `BYPASSRLS`. FastAPI sets and clears the authenticated subject on its pooled database session so tenant RLS policies remain active.
+
+## 3. Supabase Auth callback configuration
+
+In Supabase Authentication settings:
+
+1. Set the Site URL to the customer web HTTPS origin.
+2. Add only the real customer and admin redirect origins to the redirect allowlist.
+3. Update the signup/confirmation email template to route the one-time token hash through the server callback:
+   `{{ .SiteURL }}/api/auth/callback?token_hash={{ .TokenHash }}&type=signup`
+4. Update the password recovery template similarly, using `type=recovery`.
+5. Confirm the callback path is reachable on the customer web deployment.
+
+The BFF verifies the token hash server-side and sets HttpOnly cookies. Do not use the legacy implicit-flow fragment containing `access_token` or `refresh_token`.
+
+## 4. Resend invitation email
+
+1. Verify the sender domain in Resend and configure the sender identity.
+2. Store `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` in the FastAPI secret manager.
+3. Register the webhook URL `https://<api-domain>/api/v1/webhooks/resend` for sent, delivered, delayed, bounced, complained and failed events.
+4. Verify the webhook signature secret matches the Resend endpoint.
+5. Invitation status `sent` means the provider accepted the message. Only signed provider webhooks can change it to delivered, delayed, bounced or complained.
+6. A resend rotates the invitation token and is allowed only after a provider failure or invitation expiry. Bounced/complained addresses are blocked pending correction.
+
+No message is considered delivered merely because the API request succeeded.
+
+## 5. Session and CSRF behavior
+
+- Access and refresh tokens are stored only in host-only HttpOnly cookies.
+- Production cookies use Secure, SameSite=Lax and Path=/; no Domain attribute is set.
+- CSRF token is a separate non-HttpOnly random cookie, sent in `X-CSRF-Token`; unsafe requests also require an exact Origin match.
+- Refresh is server-side and uses the HttpOnly refresh cookie. Logout attempts to revoke the current session before clearing cookies.
+- The shared BFF secret protects signup, login, refresh and verification token-exchange endpoints from direct browser calls.
+- Configure the exact APP_PUBLIC_URL for each Next.js deployment. Do not share cookies across customer/admin hosts.
+
+## 6. Readiness and verification
+
+FastAPI exposes:
+
+- `GET /api/v1/health` — liveness only.
+- `GET /api/v1/ready` — independent database, Redis, Supabase Auth and Storage checks; returns 503 if any dependency is unavailable.
+
+After environment configuration and the two pending migrations, verify using an account created through the real signup flow and confirmed through the actual email link. Then verify login, refresh, logout, recovery, profile, workspace ownership, invitations, role permissions, project lifecycle, cross-workspace IDOR denial, CSRF rejection, revoked/expired tokens, audit rows and database counts.
+
+Do not seed production with synthetic users or sample workspaces. Record the account owner-approved for the test and use only clearly identified test records.
+
+## 7. Owner-gated actions still required
+
+- Explicit approval to apply migrations `202611260004_invitation_email_delivery.sql` and `202611260005_fastapi_runtime_role_rls.sql` to Supabase Production.
+- Production web, admin and API domain names.
+- Production secret-manager access to set API/BFF/DB/Redis/Resend values.
+- Resend verified sender domain, API key and webhook signing secret.
+- Supabase Auth Site URL, redirect allowlist and email templates.
+- Hosting-provider access and explicit deployment authorization.
+- A real Graphytion user who can complete the email verification link for E2E.
+
+Until those actions are completed, do not label Phase 02 production runtime, invitation delivery or end-to-end verification complete.

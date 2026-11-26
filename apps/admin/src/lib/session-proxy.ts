@@ -176,7 +176,17 @@ export async function handleSessionProxy(
   }
 
   if (path === 'auth/logout' && method === 'POST') {
-    if (accessToken) await upstream('/auth/logout', { method: 'POST' }, accessToken);
+    let token = accessToken;
+    if (token) {
+      const revoked = await upstream('/auth/logout', { method: 'POST' }, token);
+      if (!revoked.ok) token = undefined;
+    }
+    if (!token) {
+      const rotated = await refreshTokens(request);
+      if (rotated?.access_token) {
+        await upstream('/auth/logout', { method: 'POST' }, rotated.access_token);
+      }
+    }
     const result = new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
     clearSessionCookies(result);
     ensureCsrf(result, request);

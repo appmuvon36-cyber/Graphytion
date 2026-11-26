@@ -18,7 +18,7 @@ begin
   ) then
     alter table public.workspace_invitations
       add constraint workspace_invitations_delivery_status_check
-      check (delivery_status in ('pending','sent','failed'));
+      check (delivery_status in ('pending','sent','delivered','delivery_delayed','bounced','complained','failed'));
   end if;
   if not exists (
     select 1 from pg_constraint

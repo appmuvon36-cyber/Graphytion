@@ -75,3 +75,21 @@ Phase 03 remains OPEN. Do not mark it complete until:
 5. One real voiceover job and one real render job complete with persisted private artifacts and valid download authorization.
 6. Preview and final render are verified against the same immutable composition snapshot.
 7. Invitation delivery and Admin authorization are verified against the live production runtime.
+
+
+## Production execution correction — 2026-11-26
+
+The Graphytion Supabase connector binding is available under the account that owns project ref `xtjwmezfzexvupbfsdqt`. The earlier inspection used the wrong linked account; this was an execution selection error, not a connector outage.
+
+- Production project `xtjwmezfzexvupbfsdqt` was found and confirmed `ACTIVE_HEALTHY` in `ap-northeast-1`.
+- Production migration history was read directly. Migrations 001–003 were already applied. Migrations 004–019 were then applied sequentially and each migration tool call returned success. The resulting history contains 19 migrations.
+- The production schema now contains the Phase 03 timeline, render jobs, render attempts, render profiles, motion component controls, subtitles, audio generations, audio analysis artifacts, project assets, orchestration tables, and render artifacts.
+- Storage buckets `avatars` and `project-assets` are both private. The avatars bucket has a 5 MiB limit and image MIME allowlist. The project-assets bucket is private; object metadata is tenant-scoped in `public.project_assets`.
+- The `graphytion_api` and `graphytion_runtime` roles exist and were verified as NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOBYPASSRLS. This is the intended least-privilege baseline.
+- Migration 005 was adapted at application time to omit ALTER ROLE attribute statements rejected by Supabase's managed-role privilege boundary; the created roles already have safe non-admin defaults. The repository migration file was updated on main to omit those unsupported ALTER ROLE statements. Runtime LOGIN/password remains a separate owner credential action.
+- Latest main source commit for the migration correction: `f558a466fc3a62e2c6f08eeaaa61865f921e5cb8`.
+- The API deployment triggered from this commit built successfully but still failed startup because the current Railway `DATABASE_URL` does not satisfy the required dedicated login/password validation. Do not use admin credentials to bypass this gate.
+- The connected Railway OAuth account returns variable names only; it does not expose secret values. Set the `graphytion_api` login password through the Supabase SQL editor/approved secret manager, then update API service `DATABASE_URL` in Railway to the project-scoped Supavisor URL with TLS. Do not place the password in Git or chat.
+- Redis is still not provisioned. PostgreSQL polling fallback remains the durable execution path; Redis is optional for wake-up coordination.
+
+Phase 03 remains OPEN until FastAPI becomes healthy, worker private DNS/authentication succeeds, and one real media job plus one real render job persist validated private artifacts and complete through the customer flow.

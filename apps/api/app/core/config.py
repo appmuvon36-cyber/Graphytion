@@ -104,7 +104,7 @@ class Settings(BaseSettings):
         origins = self.cors_origin_list
         if not origins or any(urlparse(origin).scheme != "https" or "*" in origin for origin in origins):
             raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins; wildcards are forbidden")
-        if app_url.origin not in origins:
+        if f"{app_url.scheme}://{app_url.netloc}" not in origins:
             raise ValueError("APP_PUBLIC_URL origin must be included in CORS_ORIGINS")
 
         db_url = urlparse(self.database_url_value)

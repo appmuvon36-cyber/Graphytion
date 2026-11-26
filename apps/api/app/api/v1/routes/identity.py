@@ -569,7 +569,9 @@ async def delete_workspace(
     if project_count:
         raise HTTPException(
             status_code=409,
-            detail="Workspace contains project records; deletion is blocked to preserve project history.",
+            detail=(
+                "Workspace contains project records; deletion is blocked to preserve project history."
+            ),
         )
     await audit(db, actor, workspace_id, "workspace.deleted", "workspace", workspace_id, request)
     await db.execute(
@@ -723,7 +725,7 @@ async def update_member_role(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    await require_permission(db, actor, workspace_id, "member.manage")
+    actor_role = await require_permission(db, actor, workspace_id, "member.manage")
     target = (
         (
             await db.execute(
@@ -1064,7 +1066,10 @@ async def get_project(project_id: UUID, claims: AuthenticatedClaims, db: AsyncSe
     actor = uid(claims)
     workspace_id = (
         await db.execute(
-            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            text("""
+                select workspace_id from public.video_projects
+                where id=:project and status<>'deleted'
+            """),
             {"project": project_id},
         )
     ).scalar_one_or_none()

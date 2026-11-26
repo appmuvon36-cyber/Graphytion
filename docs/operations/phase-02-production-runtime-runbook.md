@@ -22,14 +22,13 @@ Required variables:
 - `SUPABASE_ANON_KEY` — Supabase publishable/anon key, server-side only.
 - `SUPABASE_SERVICE_ROLE_KEY` — server-side only; used only by the FastAPI Storage adapter.
 - `DATABASE_URL` — PostgreSQL TLS connection using the dedicated `graphytion_api` login, not `postgres` or `supabase_admin`.
-- `REDIS_URL` — managed Redis `rediss://` endpoint with TLS.
 - `BFF_SHARED_SECRET` — high-entropy secret, at least 32 characters.
 - `INVITATION_EMAIL_PROVIDER=resend`
 - `RESEND_API_KEY`
 - `RESEND_WEBHOOK_SECRET`
 - `INVITATION_FROM_EMAIL` — sender identity on a domain verified by Resend.
 
-The API rejects production startup configuration when a critical setting is absent, the database user is not `graphytion_api`, TLS is not required, Redis is not TLS, Supabase project/JWT URLs mismatch, CORS includes wildcards/non-HTTPS origins, or the sender is a placeholder domain.
+The API rejects production startup configuration when a critical setting is absent, the database user is not `graphytion_api`, TLS is not required, Supabase project/JWT URLs mismatch, CORS includes wildcards/non-HTTPS origins, or the sender is a placeholder domain.
 
 ### Customer Web and Admin Next.js services
 
@@ -98,7 +97,7 @@ No message is considered delivered merely because the API request succeeded.
 FastAPI exposes:
 
 - `GET /api/v1/health` — liveness only.
-- `GET /api/v1/ready` — independent database, Redis, Supabase Auth, JWT/JWKS signing-key and Storage checks; returns 503 if any dependency is unavailable.
+- `GET /api/v1/ready` — independent database, Supabase Auth, JWT/JWKS signing-key and Storage checks; returns 503 if any dependency is unavailable.
 
 After environment configuration and the two pending migrations, verify using an account created through the real signup flow and confirmed through the actual email link. Then verify login, refresh, logout, recovery, profile, workspace ownership, invitations, role permissions, project lifecycle, cross-workspace IDOR denial, CSRF rejection, revoked/expired tokens, audit rows and database counts.
 
@@ -108,7 +107,7 @@ Do not seed production with synthetic users or sample workspaces. Record the acc
 
 - Explicit approval to apply migrations `202611260004_invitation_email_delivery.sql` and `202611260005_fastapi_runtime_role_rls.sql` to Supabase Production.
 - Production web, admin and API domain names.
-- Production secret-manager access to set API/BFF/DB/Redis/Resend values.
+- Production secret-manager access to set API/BFF/DB/Resend values.
 - Resend verified sender domain, API key and webhook signing secret.
 - Supabase Auth Site URL, redirect allowlist and email templates.
 - Hosting-provider access and explicit deployment authorization.

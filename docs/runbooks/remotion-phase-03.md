@@ -59,3 +59,8 @@ Redis is an optional queue wake-up accelerator; PostgreSQL remains the durable j
 ## Global render controls
 
 The Super Admin `/admin` control plane manages the singleton `platform_render_settings` record. Settings are audited and validated server-side. Render claims serialize the capacity check with a PostgreSQL advisory transaction lock and call `private.graphytion_render_runtime_capacity()` to enforce the concurrency cap and lease. The global artifact limit is bounded by the current 512 MiB API upload cap.
+
+
+## Worker presence and Admin visibility
+
+Media Worker and Render Worker send authenticated presence to `POST /api/v1/internal/workers/heartbeat` every 30 seconds using `INTERNAL_WORKER_TOKEN`. The worker registry is private in PostgreSQL; only the server-authorized Admin endpoint reads it. Admin marks a worker stale after 90 seconds without a heartbeat. A missing heartbeat is not reported as a running worker.

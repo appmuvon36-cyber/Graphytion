@@ -251,13 +251,21 @@ async def update_render_progress(
     if owner_id is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     await set_rls_subject(db, str(owner_id))
+    state = await db.scalar(text("""
+        select status from public.render_jobs where id=:job and worker_id=:worker
+    """), {"job": render_job_id, "worker": worker_id})
+    if state == "cancel_requested":
+        await db.rollback()
+        return {"data": {"render_job_id": str(render_job_id), "cancel_requested": True}}
+    if state != "rendering":
+        raise HTTPException(status_code=409, detail="Render job is not in a renderable state")
     await db.execute(text("""
         update public.render_jobs
         set progress_percent=:progress,lease_expires_at=now()+interval '5 minutes'
         where id=:job and worker_id=:worker and status='rendering'
     """), {"progress": payload.progress_percent, "job": render_job_id, "worker": worker_id})
     await db.commit()
-    return {"data": {"render_job_id": str(render_job_id), "progress_percent": payload.progress_percent}}
+    return {"data": {"render_job_id": str(render_job_id), "progress_percent": payload.progress_percent, "cancel_requested": False}}
 
 
 @router.post("/internal/render-jobs/{render_job_id}/artifact", status_code=201)

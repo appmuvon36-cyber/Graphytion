@@ -404,8 +404,8 @@ with check (
 );
 
 -- Keep the API login role non-administrative and unable to create schema objects.
-alter role graphytion_runtime nosuperuser nocreatedb nocreaterole inherit noreplication;
-alter role graphytion_api nosuperuser nocreatedb nocreaterole inherit noreplication;
+alter role graphytion_runtime nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
+alter role graphytion_api nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
 revoke create on schema public,private from graphytion_runtime,graphytion_api;
 comment on role graphytion_runtime is 'Non-login RLS-scoped privilege group for Graphytion FastAPI.';
 comment on role graphytion_api is 'Non-login runtime database identity; owner must set LOGIN and password out-of-band.';

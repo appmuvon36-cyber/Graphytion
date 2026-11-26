@@ -55,7 +55,7 @@ type RenderJob = {
     version: number; fps: number; width: number; height: number;
     durationFrames: number; tracks:Array<Record<string,unknown>>; clips: Array<Record<string, unknown>>; assetRefs:Array<Record<string,unknown>>; contentHash: string;
   };
-  render_config: {codec?: string; format?: string; video_crf?:number; video_bitrate?:string|null; audio_codec?:string; audio_bitrate?:string|null; concurrency?:number};
+  render_config: {codec?: string; format?: string; video_crf?:number; video_bitrate?:string|null; audio_codec?:string; audio_bitrate?:string|null; concurrency?:number; thumbnail_enabled?:boolean; preview_enabled?:boolean};
   resolved_assets:Record<string,string>;
   attempt_count: number;
 };

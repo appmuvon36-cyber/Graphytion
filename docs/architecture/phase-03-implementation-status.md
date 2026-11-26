@@ -22,7 +22,7 @@
 | Redis Railway service | BLOCKED | Railway rejected service provisioning with: “Free plan resource provision limit exceeded.” No Redis service is present in the production environment. |
 | Private Supabase Storage artifacts | IMPLEMENTED | Existing private bucket, API authorization, signed URL and artifact metadata paths are present. End-to-end storage is not runtime-verified. |
 | Super Admin control plane | IMPLEMENTED | Served by consolidated Web service routes `/admin` and `/admin/workspaces`; no standalone Admin service. |
-| FastAPI runtime | BLOCKED | Railway startup validation rejects current `DATABASE_URL`; it must use the dedicated `graphytion_api` login at the Graphytion Supabase database host with TLS. |
+| FastAPI runtime | BLOCKED | Latest Railway deployment built successfully but failed startup because `DATABASE_URL` does not use the dedicated `graphytion_api` login at the Graphytion Supabase database host with TLS. Runtime logs confirm Pydantic rejected the configured value. |
 | Invitation delivery | BLOCKED | API no longer fails startup when Resend is absent, but live delivery still requires Resend API key, webhook secret and verified sender identity. |
 | Full private-network worker integration | BLOCKED | Media Worker reports DNS resolution failure for `graphytionapi.railway.internal` because FastAPI is not healthy. |
 | One real submit → claim → process → artifact → complete cycle | BLOCKED | Cannot run until FastAPI, database role and pending migrations are available. |
@@ -51,10 +51,17 @@ The owner's current Phase 03 directive supersedes the earlier brokerless decisio
 
 - Web and Remotion Studio: RUNNING with successful deployments.
 - Media Worker: deployment SUCCESS; runtime API polling BLOCKED by FastAPI private DNS.
-- Render Worker: new image build in progress after lockfile regeneration; do not treat as RUNNING until deployment succeeds and logs confirm API connectivity.
-- FastAPI: BLOCKED by `DATABASE_URL` validation.
+- Render Worker: latest deployment `497a800a-e80a-4d9c-a9dc-8ac0ecd0d12e` is SUCCESS; worker private API connectivity and a real render cycle remain unverified because FastAPI is not healthy.
+- FastAPI: latest deployment `a07691d9-c2ba-427a-9742-4ddf737531e3` FAILED at startup due to `DATABASE_URL` validation; the database credential itself is not readable through the connected Railway OAuth integration.
 - Standalone Admin Railway service: removed; Super Admin remains part of Web.
 - Redis: not provisioned; Railway resource limit prevents creating another service.
+
+## Latest source verification
+
+- GitHub HEAD at last check: `2cf19e1ae1994f885504f24eb6c405e10d6d1caf`.
+- Workflow run `45860010134`: SUCCESS. It completed workspace typecheck, Web/Admin build, Remotion Studio bundle, migration SQL parsing, Python API/worker compile and import checks, and FastAPI startup smoke check under CI configuration. This does not replace production database connectivity verification.
+- Railway latest deployments: Web SUCCESS, Remotion Studio SUCCESS, Media Worker SUCCESS, Render Worker SUCCESS, FastAPI FAILED.
+- Redis service provisioning was rejected by Railway due to the plan's resource provisioning limit; no Redis deployment or private endpoint exists in this environment.
 
 ## Completion gate
 

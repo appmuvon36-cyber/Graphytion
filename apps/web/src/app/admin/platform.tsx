@@ -14,6 +14,7 @@ type PlatformAdminRecord = { user_id: string; role: string; status: string; gran
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number; active_render_jobs: number; input_tokens_24h: number; output_tokens_24h: number };
 type LlmStatus = { available_providers: string[]; configured_model: string; openai_credential_configured: boolean; generation_ready: boolean };
 type RenderProfile={id:string;profile_key:string;name:string;version:number;width:number;height:number;fps:number;container:string;video_codec:string;video_crf:number;audio_codec:string;render_concurrency:number;priority:number;is_default:boolean;is_archived:boolean};
+type RenderSettings={max_concurrent_jobs:number;lease_seconds:number;max_attempts:number;max_output_bytes:number;updated_at?:string|null};
 type MotionControl={component_key:string;component_version:string;category:string;enabled:boolean;reason?:string|null};
 type AdminRenderJob={id:string;project_name:string;workspace_name:string;status:string;progress_percent:number;worker_id?:string|null;lease_expires_at?:string|null;render_profile?:string|null;attempt_count:number;latest_attempt_status?:string|null};
 type AdminMediaJob={id:string;project_name:string;workspace_name:string;status:string;provider_key:string;model_key:string;voice_key:string;worker_id?:string|null;lease_expires_at?:string|null;attempt_count:number;max_attempts:number;error_code?:string|null;asset_id?:string|null};
@@ -31,6 +32,7 @@ export default function PlatformAdmin() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [renderProfiles,setRenderProfiles]=useState<RenderProfile[]>([]);
+  const [renderSettings,setRenderSettings]=useState<RenderSettings>({max_concurrent_jobs:2,lease_seconds:300,max_attempts:3,max_output_bytes:536870912});
   const [motionComponents,setMotionComponents]=useState<MotionControl[]>([]);
   const [adminRenderJobs,setAdminRenderJobs]=useState<AdminRenderJob[]>([]);
   const [adminMediaJobs,setAdminMediaJobs]=useState<AdminMediaJob[]>([]);
@@ -65,7 +67,7 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i, pa, llm, rp, mc, rj, mj] = await Promise.all([
+      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
@@ -75,11 +77,12 @@ export default function PlatformAdmin() {
         request<{data: PlatformAdminRecord[]}>('/admin/platform-admins'),
         request<{data: LlmStatus}>('/admin/llm/providers'),
         request<{data:RenderProfile[]}>('/admin/render-profiles'),
+        request<{data:RenderSettings}>('/admin/render-settings'),
         request<{data:MotionControl[]}>('/admin/motion-components'),
         request<Page<AdminRenderJob>>('/admin/render-jobs?page=1&per_page=50'),
         request<Page<AdminMediaJob>>('/admin/media-jobs?page=1&per_page=50'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -200,6 +203,15 @@ export default function PlatformAdmin() {
     finally { setBusy(false); }
   }
 
+  async function saveRenderSettings(event:React.FormEvent) {
+    event.preventDefault();setBusy(true);setError('');setNotice('');
+    try{
+      const result=await request<{data:RenderSettings}>('/admin/render-settings',{method:'PATCH',body:JSON.stringify(renderSettings)});
+      setRenderSettings(result.data);setNotice('Global render runtime settings saved and audited.');
+    }catch(cause){setError(cause instanceof Error?cause.message:'Global render settings update failed');}
+    finally{setBusy(false);}
+  }
+
   async function createRenderProfile(event:React.FormEvent) {
     event.preventDefault();setBusy(true);setError('');setNotice('');
     try{await request(editingProfileId?'/admin/render-profiles/'+editingProfileId:'/admin/render-profiles',{method:editingProfileId?'PATCH':'POST',body:JSON.stringify(profileDraft)});setNotice(editingProfileId?'Render profile version created.':'Render profile created.');setEditingProfileId(null);await load();}
@@ -281,6 +293,18 @@ export default function PlatformAdmin() {
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}><button disabled={page <= 1 || busy} onClick={() => setPage(value => value - 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Previous</button><span style={{ fontSize: 12 }}>Page {page}</span><button disabled={users.length < 25 || busy} onClick={() => setPage(value => value + 1)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Next</button></div>
       </section>
       <section style={panel}><h2>Platform RBAC & administrator registry</h2><form onSubmit={grantPlatformAdmin} style={{display:'grid',gridTemplateColumns:'2fr 1fr auto',gap:8,marginBottom:12}}><input aria-label="User UUID" placeholder="User profile UUID" value={newAdminUserId} onChange={event=>setNewAdminUserId(event.target.value)} style={input} required/><select aria-label="Platform admin role" value={newAdminRole} onChange={event=>setNewAdminRole(event.target.value)} style={input}><option value="operations_admin">Operations admin</option><option value="support_admin">Support admin</option><option value="super_admin">Super admin</option></select><button disabled={busy} style={button}>Grant role</button></form>{platformAdmins.map(admin=><div key={admin.user_id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{admin.user_id}</strong><div style={{fontSize:12,color:'#68788e'}}>{admin.role} · {admin.status} · {new Date(admin.granted_at).toLocaleString()}</div></div>{admin.status==='active'&&<button disabled={busy} onClick={()=>void revokePlatformAdmin(admin)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Revoke</button>}</div>)}</section>
+      <section style={panel}>
+        <h2>Global render runtime configuration</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>Controls are enforced by FastAPI and PostgreSQL job claims. Profile quality settings remain versioned separately.</p>
+        <form onSubmit={saveRenderSettings} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8}}>
+          <label style={{fontSize:12}}>Concurrent render jobs<input aria-label="Maximum concurrent render jobs" type="number" min={1} max={8} value={renderSettings.max_concurrent_jobs} onChange={e=>setRenderSettings(v=>({...v,max_concurrent_jobs:Number(e.target.value)}))} style={input}/></label>
+          <label style={{fontSize:12}}>Worker lease seconds<input aria-label="Worker lease seconds" type="number" min={60} max={3600} value={renderSettings.lease_seconds} onChange={e=>setRenderSettings(v=>({...v,lease_seconds:Number(e.target.value)}))} style={input}/></label>
+          <label style={{fontSize:12}}>Maximum attempts<input aria-label="Maximum render attempts" type="number" min={1} max={10} value={renderSettings.max_attempts} onChange={e=>setRenderSettings(v=>({...v,max_attempts:Number(e.target.value)}))} style={input}/></label>
+          <label style={{fontSize:12}}>Maximum output bytes<input aria-label="Maximum output bytes" type="number" min={1048576} max={2147483648} step={1048576} value={renderSettings.max_output_bytes} onChange={e=>setRenderSettings(v=>({...v,max_output_bytes:Number(e.target.value)}))} style={input}/></label>
+          <button disabled={busy} style={button}>Save global settings</button>
+        </form>
+        {renderSettings.updated_at&&<p style={{fontSize:11,color:'#68788e'}}>Last updated {new Date(renderSettings.updated_at).toLocaleString()}</p>}
+      </section>
       <section style={panel}>
         <h2>Remotion · Render profiles & quality presets</h2>
         <p style={{fontSize:13,color:'#68788e'}}>New render jobs pin the selected global profile version and immutable composition snapshot.</p>

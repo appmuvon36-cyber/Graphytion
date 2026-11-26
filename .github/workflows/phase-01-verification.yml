@@ -58,7 +58,7 @@ jobs:
 
       - name: Frozen dependency installation
         run: |
-          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm install --frozen-lockfile
           cd apps/api
           uv sync --locked --extra dev
           cd ../../services/ai-worker

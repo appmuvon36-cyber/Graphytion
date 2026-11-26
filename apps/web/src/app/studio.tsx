@@ -109,7 +109,7 @@ export default function Studio() {
   }
   async function createWorkspace(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();setBusy(true);setError('');
-    try{await call('/workspaces',{method:'POST',body:JSON.stringify({name:workspaceName,slug:workspaceSlug})});setWorkspaceName('');setWorkspaceSlug('');await loadAccount();setNotice('Workspace berhasil dibuat.');}
+    try{await call('/workspaces',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:workspaceName,slug:workspaceSlug})});setWorkspaceName('');setWorkspaceSlug('');await loadAccount();setNotice('Workspace berhasil dibuat.');}
     catch(e){setError(e instanceof Error?e.message:'Gagal membuat workspace');}finally{setBusy(false);}
   }
   async function updateWorkspace(event:React.FormEvent<HTMLFormElement>){
@@ -125,7 +125,7 @@ export default function Studio() {
   }
   async function createProject(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();if(!workspaceId)return;setBusy(true);setError('');
-    try{await call('/workspaces/'+workspaceId+'/projects',{method:'POST',body:JSON.stringify({name:projectName,description:projectDescription||null,production_mode:'motion_graphic',default_language:'id-ID',aspect_ratio:'16:9',width:1920,height:1080,fps:30,settings:{}})});setProjectName('');setProjectDescription('');await loadWorkspaceData(workspaceId);setNotice('Project tersimpan.');}
+    try{await call('/workspaces/'+workspaceId+'/projects',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:projectName,description:projectDescription||null,production_mode:'motion_graphic',default_language:'id-ID',aspect_ratio:'16:9',width:1920,height:1080,fps:30,settings:{}})});setProjectName('');setProjectDescription('');await loadWorkspaceData(workspaceId);setNotice('Project tersimpan.');}
     catch(e){setError(e instanceof Error?e.message:'Gagal membuat project');}finally{setBusy(false);}
   }
   async function saveProfile(event:React.FormEvent<HTMLFormElement>){

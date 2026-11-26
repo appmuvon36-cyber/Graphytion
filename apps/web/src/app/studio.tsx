@@ -35,6 +35,7 @@ export default function Studio() {
   const [editingProject,setEditingProject] = useState<Project|null>(null);
   const [editName,setEditName] = useState('');
   const [editDescription,setEditDescription] = useState('');
+  const [projectDetail,setProjectDetail] = useState<Record<string,unknown>|null>(null);
 
   const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>(typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null) || access}),[access]);
   const call = useCallback(async <T,>(path:string,init:RequestInit={})=>{
@@ -73,6 +74,7 @@ export default function Studio() {
     setWorkspaces(ws.data);
     const selected=workspaceId && ws.data.some(w=>w.id===workspaceId) ? workspaceId : (ws.data[0]?.id||'');
     setWorkspaceId(selected);
+    setWorkspaceEditName(ws.data.find(w=>w.id===selected)?.name||'');
     if(selected) await loadWorkspaceData(selected); else setProjects([]);
   },[call,loadWorkspaceData,workspaceId]);
 
@@ -136,6 +138,11 @@ export default function Studio() {
     try{await call('/invitations/accept',{method:'POST',body:JSON.stringify({token:invitationToken})});setInvitationToken('');await loadAccount();setNotice('Invitation diterima dan workspace ditambahkan.');}
     catch(e){setError(e instanceof Error?e.message:'Invitation tidak dapat diterima');}finally{setBusy(false);}
   }
+  async function showProjectDetail(project:Project){
+    setError('');
+    try{const result=await call<{data:Record<string,unknown>}>('/projects/'+project.id);setProjectDetail(result.data);}
+    catch(e){setError(e instanceof Error?e.message:'Detail project tidak dapat dimuat');}
+  }
   async function saveProject(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();if(!editingProject)return;setBusy(true);setError('');
     try{await call('/projects/'+editingProject.id,{method:'PATCH',body:JSON.stringify({name:editName,description:editDescription||null})});setEditingProject(null);await loadWorkspaceData(workspaceId);setNotice('Project diperbarui.');}
@@ -191,7 +198,8 @@ export default function Studio() {
     <section style={card}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}><div><h2 style={{margin:'0 0 4px',fontSize:21}}>Projects</h2><p style={{margin:0,color:'#68788e',fontSize:13}}>Data project berasal dari FastAPI dan Supabase.</p></div><input aria-label="Cari project" placeholder="Cari project…" value={search} onChange={e=>setSearch(e.target.value)} style={{...field,maxWidth:260}}/></div>
       {workspaceId&&<form onSubmit={createProject} style={{display:'grid',gridTemplateColumns:'1fr 1.5fr auto',gap:8,margin:'18px 0'}}><input aria-label="Nama project" placeholder="Nama project" value={projectName} onChange={e=>setProjectName(e.target.value)} required style={field}/><input aria-label="Deskripsi project" placeholder="Deskripsi (opsional)" value={projectDescription} onChange={e=>setProjectDescription(e.target.value)} style={field}/><button disabled={busy||!canEditProject} style={button}>Project baru</button></form>}
-      {!workspaceId?<p style={{padding:24,textAlign:'center',color:'#68788e'}}>Pilih atau buat workspace untuk mulai.</p>:visibleProjects.length===0?<p style={{padding:24,textAlign:'center',color:'#68788e'}}>Belum ada project yang cocok. Buat project pertama dari formulir di atas.</p>:<div style={{display:'grid',gap:10,marginTop:18}}>{visibleProjects.map(p=><article key={p.id} style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',padding:'14px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{p.name}</strong><p style={{margin:'4px 0',fontSize:13,color:'#68788e'}}>{p.description||'Tanpa deskripsi'} · {p.status} · {p.production_mode}</p></div><div style={{display:'flex',gap:7,flexWrap:'wrap'}}><button onClick={()=>{setEditingProject(p);setEditName(p.name);setEditDescription(p.description||'');}} disabled={!canEditProject} style={{...button,padding:'8px 11px',background:'#edf3f9',color:'#173f72'}}>Edit</button>{p.status==='archived'?<button onClick={()=>changeStatus(p,'restore')} disabled={!canArchiveProject} style={{...button,padding:'8px 11px'}}>Pulihkan</button>:<button onClick={()=>changeStatus(p,'archive')} disabled={!canArchiveProject} style={{...button,padding:'8px 11px',background:'#edf3f9',color:'#173f72'}}>Arsipkan</button>}<button onClick={()=>changeStatus(p,'delete')} disabled={!canDeleteProject} style={{...button,padding:'8px 11px',background:'#fff1f0',color:'#b42318'}}>Hapus</button></div></article>)}</div>}
+      {!workspaceId?<p style={{padding:24,textAlign:'center',color:'#68788e'}}>Pilih atau buat workspace untuk mulai.</p>:visibleProjects.length===0?<p style={{padding:24,textAlign:'center',color:'#68788e'}}>Belum ada project yang cocok. Buat project pertama dari formulir di atas.</p>:<div style={{display:'grid',gap:10,marginTop:18}}>{visibleProjects.map(p=><article key={p.id} style={{display:'flex',justifyContent:'space-between',gap:12,alignItems:'center',padding:'14px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{p.name}</strong><p style={{margin:'4px 0',fontSize:13,color:'#68788e'}}>{p.description||'Tanpa deskripsi'} · {p.status} · {p.production_mode}</p></div><div style={{display:'flex',gap:7,flexWrap:'wrap'}}><button onClick={()=>showProjectDetail(p)} style={{...button,padding:'8px 11px',background:'#edf3f9',color:'#173f72'}}>Detail</button><button onClick={()=>{setEditingProject(p);setEditName(p.name);setEditDescription(p.description||'');}} disabled={!canEditProject} style={{...button,padding:'8px 11px',background:'#edf3f9',color:'#173f72'}}>Edit</button>{p.status==='archived'?<button onClick={()=>changeStatus(p,'restore')} disabled={!canArchiveProject} style={{...button,padding:'8px 11px'}}>Pulihkan</button>:<button onClick={()=>changeStatus(p,'archive')} disabled={!canArchiveProject} style={{...button,padding:'8px 11px',background:'#edf3f9',color:'#173f72'}}>Arsipkan</button>}<button onClick={()=>changeStatus(p,'delete')} disabled={!canDeleteProject} style={{...button,padding:'8px 11px',background:'#fff1f0',color:'#b42318'}}>Hapus</button></div></article>)}</div>}
+      {projectDetail&&<div style={{marginTop:16,padding:14,background:'#f7f9fc',borderRadius:12}}><div style={{display:'flex',justifyContent:'space-between',gap:8}}><strong>Project detail</strong><button type="button" onClick={()=>setProjectDetail(null)} style={{border:0,background:'transparent',color:'#47719e',cursor:'pointer'}}>Tutup</button></div><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontSize:12,color:'#43536a'}}>{JSON.stringify(projectDetail,null,2)}</pre></div>}
       {editingProject&&<form onSubmit={saveProject} style={{display:'grid',gap:8,padding:14,background:'#f7f9fc',borderRadius:12,marginTop:16}}><strong>Edit project · {editingProject.name}</strong><input aria-label="Edit nama project" value={editName} onChange={e=>setEditName(e.target.value)} required style={field}/><textarea aria-label="Edit deskripsi project" value={editDescription} onChange={e=>setEditDescription(e.target.value)} rows={3} style={field}/><div style={{display:'flex',gap:8}}><button disabled={busy} style={button}>Simpan perubahan</button><button type="button" onClick={()=>setEditingProject(null)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Batal</button></div></form>}
 
     </section>

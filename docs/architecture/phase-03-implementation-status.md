@@ -160,3 +160,16 @@ Phase 03 remains OPEN. No production job or media generation was executed.
 - Source commits: `40ae329732f5fd8c1bba2bd1e64c6ccba7ab13f8` (runtime URL precedence), `61579c520be0e815abbdbddbfbcaeddcaa1ed9f6` (.env example), `115c62225e63de3f77cb8f83431da861e1318c44` (diagnostic wording).
 
 Phase 03 remains OPEN. This is a configuration boundary blocker, not a database URL syntax defect. No TTS, render, or synthetic production job was executed.
+
+
+## Phase 03 continuation — global render controls, admin recovery, Railway queue wiring — 2026-11-27
+
+- Added migration `202611270001_phase_03_platform_render_settings` and applied it to Supabase production. The singleton settings row is present with concurrency=2, lease=300 seconds, max attempts=3, max artifact size=536870912 bytes.
+- Added migration `202611270002_phase_03_render_capacity_function` and applied it to Supabase production. The security-definer capacity function returns the global concurrency/lease/retry/output limits and active render count without granting workers cross-tenant render-job reads.
+- FastAPI render submission pins the global max-attempt value. Worker claim serializes the capacity check with a transaction advisory lock, applies the global concurrency cap, and uses the configured lease. Artifact upload uses the configured output limit (bounded by the current 512 MiB application upload cap).
+- Super Admin now has audited global render settings controls. Admin can retry failed render and media jobs; retry requests are authorized server-side, audited, preserve attempt history, and send a best-effort queue notification while PostgreSQL remains authoritative.
+- Customer Studio/Admin web source changes were pushed to `main`; Railway web deployment reported SUCCESS for the updated UI. API deployment continues to fail at settings validation because `GRAPHYTION_RUNTIME_DATABASE_URL` is not configured and the existing `DATABASE_URL` authenticates as `postgres`. The database URL itself parses correctly and targets the correct Graphytion host.
+- Supabase role inspection confirms `graphytion_api` and `graphytion_runtime` are both NOLOGIN, non-superuser, no-CREATEDB, no-CREATEROLE, no-BYPASSRLS; `graphytion_api` is a member of `graphytion_runtime`. The postgres login has CREATEROLE and BYPASSRLS. No change was made to the existing administrative DATABASE_URL.
+- Railway Redis template deployment did not result in a Redis service appearing in the project inventory. A direct service create attempt was rejected by Railway with the Free Plan resource provision limit. The temporary unresolved Redis variable references were cleared back to empty values. Media/Render workers therefore continue to use PostgreSQL polling fallback; Redis is BLOCKED by plan capacity, not code.
+- Resend invitation delivery remains dependent on provider credentials and a verified sender. Raw invitation tokens are not returned in the invitation API response; the raw token is only passed server-side to the email adapter and the database stores its digest.
+- Phase 03 remains OPEN. No production TTS generation, real render, or job-cycle test was executed in this continuation.

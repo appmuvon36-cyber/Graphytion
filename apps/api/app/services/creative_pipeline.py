@@ -104,7 +104,7 @@ Return only data matching the supplied JSON schema."""),
 
 
 class CreativePipeline:
-    """Schema-validated creative intelligence pipeline; provider execution is injected via LLMGateway."""
+    """One-agent-per-stage pipeline with explicit approval gates owned by the API lifecycle."""
 
     def __init__(self, gateway: LLMGateway = llm_gateway) -> None:
         self._gateway = gateway
@@ -120,91 +120,73 @@ class CreativePipeline:
             output_schema=model.model_json_schema(),
             idempotency_key=idempotency_key,
         )
-        validated = model.model_validate(result.output)
-        return validated, result, version
+        return model.model_validate(result.output), result, version
 
-    async def run(
-        self,
-        *,
-        input_prompt: str,
-        project_settings: dict[str, Any],
-        source_material: list[dict[str, Any]] | None = None,
-        approved_component_candidates: list[str] | None = None,
-        idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
-        run_key = idempotency_key or str(uuid4())
-        source = source_material or []
-        brief, brief_meta, brief_prompt_version = await self._run(
-            "prompt_interpreter",
-            CreativeBriefOutput,
-            {
-                "input_prompt": input_prompt,
-                "project_settings": project_settings,
-                "source_material": source,
-            },
-            f"{run_key}:brief",
+    async def interpret_prompt(
+        self, *, input_prompt: str, project_settings: dict[str, Any],
+        source_material: list[dict[str, Any]] | None, idempotency_key: str,
+    ) -> tuple[CreativeBriefOutput, dict[str, Any]]:
+        output, result, version = await self._run(
+            "prompt_interpreter", CreativeBriefOutput,
+            {"input_prompt": input_prompt, "project_settings": project_settings,
+             "source_material": source_material or []}, idempotency_key,
         )
-        script, script_meta, script_prompt_version = await self._run(
-            "scriptwriter",
-            ScriptOutput,
-            {"approved_brief": brief.model_dump(), "source_material": source},
-            f"{run_key}:script",
+        return output, {
+            "agent_key": "prompt_interpreter", "prompt_version": version,
+            "provider_key": result.provider_key, "model_key": result.model_key,
+            "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+            "provider_request_id": result.request_id,
+        }
+
+    async def write_script(
+        self, *, approved_brief: dict[str, Any], source_material: list[dict[str, Any]] | None,
+        idempotency_key: str,
+    ) -> tuple[ScriptOutput, dict[str, Any]]:
+        output, result, version = await self._run(
+            "scriptwriter", ScriptOutput,
+            {"approved_brief": approved_brief, "source_material": source_material or []},
+            idempotency_key,
         )
-        arc, arc_meta, arc_prompt_version = await self._run(
-            "story_director",
-            StoryArcOutput,
-            {"approved_brief": brief.model_dump(), "approved_script": script.model_dump()},
-            f"{run_key}:story-arc",
+        return output, {
+            "agent_key": "scriptwriter", "prompt_version": version,
+            "provider_key": result.provider_key, "model_key": result.model_key,
+            "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+            "provider_request_id": result.request_id,
+        }
+
+    async def direct_story(
+        self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
+        idempotency_key: str,
+    ) -> tuple[StoryArcOutput, dict[str, Any]]:
+        output, result, version = await self._run(
+            "story_director", StoryArcOutput,
+            {"approved_brief": approved_brief, "approved_script": approved_script},
+            idempotency_key,
         )
-        storyboard, storyboard_meta, storyboard_prompt_version = await self._run(
-            "storyboard_director",
-            StoryboardOutput,
-            {
-                "approved_brief": brief.model_dump(),
-                "approved_script": script.model_dump(),
-                "story_arc": arc.model_dump(),
-                "approved_component_candidates": approved_component_candidates or [],
-            },
-            f"{run_key}:storyboard",
+        return output, {
+            "agent_key": "story_director", "prompt_version": version,
+            "provider_key": result.provider_key, "model_key": result.model_key,
+            "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+            "provider_request_id": result.request_id,
+        }
+
+    async def direct_storyboard(
+        self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
+        story_arc: dict[str, Any], approved_component_candidates: list[str],
+        idempotency_key: str,
+    ) -> tuple[StoryboardOutput, dict[str, Any]]:
+        output, result, version = await self._run(
+            "storyboard_director", StoryboardOutput,
+            {"approved_brief": approved_brief, "approved_script": approved_script,
+             "story_arc": story_arc,
+             "approved_component_candidates": approved_component_candidates},
+            idempotency_key,
         )
-        return {
-            "creative_brief": brief.model_dump(),
-            "script": script.model_dump(),
-            "story_arc": arc.model_dump(),
-            "storyboard": storyboard.model_dump(),
-            "provenance": {
-                "run_key": run_key,
-                "agents": {
-                    "prompt_interpreter": {
-                        "prompt_version": brief_prompt_version,
-                        "provider": brief_meta.provider_key,
-                        "model": brief_meta.model_key,
-                        "input_tokens": brief_meta.input_tokens,
-                        "output_tokens": brief_meta.output_tokens,
-                    },
-                    "scriptwriter": {
-                        "prompt_version": script_prompt_version,
-                        "provider": script_meta.provider_key,
-                        "model": script_meta.model_key,
-                        "input_tokens": script_meta.input_tokens,
-                        "output_tokens": script_meta.output_tokens,
-                    },
-                    "story_director": {
-                        "prompt_version": arc_prompt_version,
-                        "provider": arc_meta.provider_key,
-                        "model": arc_meta.model_key,
-                        "input_tokens": arc_meta.input_tokens,
-                        "output_tokens": arc_meta.output_tokens,
-                    },
-                    "storyboard_director": {
-                        "prompt_version": storyboard_prompt_version,
-                        "provider": storyboard_meta.provider_key,
-                        "model": storyboard_meta.model_key,
-                        "input_tokens": storyboard_meta.input_tokens,
-                        "output_tokens": storyboard_meta.output_tokens,
-                    },
-                },
-            },
+        return output, {
+            "agent_key": "storyboard_director", "prompt_version": version,
+            "provider_key": result.provider_key, "model_key": result.model_key,
+            "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+            "provider_request_id": result.request_id,
         }
 
 

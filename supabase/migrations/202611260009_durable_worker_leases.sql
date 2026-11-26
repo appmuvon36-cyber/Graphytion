@@ -70,6 +70,7 @@ begin
         when 'brief' then 'planning'
         when 'script' then 'scripting'
         when 'storyboard' then 'storyboarding'
+        when 'scene' then 'storyboarding'
         else r.status
       end,
       current_stage = r.input_snapshot->>'stage',

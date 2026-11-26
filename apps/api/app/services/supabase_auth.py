@@ -56,6 +56,19 @@ class SupabaseAuth:
             raise HTTPException(status_code=code, detail=message)
         return body if isinstance(body, dict) else {}
 
+    async def health_check(self) -> bool:
+        if not self.api_key:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                response = await client.get(
+                    f"{self.base_url}/health",
+                    headers={"apikey": self.api_key},
+                )
+            return response.is_success
+        except httpx.RequestError:
+            return False
+
     async def signup(self, email: str, password: str, display_name: str | None) -> dict[str, Any]:
         metadata = {"display_name": display_name} if display_name else {}
         return await self._request(

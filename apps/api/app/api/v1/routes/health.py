@@ -27,16 +27,18 @@ async def check_database() -> bool:
 
 @router.get("/ready", summary="Dependency readiness probe")
 async def readiness() -> dict[str, object]:
-    database_ok, redis_ok, auth_ok, storage_ok = await asyncio.gather(
+    database_ok, redis_ok, auth_ok, jwks_ok, storage_ok = await asyncio.gather(
         check_database(),
         check_redis(),
         supabase_auth.health_check(),
+        supabase_auth.signing_keys_check(),
         SupabaseStorage().health_check(),
     )
     dependencies = {
         "database": database_ok,
         "redis": redis_ok,
         "supabase_auth": auth_ok,
+        "supabase_jwks": jwks_ok,
         "supabase_storage": storage_ok,
     }
     ready = all(dependencies.values())

@@ -1107,7 +1107,10 @@ async def update_project(
     actor = uid(claims)
     workspace_id = (
         await db.execute(
-            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            text("""
+                select workspace_id from public.video_projects
+                where id=:project and status<>'deleted'
+            """),
             {"project": project_id},
         )
     ).scalar_one_or_none()
@@ -1246,7 +1249,10 @@ async def delete_project(
     actor = uid(claims)
     workspace_id = (
         await db.execute(
-            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            text("""
+                select workspace_id from public.video_projects
+                where id=:project and status<>'deleted'
+            """),
             {"project": project_id},
         )
     ).scalar_one_or_none()

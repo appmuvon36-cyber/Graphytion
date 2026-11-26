@@ -195,3 +195,22 @@ Phase 03 remains OPEN. This is a configuration boundary blocker, not a database 
 - The Supabase project currently has zero Auth users, zero profiles, zero workspaces, and zero platform-admin rows. Authentication schema is ready, but no one can yet sign in or access the Admin control plane until the first user is created and promoted to `super_admin`.
 - The API service currently has no `RESEND_API_KEY` or `INVITATION_FROM_EMAIL`; invitation delivery is implemented but provider activation is blocked by those external credentials. Media Worker has a `GEMINI_API_KEY` variable name configured, but no real TTS was executed.
 - Per the project owner's instruction, no real TTS, render, or job-cycle test was run. Phase 03 remains OPEN; source integration is materially advanced but end-to-end runtime cannot be marked VERIFIED until the API runtime login and initial identity/provider setup are completed.
+
+
+## Production continuation update — 2026-11-27
+
+This section supersedes older runtime observations above where they conflict. It records a fresh production inspection after the owner requested full runtime completion.
+
+- Current main HEAD at inspection: `a18fd7f75ac62aebcb45898fdccda1e03f5a1541`.
+- Supabase migration history was re-read and contains 22 applied migrations, including Phase 02 invitation delivery and runtime-role/RLS migrations, plus Phase 03 composition, render settings, capacity function, and worker registry. No pending migration was identified in the production migration list.
+- Database endpoint diagnosis: Railway's latest API log parses the configured direct Supabase endpoint as host `db.xtjwmezfzexvupbfsdqt.supabase.co`, port `5432`, driver `postgresql+asyncpg`; the rejected login is `postgres`. This is an application identity/least-privilege rejection, not evidence of malformed URL syntax. Existing `DATABASE_URL` was not changed.
+- Railway API has outbound IPv6 enabled. The API still has no healthy replica because `graphytion_api` remains `NOLOGIN`; the API service does not yet expose `GRAPHYTION_RUNTIME_DATABASE_URL`. Railway OAuth returns variable names only, so credential values were not read.
+- `graphytion_api` remains non-superuser, non-createdb, non-createrole, non-replication, and non-bypassrls, and is a member of `graphytion_runtime`. Its LOGIN/password must be configured out-of-band; do not use the administrative `postgres` login to bypass the runtime guard.
+- Worker DNS failures for `graphytionapi.railway.internal` are downstream of the API having no healthy deployment. Keep the existing private endpoint and re-check DNS after the API becomes healthy; do not substitute a public endpoint.
+- A Redis template deployment was requested and returned an asynchronous workflow ID, but repeated live service inventories still show only the five existing Graphytion services and no Redis service. Therefore Redis is NOT RUNNING and no Redis variable references were attached. PostgreSQL polling/leases remain the safe fallback. Confirm the template workflow/plan quota before any retry to avoid duplicate services.
+- Storage inspection confirms `avatars`, `project-assets`, and `render-artifacts` are all private. Auth/JWKS-related variable names exist on API, but their values and API-side readiness cannot be verified while the API is offline and the Railway OAuth connector redacts values.
+- Production Auth still has zero users, profiles, workspaces, and platform-admin rows. Initial Admin bootstrap requires the owner to create and confirm the first account, then run the documented one-time promotion SQL.
+- API variable inventory does not include `RESEND_API_KEY` or `INVITATION_FROM_EMAIL`; invitation delivery remains blocked pending a verified sender and provider credentials.
+- The owner’s latest execution instruction now requests one real job cycle after API activation. No TTS/render/job cycle has yet been executed because the API remains offline; once available, perform one real cycle with persisted private artifact and completion evidence, without synthetic records.
+
+**Current completion status:** Phase 03 remains OPEN. Implemented source and existing worker deployments are not equivalent to integrated runtime verification. Immediate critical dependency is a LOGIN-enabled least-privilege `graphytion_api` credential plus the API-only `GRAPHYTION_RUNTIME_DATABASE_URL`; secondary blockers are Redis service provisioning, Resend credentials, and first confirmed Admin identity.

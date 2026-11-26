@@ -173,3 +173,12 @@ Phase 03 remains OPEN. This is a configuration boundary blocker, not a database 
 - Railway Redis template deployment did not result in a Redis service appearing in the project inventory. A direct service create attempt was rejected by Railway with the Free Plan resource provision limit. The temporary unresolved Redis variable references were cleared back to empty values. Media/Render workers therefore continue to use PostgreSQL polling fallback; Redis is BLOCKED by plan capacity, not code.
 - Resend invitation delivery remains dependent on provider credentials and a verified sender. Raw invitation tokens are not returned in the invitation API response; the raw token is only passed server-side to the email adapter and the database stores its digest.
 - Phase 03 remains OPEN. No production TTS generation, real render, or job-cycle test was executed in this continuation.
+
+
+## Worker presence registry — 2026-11-27
+
+- Applied migration `202611270003_phase_03_worker_registry` to Supabase production. It adds a private worker heartbeat registry and security-definer upsert function; Admin reads worker status through FastAPI only.
+- FastAPI now exposes authenticated `POST /api/v1/internal/workers/heartbeat` using the existing internal worker token. Render Worker and Media Worker now publish a heartbeat every 30 seconds with worker identity, type, host, deployment version, and non-secret metadata.
+- Super Admin now displays workers as online or stale using a 90-second heartbeat threshold. No credentials are included in heartbeat metadata.
+- Render capacity accounting now includes cancellation-in-flight jobs so a worker cannot be overcommitted while a cancellation lease remains active.
+- Worker presence remains INTEGRATED in source and DB. RUNNING/VERIFIED is pending API runtime activation; the API still rejects the existing `postgres` runtime identity until a dedicated `GRAPHYTION_RUNTIME_DATABASE_URL` is configured.

@@ -138,7 +138,7 @@ class Settings(BaseSettings):
         try:
             db_url = make_url(self.database_url_value)
         except Exception as exc:
-            raise ValueError("DATABASE_URL is not a valid SQLAlchemy database URL") from exc
+            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL is not a valid SQLAlchemy database URL") from exc
 
         direct_database = (
             db_url.host == "db.xtjwmezfzexvupbfsdqt.supabase.co"
@@ -158,18 +158,18 @@ class Settings(BaseSettings):
             and db_url.port in (5432, 6543)
         )
         if db_url.drivername != "postgresql+asyncpg":
-            raise ValueError("DATABASE_URL must use the postgresql+asyncpg driver")
+            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL must use the postgresql+asyncpg driver")
         if not (direct_database or pooler_database):
             raise ValueError(
-                "DATABASE_URL target/login is not an allowed Graphytion runtime endpoint "
+                "GRAPHYTION_RUNTIME_DATABASE_URL target/login is not an allowed Graphytion runtime endpoint "
                 f"(host={db_url.host!r}, username={db_url.username!r}, port={db_url.port!r}, "
                 f"driver={db_url.drivername!r}); expected the dedicated graphytion_api role "
                 "on the Graphytion direct host or Supavisor pooler"
             )
         if not db_url.password or "CHANGE_ME" in self.database_url_value:
-            raise ValueError("DATABASE_URL is missing a real password")
+            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL is missing a real password")
         if not any(db_url.query.get(key) == "require" for key in ("ssl", "sslmode")):
-            raise ValueError("DATABASE_URL must require TLS with ssl=require")
+            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL must require TLS with ssl=require")
         if (
             self.supabase_service_role_key_value == self.supabase_anon_key_value
             and self.supabase_anon_key_value

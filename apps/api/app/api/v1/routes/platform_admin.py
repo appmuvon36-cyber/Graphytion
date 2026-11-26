@@ -543,7 +543,7 @@ async def admin_create_render_profile(payload:RenderProfileInput,request:Request
       "crf":payload.video_crf,"video_bitrate":payload.video_bitrate,"audio_codec":payload.audio_codec,
       "audio_bitrate":payload.audio_bitrate,"concurrency":payload.render_concurrency,"priority":payload.priority,
       "thumbnail":payload.thumbnail_enabled,"preview":payload.preview_enabled,"default":payload.is_default,"actor":actor})).mappings().one()
-    await _audit(db,request,actor,"render_profile.created","render_profile",row["id"],{"profile_key":payload.profile_key,"version":1})
+    await _audit(db,request,actor,"render_profile.created","render_profile",row["id"],{"profile_key":payload.profile_key,"version":row["version"]})
     await db.commit()
     return {"data":dict(row)}
 

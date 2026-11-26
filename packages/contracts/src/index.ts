@@ -131,3 +131,46 @@ export type AudioGeneration = z.infer<typeof AudioGenerationSchema>;
 export type SubtitleTrack = z.infer<typeof SubtitleTrackSchema>;
 export type Composition = z.infer<typeof CompositionSchema>;
 export type AIProvider = z.infer<typeof AIProviderSchema>;
+
+export const CreativeBriefApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID, version: z.number().int().positive(),
+  input_prompt: z.string(), normalized_brief: z.record(z.string(), z.unknown()),
+  source_references: z.array(z.record(z.string(), z.unknown())),
+  status: z.enum(['draft','approved','superseded']), approved_by: UUID.nullable(),
+  approved_at: Timestamp.nullable(), created_by: UUID, created_at: Timestamp,
+}).strict();
+export const VideoScriptApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID, brief_id: UUID.nullable(),
+  version: z.number().int().positive(), language: z.string(), title: z.string(),
+  hook: z.string().nullable(), body: z.record(z.string(), z.unknown()),
+  cta: z.string().nullable(), estimated_duration_ms: z.number().int().positive().nullable(),
+  word_count: z.number().int().nonnegative().nullable(),
+  status: z.enum(['draft','approved','superseded']), created_by_agent: z.string().nullable(),
+  created_by: UUID, created_at: Timestamp,
+}).strict();
+export const StoryboardSceneApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID, storyboard_id: UUID,
+  scene_index: z.number().int().nonnegative(), title: z.string(), purpose: z.string().nullable(),
+  narration_text: z.string().nullable(), duration_ms: z.number().int().positive(),
+  visual_direction: z.record(z.string(), z.unknown()), transition_in: z.string().nullable(),
+  transition_out: z.string().nullable(), motion_plan: z.record(z.string(), z.unknown()),
+  asset_requirements: z.array(z.record(z.string(), z.unknown())),
+  created_at: Timestamp, updated_at: Timestamp,
+}).strict();
+export const StoryboardApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID, script_id: UUID,
+  version: z.number().int().positive(), global_visual_direction: z.record(z.string(), z.unknown()),
+  status: z.enum(['draft','approved','superseded']), created_by: UUID, created_at: Timestamp,
+  scenes: z.array(StoryboardSceneApiSchema),
+}).strict();
+export const ArtifactVersionApiSchema = z.object({
+  id: UUID, artifact_type: z.enum(['creative_brief','video_script','storyboard','storyboard_scene']),
+  artifact_id: UUID, version: z.number().int().positive(), content_hash: z.string().length(64),
+  created_by: UUID.nullable(), created_by_agent: z.string().nullable(),
+  change_summary: z.string().nullable(), created_at: Timestamp,
+}).strict();
+export type CreativeBriefApi = z.infer<typeof CreativeBriefApiSchema>;
+export type VideoScriptApi = z.infer<typeof VideoScriptApiSchema>;
+export type StoryboardApi = z.infer<typeof StoryboardApiSchema>;
+export type StoryboardSceneApi = z.infer<typeof StoryboardSceneApiSchema>;
+export type ArtifactVersionApi = z.infer<typeof ArtifactVersionApiSchema>;

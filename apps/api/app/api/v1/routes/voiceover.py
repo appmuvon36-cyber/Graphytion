@@ -179,16 +179,12 @@ async def fail_media_job(generation_id:UUID,payload:VoiceoverFailure,request:Req
  retry=payload.retryable and row["attempt_count"]<row["max_attempts"]
  await db.execute(text("update public.audio_generations set status=:status,error_code=:code,worker_id=null,lease_expires_at=null where id=:id"),{"status":"queued" if retry else "failed","code":payload.error_code[:100],"id":generation_id})
  await db.commit()
- if retry:
-  try:await redis_client.xadd(STREAM,{"generation_id":str(generation_id)},maxlen=10000,approximate=True)
-  except Exception:pass
+ # The worker discovers retryable rows through PostgreSQL polling.
  return {"data":{"generation_id":str(generation_id),"status":"queued" if retry else "failed"}}
 @router.post("/internal/media-jobs/recover")
 async def recover_media_jobs(request:Request,db:AsyncSession=DbSession):
  _require_worker(request)
  rows=(await db.execute(text("select private.graphytion_recover_audio_generations()"))).scalars().all()
  await db.commit()
- for item in rows:
-  try:await redis_client.xadd(STREAM,{"generation_id":str(item)},maxlen=10000,approximate=True)
-  except Exception:pass
+ # Recovered queued rows are discovered by the worker on its next poll.
  return {"data":{"recovered_jobs":len(rows)}}

@@ -992,7 +992,7 @@ async def list_projects(
             text("""
                 select count(*) from public.video_projects
                 where workspace_id=:workspace and status<>'deleted'
-                  and (:q is null or name ilike '%'||:q||'%')
+                  and (:q is null or name ilike '%'||:q||'%' or coalesce(description,'') ilike '%'||:q||'%')
                   and (:status is null or status=:status)
             """),
             {"workspace": workspace_id, "q": q, "status": status_filter},
@@ -1072,7 +1072,7 @@ async def create_project(
             insert into public.project_settings(project_id, settings)
             values (:id, cast(:settings as jsonb))
         """),
-            {"id": row["id"], "settings": __import__("json").dumps(payload.settings)},
+            {"id": row["id"], "settings": json.dumps(payload.settings)},
         )
         await audit(db, actor, workspace_id, "project.created", "video_project", row["id"], request)
         response_body = {"data": dict(row)}
@@ -1169,7 +1169,7 @@ async def update_project(
                 version=project_settings.version+1,
                 updated_at=now()
             """),
-                {"id": project_id, "settings": __import__("json").dumps(settings)},
+                {"id": project_id, "settings": json.dumps(settings)},
             )
         await audit(
             db, actor, workspace_id, "project.updated", "video_project", project_id, request

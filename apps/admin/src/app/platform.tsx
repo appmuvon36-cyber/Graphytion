@@ -7,7 +7,8 @@ type Page<T> = { data: T[]; page: { number: number; size: number; total?: number
 type User = { id: string; email?: string; email_confirmed_at?: string | null; last_sign_in_at?: string | null; created_at?: string; banned_until?: string | null; profile?: { display_name?: string | null } };
 type Workspace = { id: string; name: string; slug: string; active_members: number; projects: number; owner_user_id: string };
 type Project = { id: string; name: string; workspace_name: string; status: string; production_mode: string };
-type Audit = { id: string; action: string; actor_user_id: string; resource_type: string; resource_id: string; created_at: string };\ntype Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
+type Audit = { id: string; action: string; actor_user_id: string; resource_type: string; resource_id: string; created_at: string };
+type Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
 type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number };
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -24,7 +25,9 @@ export default function PlatformAdmin() {
   const [users, setUsers] = useState<User[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [audit, setAudit] = useState<Audit[]>([]);\n  const [selectedWorkspace, setSelectedWorkspace] = useState('');\n  const [members, setMembers] = useState<Member[]>([]);
+  const [audit, setAudit] = useState<Audit[]>([]);
+  const [selectedWorkspace, setSelectedWorkspace] = useState('');
+  const [members, setMembers] = useState<Member[]>([]);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');

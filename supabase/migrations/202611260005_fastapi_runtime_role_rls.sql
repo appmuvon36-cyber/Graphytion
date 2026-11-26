@@ -56,7 +56,8 @@ $runtime_roles$;
 
 grant authenticated to graphytion_runtime;
 grant graphytion_runtime to graphytion_api;
-grant usage on schema public, private to graphytion_runtime;
+grant usage on schema public, private, auth to graphytion_runtime;
+grant execute on function auth.uid() to graphytion_runtime;
 grant select,insert,update,delete on table
   public.profiles,
   public.workspaces,

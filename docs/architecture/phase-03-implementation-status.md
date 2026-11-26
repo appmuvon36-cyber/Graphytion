@@ -112,3 +112,28 @@ Latest source commits for this continuation:
 - `c5154f57ea9748daa2c536fe7a974caf6723be66` — validate full voiceover idempotency payload.
 
 Phase 03 remains OPEN. This continuation deliberately does not claim runtime completion or end-to-end verification.
+
+
+## Timeline and API integration continuation — 2026-11-27
+
+This continuation implements source-level integration fixes and editor capability completion. No production TTS, render, media, or job transaction was executed.
+
+- Timeline save API now returns the same fresh, short-lived signed asset resolver map used during ownership validation. Customer Studio replaces its preview resolver map with that response after saving, so newly referenced project assets become previewable without storing signed URLs in the immutable snapshot.
+- Shared Remotion TimelineComposition now renders an explicit missing-media placeholder for unresolved media/font references in the interactive preview instead of crashing the Player. Render submission still validates project asset ownership and availability before a worker can claim the job.
+- Customer Studio no longer exposes a storyboard-card render action that reconstructed a separate composition from storyboard scene metadata. The supported render action submits the exact current editor snapshot to `POST /projects/{project_id}/renders`.
+- The compatibility storyboard-render endpoint now requires an explicit `RenderCreate` snapshot body and verifies that the storyboard and its source script are approved. It no longer rebuilds a second composition from scene metadata.
+- Remotion Studio registers only the canonical `GraphytionTimeline` composition. Its Player wrapper accepts `snapshot` and `resolvedAssets` and uses the same `TimelineComposition` component as Customer preview and the Node render worker. The former static title-only demo composition is no longer registered.
+- Timeline Editor now exposes clip-level source trim and playback-rate controls (the prior controls wrote props that were shadowed by clip-level defaults), transition-in/out settings, paired overlapping crossfade creation, crop fit/focal point/scale/normalized region, and keyframe properties for opacity, scale, translation, rotation, and volume.
+- Crop region editor clamps normalized bounds. No schema migration was required; the existing v2 composition contract already defines these fields.
+- API client exposes `put` and multipart `upload` helpers while preserving same-origin BFF, HttpOnly-cookie session, CSRF, and no-browser-bearer-token rules.
+
+Source commits in this continuation:
+- `953d4ad4c3d89a0b81dc6007ae3cf78ba27df2df` — timeline save returns signed resolver map.
+- `82b7d2b66b6896716e9064518b0485ed61587282` — unresolved media placeholder in Remotion preview.
+- `789df3fa1c8215ff816d130ce140914e2b53412e` — Customer Studio uses current editor snapshot and removes divergent storyboard render action.
+- `af4e39a9ed8aeed78e729e73009c12c2f82f8288` — storyboard render API uses caller-supplied immutable snapshot.
+- `7936e2243c17c42524e6b38f3a58c2aefa5aacf6` and `5e7a3702d63e634f6dba0381d96261eb5e701db8` — canonical Remotion composition and Player.
+- `001035c24b441d8d166050ee70a7fd030ab3303d`, `17d4149790860b26b89a1bce3fb439e6f9c2506f`, `c7a63db0ad0e9dacc0e5fe09b1a409f19a8489fc` — timeline editor controls, crop bounds, and crossfade pairing.
+- `2b60120bd114a8a2dad444ab3a3e4941251c8c65` — storyboard render requires explicit snapshot.
+
+Production runtime remains blocked by the dedicated database login/password and API startup validation. Railway logs still show the API deployment failing at `DATABASE_URL` validation, with worker DNS lookups failing while the API has no running replica. No Redis service is provisioned; PostgreSQL polling remains the durable queue fallback. Phase 03 remains OPEN.

@@ -379,8 +379,12 @@ async def update_subtitle_track(
     )
     saved = []
     for item in payload.segments:
-        if item.id:
-            existing = await _get_segment(db, track_id, item.id, lock=True)
+        segment_id = item.id or await db.scalar(
+            text("select id from public.subtitle_segments where track_id=:track and segment_index=:idx"),
+            {"track": track_id, "idx": item.segment_index},
+        )
+        if segment_id:
+            existing = await _get_segment(db, track_id, segment_id, lock=True)
             _validate_segment_values(item.start_ms, item.end_ms, item.word_timings)
             await db.execute(
                 text("""update public.subtitle_segments set segment_index=:idx,start_ms=:start,end_ms=:end,
@@ -394,9 +398,9 @@ async def update_subtitle_track(
                  "alignment": json.dumps(item.alignment_metadata), "audio": item.audio_asset_id,
                  "id": existing["id"]},
             )
-            row = await _get_segment(db, track_id, item.id)
+            row = await _get_segment(db, track_id, segment_id)
             saved.append(_snapshot(row))
-            await _revision(db, track_id, item.id, "updated", _snapshot(row), actor, request)
+            await _revision(db, track_id, segment_id, "updated", _snapshot(row), actor, request)
         else:
             saved.append(await _insert_segment(db, track_id, item, actor, request))
     await _audit(db, workspace, actor, "subtitle_track.updated", track_id, request)

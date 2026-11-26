@@ -699,7 +699,7 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
                            delivery_status,delivery_attempts,sent_at
                     from public.workspace_invitations
                     where workspace_id=:workspace and accepted_at is null
-                      and cancelled_at is null and expires_at>now()
+                      and cancelled_at is null
                     order by created_at desc
                 """),
                 {"workspace": workspace_id},

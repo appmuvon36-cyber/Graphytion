@@ -57,13 +57,13 @@ async def auth_rate_limit(request: Request) -> None:
     expected = settings.bff_shared_secret_value or ""
     supplied = request.headers.get("X-Graphytion-BFF-Secret", "")
     forwarded_ip = request.headers.get("X-Graphytion-Client-IP", "")
-    trusted_bff = bool(
-        expected and supplied and hmac.compare_digest(expected, supplied)
-    )
+    trusted_bff = bool(expected and supplied and hmac.compare_digest(expected, supplied))
     client_ip = (
         forwarded_ip
         if trusted_bff and forwarded_ip and len(forwarded_ip) <= 64
-        else request.client.host if request.client else "unknown"
+        else request.client.host
+        if request.client
+        else "unknown"
     )
     key = f"graphytion:ratelimit:auth:{client_ip}:{request.url.path}"
     try:

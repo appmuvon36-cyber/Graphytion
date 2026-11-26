@@ -128,12 +128,16 @@ class Settings(BaseSettings):
                 "login and a real password"
             )
         database_query = parse_qs(db_url.query)
-        if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != ["require"]:
+        if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != [
+            "require"
+        ]:
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
         if self.supabase_service_role_key_value == self.supabase_anon_key_value:
             raise ValueError("SUPABASE_SERVICE_ROLE_KEY must be distinct from SUPABASE_ANON_KEY")
         if self.supabase_jwt_secret and len(self.supabase_jwt_secret.get_secret_value()) < 32:
-            raise ValueError("SUPABASE_JWT_SECRET must contain at least 32 characters when configured")
+            raise ValueError(
+                "SUPABASE_JWT_SECRET must contain at least 32 characters when configured"
+            )
 
         redis_url = urlparse(self.redis_url_value)
         if redis_url.scheme != "rediss" or not redis_url.hostname:
@@ -160,7 +164,9 @@ class Settings(BaseSettings):
             or "." not in sender_domain
             or sender_domain in {"example.com", "example.org", "localhost"}
         ):
-            raise ValueError("INVITATION_FROM_EMAIL must use a real sender address on the verified domain")
+            raise ValueError(
+                "INVITATION_FROM_EMAIL must use a real sender address on the verified domain"
+            )
         if self.invitation_email_provider.lower() != "resend":
             raise ValueError("Only the configured Resend invitation provider is supported")
         return self

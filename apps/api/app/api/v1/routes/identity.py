@@ -639,6 +639,9 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
 
 
 @router.post(
+    "/workspaces/{workspace_id}/members", status_code=201, dependencies=[Depends(auth_rate_limit)]
+)
+@router.post(
     "/workspaces/{workspace_id}/invitations",
     status_code=201,
     dependencies=[Depends(auth_rate_limit)],
@@ -950,6 +953,7 @@ async def leave_workspace(
     return None
 
 
+@router.get("/projects")
 @router.get("/workspaces/{workspace_id}/projects")
 async def list_projects(
     workspace_id: UUID,
@@ -1009,6 +1013,7 @@ async def list_projects(
     }
 
 
+@router.post("/projects", status_code=201)
 @router.post("/workspaces/{workspace_id}/projects", status_code=201)
 async def create_project(
     workspace_id: UUID,

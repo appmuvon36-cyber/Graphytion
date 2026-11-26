@@ -175,6 +175,30 @@ async def require_permission(
     return role.value
 
 
+async def audit_auth_event(
+    db: AsyncSession,
+    request: Request,
+    action: str,
+    actor: UUID | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    await db.execute(
+        text("""
+            insert into public.audit_logs(
+                actor_user_id, action, resource_type, metadata, request_id
+            )
+            values (:actor,:action,'auth',cast(:metadata as jsonb),:request_id)
+        """),
+        {
+            "actor": actor,
+            "action": action,
+            "metadata": json.dumps(metadata or {}),
+            "request_id": getattr(request.state, "request_id", None),
+        },
+    )
+    await db.commit()
+
+
 async def audit(
     db: AsyncSession,
     actor: UUID,
@@ -278,23 +302,43 @@ async def logout(
 
 
 @router.post("/auth/password", dependencies=[Depends(auth_rate_limit)])
-async def update_password(payload: PasswordUpdate, claims: AuthenticatedClaims):
-    return await supabase_auth.update_password(claims["_access_token"], payload.password)
+async def update_password(
+    payload: PasswordUpdate,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = Db,
+):
+    actor = uid(claims)
+    result = await supabase_auth.update_password(claims["_access_token"], payload.password)
+    await audit_auth_event(db, request, "auth.password.updated", actor)
+    return result
 
 
 @router.post("/auth/recovery", dependencies=[Depends(auth_rate_limit)])
-async def recovery(payload: EmailRequest):
-    return await supabase_auth.recover(payload.email)
+async def recovery(payload: EmailRequest, request: Request, db: AsyncSession = Db):
+    result = await supabase_auth.recover(payload.email)
+    await audit_auth_event(
+        db, request, "auth.recovery.requested", metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()}
+    )
+    return result
 
 
 @router.post("/auth/verify", dependencies=[Depends(auth_rate_limit)])
-async def verify_email(payload: VerifyEmail):
-    return await supabase_auth.verify_email(payload.token_hash, payload.type)
+async def verify_email(payload: VerifyEmail, request: Request, db: AsyncSession = Db):
+    result = await supabase_auth.verify_email(payload.token_hash, payload.type)
+    user = result.get("user") or {}
+    actor = UUID(str(user["id"])) if user.get("id") else None
+    await audit_auth_event(db, request, "auth.email.verified", actor)
+    return result
 
 
 @router.post("/auth/resend-verification", dependencies=[Depends(auth_rate_limit)])
-async def resend_verification(payload: EmailRequest):
-    return await supabase_auth.resend_verification(payload.email)
+async def resend_verification(payload: EmailRequest, request: Request, db: AsyncSession = Db):
+    result = await supabase_auth.resend_verification(payload.email)
+    await audit_auth_event(
+        db, request, "auth.verification.resent", metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()}
+    )
+    return result
 
 
 @router.get("/me")

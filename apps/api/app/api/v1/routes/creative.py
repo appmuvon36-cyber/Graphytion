@@ -344,6 +344,10 @@ async def update_script(
     await _record_version(db, workspace_id=workspace_id, project_id=project_id,
         artifact_type="video_script", artifact_id=script_id, version=version,
         actor=actor, snapshot=snapshot, summary="Script revised")
+    await db.execute(text("""
+        update public.storyboards set status='superseded'
+        where script_id=:script and status in ('draft','approved')
+    """), {"script": script_id})
     await _audit(db, request, actor, workspace_id, "video_script.updated", "video_script", script_id)
     await db.commit()
     return {"data": dict(row), "version": version}
@@ -364,6 +368,29 @@ async def approve_script(
     if row is None:
         raise HTTPException(status_code=404, detail="Script not found")
     await _audit(db, request, actor, workspace_id, "video_script.approved", "video_script", script_id)
+    await db.commit()
+    return {"data": dict(row)}
+
+
+@router.post("/projects/{project_id}/storyboards/{storyboard_id}/approve")
+async def approve_storyboard(
+    project_id: UUID, storyboard_id: UUID, request: Request,
+    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    workspace_id = await _project_scope(db, project_id, actor, "project.update")
+    row = (await db.execute(text("""
+        update public.storyboards set status='approved'
+        where id=:storyboard and project_id=:project and workspace_id=:workspace
+          and exists (
+            select 1 from public.video_scripts s
+            where s.id=public.storyboards.script_id and s.status='approved'
+          )
+        returning *
+    """), {"storyboard": storyboard_id, "project": project_id, "workspace": workspace_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=409, detail="Storyboard or its approved script was not found")
+    await _audit(db, request, actor, workspace_id, "storyboard.approved", "storyboard", storyboard_id)
     await db.commit()
     return {"data": dict(row)}
 
@@ -675,7 +702,7 @@ async def _process_creative_run(
                 join public.video_scripts vs on vs.id=sb.script_id
                 left join public.creative_briefs cb on cb.id=vs.brief_id
                 where sc.id=:scene and sc.project_id=:project and sc.workspace_id=:workspace
-                  and vs.status='approved'
+                  and sb.status <> 'superseded' and vs.status='approved'
             """), {
                 "scene": payload.scene_id, "project": project_id, "workspace": workspace_id,
             })).mappings().first()

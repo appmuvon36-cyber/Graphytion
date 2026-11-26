@@ -154,6 +154,20 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     finally { setBusy(false); }
   }
 
+  async function cancelRun(id: string) {
+    setBusy(true); setError('');
+    try { await call('/creative-runs/' + id + '/cancel', { method: 'POST' }); setNotice('Queued creative run cancelled.'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Creative run cancellation failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function cancelRender(id: string) {
+    setBusy(true); setError('');
+    try { await call('/renders/' + id + '/cancel', { method: 'POST' }); setNotice('Queued render cancelled.'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Render cancellation failed'); }
+    finally { setBusy(false); }
+  }
+
   async function downloadRender(id: string) {
     setError('');
     try {
@@ -226,12 +240,12 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     </section>
     <section style={panel}>
       <h2 style={{marginTop:0}}>04 · Creative runs</h2>
-      {runs.map(run=><div key={run.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5'}}><strong>{run.current_stage || 'Creative pipeline'} · {run.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {run.progress_percent ?? 0}% · {run.error_code || run.id}</p></div>)}
+      {runs.map(run=><div key={run.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{run.current_stage || 'Creative pipeline'} · {run.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {run.progress_percent ?? 0}% · {run.error_code || run.id}</p></div>{run.status==='queued'&&<button type="button" disabled={busy} onClick={()=>void cancelRun(run.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div>)}
       {runs.length===0&&<p style={{color:'#68788e'}}>Belum ada creative run.</p>}
     </section>
     <section style={panel}>
       <h2 style={{marginTop:0}}>05 · Render jobs</h2>
-      {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download MP4</button>}</div>)}
+      {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div><div style={{display:'flex',gap:7}}>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download MP4</button>}{render.status==='queued'&&<button type="button" disabled={busy} onClick={()=>void cancelRender(render.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div></div>)}
       {renders.length===0&&<p style={{color:'#68788e'}}>Belum ada render job.</p>}
     </section>
     <p style={{fontSize:12,color:'#68788e'}}>AI generation berjalan melalui FastAPI Model Router dengan structured output, prompt version, dan persisted run lifecycle. Jika provider adapter belum diregistrasikan pada runtime, API mengembalikan status unavailable dan tidak membuat hasil AI palsu.</p>

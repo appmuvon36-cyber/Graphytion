@@ -18,6 +18,7 @@ type RenderSettings={max_concurrent_jobs:number;lease_seconds:number;max_attempt
 type MotionControl={component_key:string;component_version:string;category:string;enabled:boolean;reason?:string|null};
 type AdminRenderJob={id:string;project_name:string;workspace_name:string;status:string;progress_percent:number;worker_id?:string|null;lease_expires_at?:string|null;render_profile?:string|null;attempt_count:number;latest_attempt_status?:string|null};
 type AdminMediaJob={id:string;project_name:string;workspace_name:string;status:string;provider_key:string;model_key:string;voice_key:string;worker_id?:string|null;lease_expires_at?:string|null;attempt_count:number;max_attempts:number;error_code?:string|null;asset_id?:string|null};
+type WorkerStatus={worker_id:string;worker_type:'media'|'render';hostname:string;version?:string|null;status:string;runtime_status:'online'|'stale';last_seen_at:string;metadata?:Record<string,unknown>};
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
 const input: React.CSSProperties = { width: '100%', padding: 10, border: '1px solid #dce3ed', borderRadius: 8 };
@@ -36,6 +37,7 @@ export default function PlatformAdmin() {
   const [motionComponents,setMotionComponents]=useState<MotionControl[]>([]);
   const [adminRenderJobs,setAdminRenderJobs]=useState<AdminRenderJob[]>([]);
   const [adminMediaJobs,setAdminMediaJobs]=useState<AdminMediaJob[]>([]);
+  const [workers,setWorkers]=useState<WorkerStatus[]>([]);
   const [profileDraft,setProfileDraft]=useState({profile_key:'custom-1080p',name:'Custom 1080p',width:1920,height:1080,fps:30,container:'mp4',video_codec:'h264',video_crf:20,audio_codec:'aac',render_concurrency:2,priority:20,is_default:false});
   const [editingProfileId,setEditingProfileId]=useState<string|null>(null);
   const [users, setUsers] = useState<User[]>([]);
@@ -67,7 +69,7 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj] = await Promise.all([
+      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj, wk] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
@@ -81,8 +83,9 @@ export default function PlatformAdmin() {
         request<{data:MotionControl[]}>('/admin/motion-components'),
         request<Page<AdminRenderJob>>('/admin/render-jobs?page=1&per_page=50'),
         request<Page<AdminMediaJob>>('/admin/media-jobs?page=1&per_page=50'),
+        request<{data:WorkerStatus[]}>('/admin/workers'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -326,6 +329,15 @@ export default function PlatformAdmin() {
         {renderProfiles.map(profile=><div key={profile.id} style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center',flexWrap:'wrap',padding:'9px 0',borderTop:'1px solid #edf0f5'}}>
           <div><strong>{profile.name} · v{profile.version}</strong><div style={{fontSize:12,color:'#68788e'}}>{profile.profile_key} · {profile.width}×{profile.height} · {profile.fps} FPS · {profile.container}/{profile.video_codec} · CRF {profile.video_crf} · {profile.audio_codec} · priority {profile.priority}{profile.is_default?' · default':''}</div></div>
           <button disabled={busy||profile.is_archived} onClick={()=>editRenderProfile(profile)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Edit version</button><button disabled={busy||profile.is_archived} onClick={()=>void archiveRenderProfile(profile)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Archive</button>
+        </div>)}
+      </section>
+      <section style={panel}>
+        <h2>Worker runtime health</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>Heartbeat is recorded through FastAPI and PostgreSQL. A worker is considered stale after 90 seconds without a heartbeat.</p>
+        {workers.length===0&&<p style={{fontSize:12,color:'#68788e'}}>No worker heartbeat has been recorded yet.</p>}
+        {workers.map(worker=><div key={worker.worker_id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'9px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}>
+          <div><strong>{worker.worker_type==='render'?'Remotion Render Worker':'Media Worker'} · {worker.runtime_status}</strong><div style={{fontSize:12,color:'#68788e'}}>{worker.worker_id} · {worker.hostname} · {worker.version||'version unavailable'}</div></div>
+          <div style={{fontSize:12,color:'#68788e'}}>Last heartbeat {new Date(worker.last_seen_at).toLocaleString()}</div>
         </div>)}
       </section>
             <section style={panel}>

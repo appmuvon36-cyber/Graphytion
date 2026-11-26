@@ -30,6 +30,16 @@ async def _require_platform_admin(db: AsyncSession, actor: UUID) -> None:
         raise HTTPException(status_code=403, detail="Platform administrator access required")
 
 
+async def _require_super_admin(db: AsyncSession, actor: UUID) -> None:
+    await set_rls_subject(db, str(actor))
+    role = await db.scalar(text("""
+        select role from public.platform_admins
+        where user_id=:actor and status='active'
+    """), {"actor": actor})
+    if role != "super_admin":
+        raise HTTPException(status_code=403, detail="Super administrator access required")
+
+
 async def _audit(
     db: AsyncSession, request: Request, actor: UUID, action: str,
     resource_type: str, resource_id: UUID, metadata: dict[str, Any] | None = None,
@@ -372,3 +382,82 @@ async def platform_update_project_status(
                  "project", project_id, {"from": row["status"], "to": payload.status, "reason": payload.reason})
     await db.commit()
     return {"data": {"project_id": str(project_id), "status": payload.status}}
+
+
+class PlatformAdminGrant(BaseModel):
+    user_id: UUID
+    role: str = Field(pattern=r"^(super_admin|support_admin|operations_admin)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.get("/platform-admins")
+async def list_platform_admins(
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select user_id,role,status,granted_by,granted_at,revoked_at,reason
+        from public.platform_admins order by granted_at desc
+    """))).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
+@router.post("/platform-admins", status_code=201)
+async def grant_platform_admin(
+    payload: PlatformAdminGrant,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_super_admin(db, actor)
+    exists = await db.scalar(text("select 1 from public.profiles where id=:user"), {"user": payload.user_id})
+    if not exists:
+        raise HTTPException(status_code=404, detail="User profile not found")
+    row = (await db.execute(text("""
+        insert into public.platform_admins(user_id,role,status,granted_by,granted_at,revoked_at,reason)
+        values (:user,:role,'active',:actor,now(),null,:reason)
+        on conflict (user_id) do update set role=excluded.role,status='active',
+          granted_by=excluded.granted_by,granted_at=now(),revoked_at=null,reason=excluded.reason
+        returning user_id,role,status,granted_at
+    """), {
+        "user": payload.user_id, "role": payload.role, "actor": actor, "reason": payload.reason,
+    })).mappings().one()
+    await _audit(db, request, actor, "platform.admin.granted", "platform_admin",
+                 payload.user_id, {"role": payload.role, "reason": payload.reason})
+    await db.commit()
+    return {"data": dict(row)}
+
+
+@router.delete("/platform-admins/{user_id}", status_code=204)
+async def revoke_platform_admin(
+    user_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_super_admin(db, actor)
+    if user_id == actor:
+        raise HTTPException(status_code=409, detail="Super administrator cannot revoke their own access")
+    target = (await db.execute(text("""
+        select role,status from public.platform_admins where user_id=:user for update
+    """), {"user": user_id})).mappings().first()
+    if target is None or target["status"] != "active":
+        raise HTTPException(status_code=404, detail="Active platform administrator not found")
+    if target["role"] == "super_admin":
+        count = await db.scalar(text("""
+            select count(*) from public.platform_admins
+            where role='super_admin' and status='active'
+        """))
+        if count <= 1:
+            raise HTTPException(status_code=409, detail="The last active super administrator cannot be revoked")
+    await db.execute(text("""
+        update public.platform_admins set status='revoked',revoked_at=now()
+        where user_id=:user
+    """), {"user": user_id})
+    await _audit(db, request, actor, "platform.admin.revoked", "platform_admin", user_id)
+    await db.commit()
+    return None

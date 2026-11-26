@@ -8,5 +8,7 @@ api_router.include_router(identity.router, tags=["identity", "workspace", "proje
 api_router.include_router(
     creative.router, tags=["creative production", "briefs", "scripts", "storyboards"]
 )
+api_router.include_router(platform_admin.router, prefix="/admin", tags=["platform administration"])
+api_router.include_router(render.router, tags=["render jobs", "render workers"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])

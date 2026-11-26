@@ -1,2 +1,2 @@
-import ControlPlane from './control';
-export default function AdminHome(){return <ControlPlane />;}
+import PlatformAdmin from './platform';
+export default function AdminHome(){return <PlatformAdmin />;}

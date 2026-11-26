@@ -8,11 +8,10 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
 const redisUrl = process.env.REDIS_URL;
-const apiBaseUrl = process.env.GRAPHYTION_API_BASE_URL;
+const apiBaseUrl = process.env.GRAPHYTION_API_BASE_URL ?? (() => { throw new Error('GRAPHYTION_API_BASE_URL is required'); })();
 const workerToken = process.env.INTERNAL_WORKER_TOKEN;
 const serveUrl = process.env.REMOTION_SERVE_URL ?? '/workspace/apps/remotion-studio/build';
 if (!redisUrl) throw new Error('REDIS_URL is required');
-if (!apiBaseUrl) throw new Error('GRAPHYTION_API_BASE_URL is required');
 if (!workerToken) throw new Error('INTERNAL_WORKER_TOKEN is required');
 const execFile = promisify(execFileCallback);
 const renderConcurrency = Number(process.env.REMOTION_RENDER_CONCURRENCY ?? 2);
@@ -108,9 +107,9 @@ async function processJob(jobId?: string): Promise<boolean> {
       concurrency: claimed.render_config.concurrency ?? renderConcurrency,
       crf: claimed.render_config.video_crf ?? renderCrf,
       ...(claimed.render_config.video_bitrate ? {videoBitrate:claimed.render_config.video_bitrate} : {}),
-      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' ? {audioCodec:claimed.render_config.audio_codec} : {}),
-      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' && claimed.render_config.audio_bitrate ? {audioBitrate:claimed.render_config.audio_bitrate} : {}),
-      x264Preset,
+      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' ? {audioCodec:claimed.render_config.audio_codec as 'aac'|'opus'} : {}),
+      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' && claimed.render_config.audio_bitrate ? {audioBitrate:claimed.render_config.audio_bitrate as any} : {}),
+      x264Preset: x264Preset as 'ultrafast'|'superfast'|'veryfast'|'faster'|'fast'|'medium'|'slow'|'slower'|'veryslow',
       pixelFormat: 'yuv420p',
       browserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE,
       timeoutInMilliseconds: 60000,
@@ -192,7 +191,7 @@ async function main() {
       const batches = await client.xReadGroup(group, workerId, [{key: stream, id: '>'}], {
         COUNT: 1,
         BLOCK: 5000,
-      });
+      }) as Array<{name:string;messages:Array<{id:string;message:Record<string,string>}>}> | null;
       for (const batch of batches ?? []) {
         for (const message of batch.messages) {
           const jobId = message.message.render_job_id;

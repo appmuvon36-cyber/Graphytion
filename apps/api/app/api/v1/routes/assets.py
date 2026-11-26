@@ -49,6 +49,8 @@ async def _project_workspace(db: AsyncSession, project_id: UUID, actor: UUID, pe
 def _sanitize_svg(data: bytes) -> bytes:
     if len(data) > MAX_ASSET_BYTES:
         raise HTTPException(status_code=413, detail="SVG exceeds the asset size limit")
+    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+        raise HTTPException(status_code=415, detail="SVG DTD and entity declarations are not allowed")
     try:
         root = ET.fromstring(data.decode("utf-8"))
     except (UnicodeDecodeError, ET.ParseError) as exc:

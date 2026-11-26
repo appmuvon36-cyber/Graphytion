@@ -406,7 +406,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     </section>
     {previewSnapshot && <section style={panel}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:12}}>
-        <div><h2 style={{margin:'0 0 4px'}}>Remotion Player Preview</h2><p style={{fontSize:12,color:'#68788e',margin:0}}>Storyboard {previewStoryboardId} · {previewSnapshot.width}×{previewSnapshot.height} · {previewSnapshot.fps} FPS · {Math.ceil(previewSnapshot.durationFrames/previewSnapshot.fps)}s · {previewSnapshot.contentHash.slice(0,12)}</p></div>
+        <div><h2 style={{margin:'0 0 4px'}}>Remotion Player Preview</h2><p style={{fontSize:12,color:'#68788e',margin:0}}>Storyboard {previewStoryboardId} · {previewSnapshot.width}×{previewSnapshot.height} · {previewSnapshot.fps} FPS · {Math.ceil(previewSnapshot.durationFrames/previewSnapshot.fps)}s · {(previewSnapshot.contentHash??'pending hash').slice(0,12)}</p></div>
         <button type="button" onClick={()=>{setPreviewSnapshot(null);setPreviewResolvedAssets({});setPreviewStoryboardId('');setTimelineDirty(false);}} style={{...button,background:'#edf3f9',color:'#173f72'}}>Close preview</button>
       </div>
       <TimelineEditor snapshot={previewSnapshot} resolvedAssets={previewResolvedAssets} assets={assets} savedVersion={timelineVersion} saving={timelineSaving} onChange={next=>{setPreviewSnapshot(next);setTimelineDirty(true);}} onSave={()=>void saveTimelineVersion()}/>

@@ -13,26 +13,28 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  if(enter&&enter.durationFrames>0&&frame<enter.durationFrames){
   const p=interpolate(frame,[0,enter.durationFrames],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
   if(enter.type==='fade'||enter.type==='dissolve')opacity*=p;
-  if(enter.type==='wipe')clipPath=enter.direction==='right'?'inset(0 0 0 0)':\`inset(0 \${(1-p)*100}% 0 0)\`;
-  if(enter.type==='slide')transform=enter.direction==='right'?\`translateX(\${(1-p)*100}%)\`:enter.direction==='up'?\`translateY(\${(1-p)*100}%)\`: \`translateX(\${-(1-p)*100}%)\`;
-  if(enter.type==='zoom')transform=\`scale(\${.8+.2*p})\`;
+  if(enter.type==='wipe')clipPath=enter.direction==='right'?'inset(0 0 0 0)':`inset(0 ${(1-p)*100}% 0 0)`;
+  if(enter.type==='slide')transform=enter.direction==='right'?`translateX(${(1-p)*100}%)`:enter.direction==='up'?`translateY(${(1-p)*100}%)`: `translateX(${-(1-p)*100}%)`;
+  if(enter.type==='zoom')transform=`scale(${.8+.2*p})`;
  }
  const leave=clip.transitionOut;const leaveStart=clip.durationFrames-(leave?.durationFrames??0);
  if(leave&&leave.durationFrames>0&&frame>=leaveStart){
   const p=interpolate(frame,[leaveStart,clip.durationFrames],[1,0],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
   if(leave.type==='fade'||leave.type==='dissolve')opacity*=p;
-  if(leave.type==='wipe')clipPath=leave.direction==='right'?\`inset(0 \${(1-p)*100}% 0 0)\`:'inset(0 0 0 0)';
-  if(leave.type==='slide')transform=leave.direction==='right'?\`translateX(\${(1-p)*100}%)\`:leave.direction==='up'?\`translateY(\${-(1-p)*100}%)\`: \`translateX(\${-(1-p)*100}%)\`;
-  if(leave.type==='zoom')transform=\`scale(\${.8+.2*p})\`;
+  if(leave.type==='wipe')clipPath=leave.direction==='right'?`inset(0 ${(1-p)*100}% 0 0)`:'inset(0 0 0 0)';
+  if(leave.type==='slide')transform=leave.direction==='right'?`translateX(${(1-p)*100}%)`:leave.direction==='up'?`translateY(${-(1-p)*100}%)`: `translateX(${-(1-p)*100}%)`;
+  if(leave.type==='zoom')transform=`scale(${.8+.2*p})`;
  }
  const keyframes=clip.keyframes??{};
  const keyValue=(name:string,fallback:number)=>{
   const points=keyframes[name]??[];if(!points.length)return fallback;
-  return interpolate(frame,points.map((p:any)=>p.frame),points.map((p:any)=>Number(p.value)),{extrapolateLeft:'clamp',extrapolateRight:'clamp',easing:Easing.inOut(Easing.ease)});
+  const easing=String(points[0].easing??'ease-in-out');
+  const easingMap:Record<string,(value:number)=>number>={linear:Easing.linear,'ease-in':Easing.in(Easing.ease),'ease-out':Easing.out(Easing.ease),'ease-in-out':Easing.inOut(Easing.ease)};
+  return interpolate(frame,points.map((p:any)=>p.frame),points.map((p:any)=>Number(p.value)),{extrapolateLeft:'clamp',extrapolateRight:'clamp',easing:easingMap[easing]??Easing.inOut(Easing.ease)});
  };
  opacity*=keyValue('opacity',1);
  const scale=keyValue('scale',1),translateX=keyValue('translateX',0),translateY=keyValue('translateY',0),rotate=keyValue('rotate',0);
- transform=\`translate(\${translateX}px,\${translateY}px) rotate(\${rotate}deg) scale(\${scale}) \${transform}\`;
+ transform=`translate(${translateX}px,${translateY}px) rotate(${rotate}deg) scale(${scale}) ${transform}`;
  const clipVolume=Math.max(0,Math.min(1,Number(clip.props.volume??1)*track.volume*keyValue('volume',1)));
  const props={...clip.props,durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
  const Component=definition.component;

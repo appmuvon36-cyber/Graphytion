@@ -23,7 +23,7 @@ const ShapeLayer:React.FC<Props>=({shape='rectangle',fill='#1769C2',stroke='none
 const TextLayer:React.FC<Props>=({text,fontFamily='Arial',fontSize=64,fontWeight=600,color='#ffffff',align='center',letterSpacing=0,lineHeight=1.2,animation='none',fontUrl,fontAssetId})=>{
  const f=useCurrentFrame();const family=fontAssetId?'GraphytionFont_'+String(fontAssetId).replace(/-/g,''):fontFamily;
  const [handle]=useState(()=>fontUrl?delayRender('Loading font asset'):null);
- useEffect(()=>{if(!fontUrl||handle===null)return;const face=new FontFace(family,`url("${fontUrl}")`);face.load().then(face=>{document.fonts.add(face);continueRender(handle);}).catch(error=>cancelRender(handle,error));},[fontUrl,family,handle]);
+ useEffect(()=>{if(!fontUrl||handle===null)return;const face=new FontFace(family,`url("${fontUrl}")`);face.load().then(face=>{document.fonts.add(face);continueRender(handle);}).catch(error=>cancelRender(error));},[fontUrl,family,handle]);
  const opacity=animation==='fade'?interpolate(f,[0,16],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'}):1;
  const y=animation==='slide'?interpolate(f,[0,18],[36,0],{extrapolateLeft:'clamp',extrapolateRight:'clamp'}):0;
  return <AbsoluteFill style={{alignItems:align==='left'?'flex-start':align==='right'?'flex-end':'center',justifyContent:'center',padding:40,color,fontFamily:family,fontSize,fontWeight,textAlign:align,letterSpacing,lineHeight,opacity,transform:`translateY(${y}px)`}}>{text}</AbsoluteFill>;

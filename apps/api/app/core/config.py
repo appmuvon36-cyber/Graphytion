@@ -142,8 +142,12 @@ class Settings(BaseSettings):
             and db_url.port in (None, 5432)
         )
         pooler_database = (
-            db_url.host == "aws-0-ap-northeast-1.pooler.supabase.com"
-            and db_url.username == "graphytion_api.xtjwmezfzexvupbfsdqt"
+            bool(db_url.host)
+            and db_url.host.endswith(".pooler.supabase.com")
+            and db_url.username in {
+                "graphytion_api",
+                "graphytion_api.xtjwmezfzexvupbfsdqt",
+            }
             and db_url.port in (5432, 6543)
         )
         if db_url.drivername != "postgresql+asyncpg":

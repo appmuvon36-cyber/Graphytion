@@ -9,18 +9,19 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  if(clip.componentVersion!==definition.version)throw new Error(`Unsupported schema version for ${clip.componentKey}`);
  if(!definition.validate(clip.props))throw new Error(`Invalid props for allowlisted component ${clip.componentKey}`);
  let opacity=1,transform='none',clipPath='inset(0 0 0 0)';
- const easingFor=(value?:string)=>value==='linear'?Easing.linear:value==='ease-in'?Easing.in(Easing.ease):value==='ease-out'?Easing.out(Easing.ease):Easing.inOut(Easing.ease);\n const enter=clip.transitionIn;
+ const easingFor=(value?:string)=>value==='linear'?Easing.linear:value==='ease-in'?Easing.in(Easing.ease):value==='ease-out'?Easing.out(Easing.ease):Easing.inOut(Easing.ease);
+ const enter=clip.transitionIn;
  if(enter&&enter.durationFrames>0&&frame<enter.durationFrames){
-  const p=interpolate(frame,[0,enter.durationFrames],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
-  if(enter.type==='fade'||enter.type==='dissolve')opacity*=p;
+  const p=interpolate(frame,[0,enter.durationFrames],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp',easing:easingFor(enter.easing)});
+  if(enter.type==='fade'||enter.type==='dissolve'||enter.type==='crossfade')opacity*=p;
   if(enter.type==='wipe')clipPath=enter.direction==='right'?'inset(0 0 0 0)':`inset(0 ${(1-p)*100}% 0 0)`;
   if(enter.type==='slide')transform=enter.direction==='right'?`translateX(${(1-p)*100}%)`:enter.direction==='up'?`translateY(${(1-p)*100}%)`: `translateX(${-(1-p)*100}%)`;
   if(enter.type==='zoom')transform=`scale(${.8+.2*p})`;
  }
  const leave=clip.transitionOut;const leaveStart=clip.durationFrames-(leave?.durationFrames??0);
  if(leave&&leave.durationFrames>0&&frame>=leaveStart){
-  const p=interpolate(frame,[leaveStart,clip.durationFrames],[1,0],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
-  if(leave.type==='fade'||leave.type==='dissolve')opacity*=p;
+  const p=interpolate(frame,[leaveStart,clip.durationFrames],[1,0],{extrapolateLeft:'clamp',extrapolateRight:'clamp',easing:easingFor(leave.easing)});
+  if(leave.type==='fade'||leave.type==='dissolve'||leave.type==='crossfade')opacity*=p;
   if(leave.type==='wipe')clipPath=leave.direction==='right'?`inset(0 ${(1-p)*100}% 0 0)`:'inset(0 0 0 0)';
   if(leave.type==='slide')transform=leave.direction==='right'?`translateX(${(1-p)*100}%)`:leave.direction==='up'?`translateY(${-(1-p)*100}%)`: `translateX(${-(1-p)*100}%)`;
   if(leave.type==='zoom')transform=`scale(${.8+.2*p})`;

@@ -1,1 +1,2 @@
-export default function AdminHome() { return <main style={{maxWidth:1080,margin:'0 auto',padding:'64px 24px'}}><p style={{color:'#526782',fontWeight:700,letterSpacing:'.12em',fontSize:12}}>GRAPHYTION CONTROL PLANE</p><h1>Administration foundation</h1><p style={{color:'#66758a',maxWidth:600,lineHeight:1.7}}>Operational modules will be connected to persisted services in their implementation phases. No simulated metrics are displayed.</p></main>; }
+import ControlPlane from './control';
+export default function AdminHome(){return <ControlPlane />;}

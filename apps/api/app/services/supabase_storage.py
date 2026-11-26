@@ -29,12 +29,13 @@ class SupabaseStorage:
     async def upload(
         self, *, bucket: str, object_path: str, content: bytes, content_type: str,
         upsert: bool = False,
+        timeout_seconds: int = 60,
     ) -> None:
         base_url = settings.supabase_url.rstrip("/")
         bucket_segment = quote(bucket, safe="")
         object_segment = quote(object_path, safe="/")
         url = f"{base_url}/storage/v1/object/{bucket_segment}/{object_segment}"
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(float(timeout_seconds), connect=15.0)) as client:
             response = await client.post(
                 url,
                 headers={**self._headers(), "Content-Type": content_type, "x-upsert": "true" if upsert else "false"},

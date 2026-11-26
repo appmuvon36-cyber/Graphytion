@@ -21,7 +21,7 @@ def verify_access_token(token: str) -> dict[str, Any]:
         if algorithm == "HS256" and settings.supabase_jwt_secret:
             claims = jwt.decode(
                 token,
-                settings.supabase_jwt_secret,
+                settings.supabase_jwt_secret.get_secret_value(),
                 algorithms=["HS256"],
                 issuer=settings.supabase_jwt_issuer,
                 audience="authenticated",

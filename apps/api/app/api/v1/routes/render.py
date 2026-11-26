@@ -43,6 +43,14 @@ class RenderFailure(BaseModel):
     retryable: bool = False
 
 
+class WorkerHeartbeat(BaseModel):
+    worker_id: str = Field(min_length=1, max_length=128)
+    worker_type: str = Field(pattern=r"^(media|render)$")
+    hostname: str = Field(min_length=1, max_length=255)
+    version: str | None = Field(default=None, max_length=128)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 def _actor(claims: dict[str, Any]) -> UUID:
     try:
         return UUID(str(claims["sub"]))
@@ -209,6 +217,30 @@ async def list_render_sidecar_artifacts(
             ),
         })
     return {"data": artifacts}
+
+
+@router.post("/internal/workers/heartbeat")
+async def internal_worker_heartbeat(
+    payload: WorkerHeartbeat,
+    request: Request,
+    db: AsyncSession = DbSession,
+):
+    _require_worker(request)
+    row = (await db.execute(text("""
+        select * from private.graphytion_upsert_worker_heartbeat(
+            :worker_id,:worker_type,:hostname,:version,cast(:metadata as jsonb)
+        )
+    """), {
+        "worker_id": payload.worker_id,
+        "worker_type": payload.worker_type,
+        "hostname": payload.hostname,
+        "version": payload.version,
+        "metadata": json.dumps(payload.metadata),
+    })).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=503, detail="Worker heartbeat was not persisted")
+    await db.commit()
+    return {"data": dict(row)}
 
 
 @router.post("/internal/render-jobs/recover")

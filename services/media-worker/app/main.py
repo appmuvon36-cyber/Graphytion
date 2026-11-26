@@ -96,6 +96,7 @@ class Worker:
                 voice=job["voice_key"],
                 model=job.get("model_key") or model_default,
                 language=job.get("language") or "id-ID",
+                style=(job.get("generation_config") or {}).get("style"),
             )
             try:
                 alignment = await provider.align_words(audio=audio)

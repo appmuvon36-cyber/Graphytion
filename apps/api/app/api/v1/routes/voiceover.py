@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.database import set_rls_subject
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
+from app.services.queue_notifications import notify_worker
 
 router=APIRouter();permissions=WorkspacePermissionResolver()
 BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
@@ -58,7 +59,8 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
   return {"data":{"voiceover_id":str(old["id"]),"status":old["status"],"replayed":True}}
  await db.execute(text("insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata) values(:actor,:workspace,'voiceover.requested','audio_generation',:id,:request,cast(:metadata as jsonb))"),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"status":status})})
  await db.commit()
- # The committed audio_generations row is polled directly by the media worker.
+ await notify_worker("media", str(row["id"]))
+ # PostgreSQL remains durable; Redis only wakes an idle media worker.
  return {"data":{"voiceover_id":str(row["id"]),"status":status}}
 @router.get("/projects/{project_id}/voiceovers")
 async def list_voiceovers(project_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):

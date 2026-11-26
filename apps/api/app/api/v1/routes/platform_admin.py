@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,7 @@ async def _audit(
         ) values (:actor,:action,:resource_type,:resource_id,cast(:metadata as jsonb),:request_id)
     """), {
         "actor": actor, "action": action, "resource_type": resource_type,
-        "resource_id": resource_id, "metadata": __import__("json").dumps(metadata or {}),
+        "resource_id": resource_id, "metadata": json.dumps(metadata or {}),
         "request_id": getattr(request.state, "request_id", None),
     })
 

@@ -142,6 +142,42 @@ returns uuid language sql stable security definer set search_path = public as $
   select w.owner_user_id from public.workspaces w where w.id=target_workspace
 $;
 
+
+-- Tenant and identity keys are immutable after resource creation. All writes
+-- are mediated by FastAPI; these triggers also protect against accidental
+-- direct authenticated SQL updates that might otherwise cross tenant scope.
+create or replace function public.graphytion_protect_membership_identity()
+returns trigger language plpgsql set search_path = public as $
+begin
+  if new.workspace_id <> old.workspace_id or new.user_id <> old.user_id then
+    raise exception 'workspace membership identity is immutable' using errcode = '42501';
+  end if;
+  if old.role = 'owner' and new.role <> 'owner' then
+    raise exception 'workspace ownership must be transferred explicitly' using errcode = '42501';
+  end if;
+  if new.role = 'owner' and old.role <> 'owner' then
+    raise exception 'workspace ownership must be transferred explicitly' using errcode = '42501';
+  end if;
+  return new;
+end $;
+drop trigger if exists workspace_members_protect_identity on public.workspace_members;
+create trigger workspace_members_protect_identity
+before update on public.workspace_members
+for each row execute function public.graphytion_protect_membership_identity();
+
+create or replace function public.graphytion_protect_project_tenant()
+returns trigger language plpgsql set search_path = public as $
+begin
+  if new.workspace_id <> old.workspace_id or new.created_by <> old.created_by then
+    raise exception 'project tenant and creator are immutable' using errcode = '42501';
+  end if;
+  return new;
+end $;
+drop trigger if exists video_projects_protect_tenant on public.video_projects;
+create trigger video_projects_protect_tenant
+before update on public.video_projects
+for each row execute function public.graphytion_protect_project_tenant();
+
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
@@ -167,37 +203,19 @@ with check (public.graphytion_workspace_role(id) in ('owner','admin') and owner_
 drop policy if exists workspace_members_select_member on public.workspace_members;
 create policy workspace_members_select_member on public.workspace_members for select to authenticated
 using (public.graphytion_is_workspace_member(workspace_id));
-drop policy if exists workspace_members_manage_admin on public.workspace_members;
-create policy workspace_members_manage_admin on public.workspace_members for all to authenticated
-using (role <> 'owner' and public.graphytion_workspace_role(workspace_id) in ('owner','admin'))
-with check (role <> 'owner' and public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
+-- Membership mutations are server-only. No authenticated direct-write policy is granted.
 
-drop policy if exists workspace_invitations_admin on public.workspace_invitations;
-create policy workspace_invitations_admin on public.workspace_invitations for all to authenticated
-using (public.graphytion_workspace_role(workspace_id) in ('owner','admin'))
-with check (public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
+-- Invitation mutations are server-only; FastAPI enforces the invitation lifecycle.
 
 drop policy if exists video_projects_member_select on public.video_projects;
 create policy video_projects_member_select on public.video_projects for select to authenticated
 using (public.graphytion_is_workspace_member(workspace_id) and status <> 'deleted');
-drop policy if exists video_projects_editor_insert on public.video_projects;
-create policy video_projects_editor_insert on public.video_projects for insert to authenticated
-with check (created_by = auth.uid() and public.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member'));
-drop policy if exists video_projects_editor_update on public.video_projects;
-create policy video_projects_editor_update on public.video_projects for update to authenticated
-using (public.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member'))
-with check (public.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member'));
-drop policy if exists video_projects_admin_delete on public.video_projects;
-create policy video_projects_admin_delete on public.video_projects for delete to authenticated
-using (public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
+-- Project mutations are server-only; API permission checks remain authoritative.
 
 drop policy if exists project_settings_member_select on public.project_settings;
 create policy project_settings_member_select on public.project_settings for select to authenticated
 using (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_is_workspace_member(p.workspace_id)));
-drop policy if exists project_settings_editor_write on public.project_settings;
-create policy project_settings_editor_write on public.project_settings for all to authenticated
-using (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_workspace_role(p.workspace_id) in ('owner','admin','editor','member')))
-with check (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_workspace_role(p.workspace_id) in ('owner','admin','editor','member')));
+-- Project settings mutations are server-only.
 
 drop policy if exists audit_logs_workspace_read on public.audit_logs;
 create policy audit_logs_workspace_read on public.audit_logs for select to authenticated

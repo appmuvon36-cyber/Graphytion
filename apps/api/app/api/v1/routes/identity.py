@@ -953,7 +953,7 @@ async def list_projects(
                 text(f"""
       select * from public.video_projects
       where workspace_id=:workspace and status<>'deleted'
-        and (:q is null or name ilike '%'||:q||'%')
+        and (:q is null or name ilike '%'||:q||'%' or coalesce(description,'') ilike '%'||:q||'%')
         and (:status is null or status=:status)
       order by {sort} {direction} limit :limit offset :offset
     """),

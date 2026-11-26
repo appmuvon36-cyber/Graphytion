@@ -45,8 +45,9 @@ Do not configure `NEXT_PUBLIC_API_BASE_URL` to point at FastAPI. Browser request
 
 Migration `202611260005_fastapi_runtime_role_rls.sql` creates:
 
-- `graphytion_runtime`: non-login privilege group, inherits the Supabase `authenticated` role and has no superuser, database-creation, role-creation, schema-create or RLS-bypass privileges.
-- `graphytion_api`: non-login database identity, member of `graphytion_runtime`.
+- `graphytion_runtime`: explicitly NOLOGIN privilege group, inherits the Supabase `authenticated` role and has no superuser, database-creation, role-creation, schema-create or RLS-bypass privileges.
+- `graphytion_api`: explicitly NOLOGIN database identity, member of `graphytion_runtime`.
+- Runtime table grants are limited to the columns/operations required by FastAPI. Legacy `service_role` access to public business tables is revoked; its key remains server-side for the private Storage adapter only.
 
 After the migration is explicitly approved and applied, the project owner must set a strong password and enable login out-of-band in the Supabase SQL editor/secret manager:
 
@@ -85,6 +86,7 @@ No message is considered delivered merely because the API request succeeded.
 - Access and refresh tokens are stored only in host-only HttpOnly cookies.
 - Production cookies use Secure, SameSite=Lax and Path=/; no Domain attribute is set.
 - CSRF token is a separate non-HttpOnly random cookie, sent in `X-CSRF-Token`; unsafe requests also require an exact Origin match.
+- Browser API client cannot attach bearer tokens; the BFF alone reads HttpOnly cookies and injects Authorization for the FastAPI upstream. Auth callback responses are `no-store` and `no-referrer`.
 - Refresh is server-side and uses the HttpOnly refresh cookie. Logout attempts to revoke the current session before clearing cookies.
 - The shared BFF secret protects signup, login, refresh and verification token-exchange endpoints from direct browser calls.
 - Configure the exact APP_PUBLIC_URL for each Next.js deployment. Do not share cookies across customer/admin hosts.
@@ -94,7 +96,7 @@ No message is considered delivered merely because the API request succeeded.
 FastAPI exposes:
 
 - `GET /api/v1/health` — liveness only.
-- `GET /api/v1/ready` — independent database, Redis, Supabase Auth and Storage checks; returns 503 if any dependency is unavailable.
+- `GET /api/v1/ready` — independent database, Redis, Supabase Auth, JWT/JWKS signing-key and Storage checks; returns 503 if any dependency is unavailable.
 
 After environment configuration and the two pending migrations, verify using an account created through the real signup flow and confirmed through the actual email link. Then verify login, refresh, logout, recovery, profile, workspace ownership, invitations, role permissions, project lifecycle, cross-workspace IDOR denial, CSRF rejection, revoked/expired tokens, audit rows and database counts.
 

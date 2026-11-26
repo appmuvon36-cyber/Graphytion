@@ -104,7 +104,7 @@ class Settings(BaseSettings):
             db_url.scheme not in {"postgresql+asyncpg", "postgresql"}
             or not db_url.hostname
             or db_url.hostname in {"localhost", "127.0.0.1"}
-            or db_url.username in {"postgres", "supabase_admin"}
+            or db_url.username != "graphytion_api"
             or not db_url.password
             or "CHANGE_ME" in self.database_url_value
         ):
@@ -115,19 +115,25 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
 
         redis_url = urlparse(self.redis_url_value)
-        if redis_url.scheme not in {"redis", "rediss"} or not redis_url.hostname:
-            raise ValueError("REDIS_URL must be a valid redis:// or rediss:// URL")
+        if redis_url.scheme != "rediss" or not redis_url.hostname:
+            raise ValueError("Production REDIS_URL must use rediss:// TLS")
         if redis_url.hostname in {"localhost", "127.0.0.1"}:
             raise ValueError("Production REDIS_URL cannot point to localhost")
 
         supabase_host = urlparse(self.supabase_url).hostname
-        if not supabase_host or not supabase_host.endswith(".supabase.co"):
-            raise ValueError("SUPABASE_URL must reference the configured Supabase project")
+        if supabase_host != "xtjwmezfzexvupbfsdqt.supabase.co":
+            raise ValueError("SUPABASE_URL must reference Graphytion Production project xtjwmezfzexvupbfsdqt")
         expected_issuer = f"{self.supabase_url.rstrip('/')}/auth/v1"
         if self.supabase_jwt_issuer.rstrip("/") != expected_issuer:
             raise ValueError("SUPABASE_JWT_ISSUER does not match SUPABASE_URL")
         if self.supabase_jwks_url != f"{expected_issuer}/.well-known/jwks.json":
             raise ValueError("SUPABASE_JWKS_URL does not match SUPABASE_URL")
+        if len(self.bff_shared_secret_value or "") < 32:
+            raise ValueError("BFF_SHARED_SECRET must contain at least 32 characters")
+        if self.invitation_from_email and (
+            "@" not in self.invitation_from_email or "example.com" in self.invitation_from_email.lower()
+        ):
+            raise ValueError("INVITATION_FROM_EMAIL must use a real verified sender domain")
         if self.invitation_email_provider.lower() != "resend":
             raise ValueError("Only the configured Resend invitation provider is supported")
         return self

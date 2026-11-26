@@ -2272,8 +2272,7 @@ verified. - Project CRUD uses FastAPI business endpoints.
 ## Phase 2 --- AI Gateway and orchestration
 
 Deliverables: - Provider adapter interface. - Model registry. - Prompt
-registry/versioning. - Production run and task lifecycle. - Redis
-queue. - Checkpoints, retries, idempotency. - Usage capture.
+registry/versioning. - Production run and task lifecycle. - PostgreSQL-backed queue with transactional leases and recovery. - Checkpoints, retries, idempotency. - Usage capture.
 
 Exit criteria: - One real LLM task can execute, persist structured
 output, record usage, and recover after worker interruption.

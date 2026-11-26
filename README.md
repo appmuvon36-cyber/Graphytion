@@ -1,28 +1,40 @@
 # Graphytion
 
-AI Motion Graphic Video Production Platform.
+AI Motion Graphic Video Production Platform. This repository contains the production-oriented monorepo foundation and shared contracts.
 
-## Product baseline
-- `AGENTS.md` — mandatory engineering governance and implementation rules.
-- `AGENTS.MD` — uppercase compatibility copy of the same rules.
+## Governance and product baseline
+- `AGENTS.md` — mandatory engineering governance.
+- `AGENTS.MD` — uppercase compatibility copy.
 - `docs/MASTER_PRD_Engineering_Specification_v1.0.md` — Master PRD and engineering specification.
+- `docs/architecture/phase-01-foundation.md` — Phase 01 architecture boundaries.
 
-**Naming note:** The source PRD currently uses “MotionForge AI” as a working product name. Graphytion is the canonical repository/product name; treat this as a naming alignment only and do not change the approved architecture or scope.
+**Naming note:** The source PRD uses “MotionForge AI” as a working name. Graphytion is the canonical repository/product name; preserve the PRD scope and architecture while aligning implementation naming.
 
-## Architecture
-- `apps/web`: customer Next.js application
-- `apps/admin`: administration application
-- `apps/api`: FastAPI backend and business control plane
-- `apps/remotion-studio`: Remotion compositions and Player integration
-- `services/ai-worker`: AI orchestration workers
-- `services/media-worker`: TTS, audio, subtitle and asset processing
-- `services/render-worker`: dedicated Remotion rendering
-- `packages/*`: shared contracts, API client, design system, motion components, presets and runtime
-- `supabase/migrations`: version-controlled production schema migrations
+## Monorepo
+- `apps/web`: Next.js customer app
+- `apps/admin`: Next.js administration app
+- `apps/api`: FastAPI control plane
+- `apps/remotion-studio`: Remotion compositions and Player foundation
+- `services/ai-worker`: AI worker process foundation
+- `services/media-worker`: media worker process foundation
+- `services/render-worker`: dedicated Node.js Remotion worker foundation
+- `packages/*`: contracts, API client, design system, motion registry, presets, runtime, templates and prompts
+- `supabase/migrations`: versioned schema changes; no Phase 01 migration is applied
 
-## Environment policy
-- Canonical branch: `main`
-- Supabase: existing production project `xtjwmezfzexvupbfsdqt`
-- No staging branch, preview environment, or staging Supabase project.
-- No deployment or production database mutation unless explicitly authorized.
-- Follow root `AGENTS.md` before any implementation.
+## Local development
+Requirements: Node.js 22.14+, pnpm 10.12.1+, Python 3.12, Docker.
+
+1. Copy `.env.example` to `.env` and provide local credentials.
+2. Run `pnpm install` at repository root.
+3. Install API dependencies: `cd apps/api && pip install .`.
+4. Start local Redis: `docker compose up redis -d`.
+5. Start API: `pnpm api:dev`; customer app: `pnpm --filter @graphytion/web dev`; admin: `pnpm --filter @graphytion/admin dev`.
+6. Remotion Studio: `pnpm --filter @graphytion/remotion-studio dev`.
+
+## Environment and production policy
+- Main branch is canonical.
+- Supabase project: `xtjwmezfzexvupbfsdqt` (existing production project only).
+- No staging Supabase project, preview environment, or test database is created.
+- No production database mutation or deployment without explicit authorization.
+- Never commit `.env`, secrets, service-role keys, or production data.
+- Browser code must not perform privileged Supabase database operations; business workflows go through FastAPI.

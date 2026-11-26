@@ -1,16 +1,24 @@
 from collections.abc import AsyncGenerator
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 
+_database_url = settings.database_url_value
+_database_host = urlparse(_database_url).hostname or ""
+_is_supavisor_pooler = _database_host.endswith(".pooler.supabase.com")
+_connect_args = {"server_settings": {"application_name": "graphytion-api"}}
+if _is_supavisor_pooler:
+    _connect_args["prepared_statement_cache_size"] = 0
+
 engine = create_async_engine(
-    settings.database_url_value,
+    _database_url,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=5,
-    connect_args={"server_settings": {"application_name": "graphytion-api"}},
+    connect_args=_connect_args,
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

@@ -136,22 +136,29 @@ async def complete_media_artifact(generation_id:UUID,request:Request,file:Upload
     values(:workspace,:project,:generation,:asset,:bucket,:path,:hash,cast(:metadata as jsonb))"""),{"workspace":row["workspace_id"],"project":row["project_id"],"generation":generation_id,"asset":asset_id,"bucket":BUCKET,"path":waveform_path,"hash":waveform_hash,"metadata":json.dumps(metadata)})
   segment_id=row["subtitle_segment_id"]
   if segment_id and alignment["status"]=="available":
-   segment=(await db.execute(text("""select s.id,s.track_id,s.start_ms,s.end_ms,s.text,s.speaker,s.word_timings,s.style_config,s.position_config,s.alignment_metadata,s.audio_asset_id,s.version,t.workspace_id
+   segment=(await db.execute(text("""select s.id,s.track_id,s.segment_index,s.start_ms,s.end_ms,s.text,s.speaker,s.word_timings,s.style_config,s.position_config,s.alignment_metadata,s.audio_asset_id,s.version,t.workspace_id
     from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id
     where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace for update of s"""),{"segment":segment_id,"project":row["project_id"],"workspace":row["workspace_id"]})).mappings().first()
    if segment:
     aligned=[]
     for word in alignment["words"]:
-     if not isinstance(word,dict) or not isinstance(word.get("start_ms"),int) or not isinstance(word.get("end_ms"),int) or not isinstance(word.get("text"),str):raise ValueError("Provider returned malformed word alignment")
+     if not isinstance(word,dict) or not isinstance(word.get("start_ms"),int) or not isinstance(word.get("end_ms"),int) or not isinstance(word.get("text"),str):
+      alignment["mapping_status"]="invalid_provider_word"
+      aligned=[]
+      break
      start=segment["start_ms"]+word["start_ms"];end=segment["start_ms"]+word["end_ms"]
-     if not segment["start_ms"]<=start<end<=segment["end_ms"]:raise ValueError("Provider alignment exceeds subtitle segment timing")
+     if not segment["start_ms"]<=start<end<=segment["end_ms"]:
+      alignment["mapping_status"]="outside_segment_timing"
+      aligned=[]
+      break
      aligned.append({"text":word["text"],"start_ms":start,"end_ms":end,"audio_asset_id":str(asset_id),"provider":alignment.get("provider")})
-    snapshot={"id":str(segment["id"]),"segment_index":0,"start_ms":segment["start_ms"],"end_ms":segment["end_ms"],"text":segment["text"],"speaker":segment["speaker"],"word_timings":aligned,"style_config":segment["style_config"],"position_config":segment["position_config"],"alignment_metadata":{"provider":alignment.get("provider"),"audio_asset_id":str(asset_id)},"audio_asset_id":str(asset_id),"version":segment["version"]+1}
+    snapshot={"id":str(segment["id"]),"segment_index":segment["segment_index"],"start_ms":segment["start_ms"],"end_ms":segment["end_ms"],"text":segment["text"],"speaker":segment["speaker"],"word_timings":aligned,"style_config":segment["style_config"],"position_config":segment["position_config"],"alignment_metadata":{"provider":alignment.get("provider"),"audio_asset_id":str(asset_id)},"audio_asset_id":str(asset_id),"version":segment["version"]+1}
     revision=(await db.scalar(text("select coalesce(max(revision),0)+1 from public.subtitle_segment_revisions where segment_id=:id"),{"id":segment_id}))
-    await db.execute(text("""update public.subtitle_segments set audio_asset_id=:asset,word_timings=cast(:words as jsonb),
-     alignment_metadata=cast(:metadata as jsonb),version=version+1,updated_at=now() where id=:id"""),{"asset":asset_id,"words":json.dumps(aligned),"metadata":json.dumps(snapshot["alignment_metadata"]),"id":segment_id})
-    await db.execute(text("""insert into public.subtitle_segment_revisions(track_id,segment_id,revision,operation,snapshot,actor_user_id,request_id)
-     values(:track,:segment,:revision,'regenerated',cast(:snapshot as jsonb),:actor,:request)"""),{"track":segment["track_id"],"segment":segment_id,"revision":revision,"snapshot":json.dumps(snapshot),"actor":row["requested_by"],"request":request.state.request_id})
+    if aligned:
+     await db.execute(text("""update public.subtitle_segments set audio_asset_id=:asset,word_timings=cast(:words as jsonb),
+      alignment_metadata=cast(:metadata as jsonb),version=version+1,updated_at=now() where id=:id"""),{"asset":asset_id,"words":json.dumps(aligned),"metadata":json.dumps(snapshot["alignment_metadata"]),"id":segment_id})
+     await db.execute(text("""insert into public.subtitle_segment_revisions(track_id,segment_id,revision,operation,snapshot,actor_user_id,request_id)
+      values(:track,:segment,:revision,'regenerated',cast(:snapshot as jsonb),:actor,:request)"""),{"track":segment["track_id"],"segment":segment_id,"revision":revision,"snapshot":json.dumps(snapshot),"actor":row["requested_by"],"request":request.state.request_id})
   await db.commit()
  except Exception as exc:
   await db.rollback()

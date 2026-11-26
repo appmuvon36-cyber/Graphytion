@@ -695,8 +695,8 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
         (
             await db.execute(
                 text("""
-                    select id,workspace_id,email,role,invited_by,expires_at,created_at,delivery_status,
-                      delivery_attempts,sent_at
+                    select id,workspace_id,email,role,invited_by,expires_at,created_at,
+                           delivery_status,delivery_attempts,sent_at
                     from public.workspace_invitations
                     where workspace_id=:workspace and accepted_at is null
                       and cancelled_at is null and expires_at>now()
@@ -972,12 +972,18 @@ async def resend_invitation(
     if row["delivery_status"] in ("bounced", "complained"):
         raise HTTPException(
             status_code=409,
-            detail="Provider reported a recipient problem; correct the address before sending again",
+            detail=(
+                "Provider reported a recipient problem; correct the address "
+                "before sending again"
+            ),
         )
     if row["delivery_status"] != "failed" and row["expires_at"] > datetime.now(UTC):
         raise HTTPException(
             status_code=409,
-            detail="Invitation is not eligible for resend until delivery fails or the invitation expires",
+            detail=(
+                "Invitation is not eligible for resend until delivery fails "
+                "or the invitation expires"
+            ),
         )
     if row["role"] == "admin":
         actor_role = await require_permission(db, actor, workspace_id, "member.manage")

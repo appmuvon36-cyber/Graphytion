@@ -205,7 +205,7 @@ async def claim_render_job(
         await db.rollback()
         return {"data": None}
     await set_rls_subject(db, str(row["requested_by"]))
-    resolved_assets = await resolve_project_assets(db, project_id=row["project_id"], workspace_id=row["workspace_id"], asset_ids=collect_asset_ids(dict(row["timeline_snapshot"])), expires_in=3600, snapshot=dict(row["timeline_snapshot"]))
+    resolved_assets = await resolve_project_assets(db, project_id=row["project_id"], workspace_id=row["workspace_id"], asset_ids=collect_asset_ids(dict(row["timeline_snapshot"])), expires_in=21600, snapshot=dict(row["timeline_snapshot"]))
     await db.execute(text("insert into public.render_attempts(render_job_id,attempt_number,worker_id,status) values(:job,:attempt,:worker,'claimed') on conflict(render_job_id,attempt_number) do update set worker_id=excluded.worker_id,status='claimed',started_at=now(),ended_at=null"), {"job":row["id"],"attempt":row["attempt_count"],"worker":worker_id})
     await db.commit()
     return {"data": {

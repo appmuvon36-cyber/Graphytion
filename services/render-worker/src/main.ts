@@ -88,8 +88,7 @@ async function processJob(jobId?: string): Promise<boolean> {
     }
   }, 30000);
   try {
-    const renderSnapshot = claimed.render_config.audio_codec === 'none' ? {...claimed.timeline_snapshot,tracks:claimed.timeline_snapshot.tracks.map(track => ['audio','voiceover'].includes(String(track.kind)) ? {...track,muted:true} : track)} : claimed.timeline_snapshot;
-    const inputProps = {snapshot: renderSnapshot,resolvedAssets:claimed.resolved_assets};
+    const inputProps = {snapshot: claimed.timeline_snapshot,resolvedAssets:claimed.resolved_assets};
     const composition = await selectComposition({
       serveUrl,
       id: claimed.composition_id,
@@ -107,7 +106,7 @@ async function processJob(jobId?: string): Promise<boolean> {
       concurrency: claimed.render_config.concurrency ?? renderConcurrency,
       crf: claimed.render_config.video_crf ?? renderCrf,
       ...(claimed.render_config.video_bitrate ? {videoBitrate:claimed.render_config.video_bitrate} : {}),
-      ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' ? {audioCodec:claimed.render_config.audio_codec as 'aac'|'opus'} : {}),
+      ...(claimed.render_config.audio_codec === 'none' ? {audioCodec:null} : claimed.render_config.audio_codec ? {audioCodec:claimed.render_config.audio_codec as 'aac'|'opus'} : {}),
       ...(claimed.render_config.audio_codec && claimed.render_config.audio_codec !== 'none' && claimed.render_config.audio_bitrate ? {audioBitrate:claimed.render_config.audio_bitrate as any} : {}),
       x264Preset: x264Preset as 'ultrafast'|'superfast'|'veryfast'|'faster'|'fast'|'medium'|'slow'|'slower'|'veryslow',
       pixelFormat: 'yuv420p',

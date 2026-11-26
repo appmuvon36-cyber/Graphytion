@@ -46,8 +46,8 @@ class SupabaseStorage:
     async def create_signed_url(
         self, *, bucket: str, object_path: str, expires_in: int = 300
     ) -> str:
-        if not 30 <= expires_in <= 3600:
-            raise ValueError("Signed URL expiry must be between 30 and 3600 seconds")
+        if not 30 <= expires_in <= 21600:
+            raise ValueError("Signed URL expiry must be between 30 seconds and 6 hours")
         base_url = settings.supabase_url.rstrip("/")
         bucket_segment = quote(bucket, safe="")
         object_segment = quote(object_path, safe="/")

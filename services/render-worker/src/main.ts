@@ -24,6 +24,7 @@ if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeou
 }
 
 const workerId = `render:${process.env.HOSTNAME ?? 'worker'}:${process.pid}:${randomUUID().slice(0, 8)}`;
+const redisQueueKey = 'graphytion:render:jobs';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, {connectTimeout: 1500, maxRetriesPerRequest: 1, retryStrategy: (times) => Math.min(times * 500, 5000)}) : null;
 redis?.on('error', (error) => console.warn('render_redis_unavailable_postgres_poll_remains_active', error.message));
 
@@ -213,7 +214,7 @@ async function waitForWork() {
     return;
   }
   try {
-    await redis.blpop('graphytion:render:jobs', 3);
+    await redis.blpop(redisQueueKey, 3);
   } catch (error) {
     console.warn('render_redis_wakeup_failed_using_postgres_poll', error);
     await new Promise(resolve => setTimeout(resolve, 3000));

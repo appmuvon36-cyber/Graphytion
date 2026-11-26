@@ -450,7 +450,7 @@ async def render_approved_storyboard(
     storyboard_id: UUID,
     request: Request,
     claims: AuthenticatedClaims,
-    payload: RenderCreate | None = None,
+    payload: RenderCreate,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = DbSession,
 ):
@@ -467,22 +467,8 @@ async def render_approved_storyboard(
     if not approved:
         raise HTTPException(status_code=409, detail="Only an approved storyboard based on an approved script can be rendered")
 
-    # Legacy storyboard route must never synthesize a second composition from scene metadata.
-    # It accepts the exact editor snapshot, or falls back only to the latest immutable project snapshot.
-    if payload is None:
-        saved = (await db.execute(text("""
-            select snapshot from public.video_timelines
-            where project_id=:project and workspace_id=:workspace
-            order by version desc limit 1
-        """), {"project": project_id, "workspace": workspace_id})).mappings().first()
-        if saved is None:
-            raise HTTPException(status_code=409, detail="Open and save the Remotion timeline before rendering this storyboard")
-        snapshot = dict(saved["snapshot"])
-        payload = RenderCreate(
-            snapshot=snapshot,
-            composition_version=str(snapshot.get("compositionVersion", "2.0.0")),
-        )
-
+    # The caller must submit the exact immutable snapshot shown in the Remotion Player.
+    # No storyboard-side snapshot reconstruction is allowed on the render path.
     return await create_render(
         project_id=project_id,
         payload=payload,

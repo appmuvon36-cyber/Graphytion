@@ -21,13 +21,14 @@ const client = createClient({url: redisUrl});
 client.on('error', error => console.error('redis_connection_error', error.message));
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${workerToken}`);
+  if (init.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const response = await fetch(new URL(path, apiBaseUrl.endsWith('/') ? apiBaseUrl : apiBaseUrl + '/'), {
     ...init,
-    headers: {
-      Authorization: `Bearer ${workerToken}`,
-      ...(init.body && typeof init.body === 'string' ? {'Content-Type': 'application/json'} : {}),
-      ...init.headers,
-    },
+    headers,
     cache: 'no-store',
   });
   const body = await response.json().catch(() => null) as {detail?: string; data?: T} | null;

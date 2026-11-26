@@ -412,7 +412,7 @@ async def create_workspace(
             .mappings()
             .one()
         )
-        await db.execute(
+        membership_result = await db.execute(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:user,'owner','active')
@@ -732,10 +732,15 @@ async def accept_invitation(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:actor,:role,'active')
-          on conflict (workspace_id,user_id) do update set role=excluded.role,status='active'
+          on conflict (workspace_id,user_id) do update
+            set role=excluded.role,status='active'
+            where public.workspace_members.status <> 'active'
+          returning id
         """),
             {"workspace": row["workspace_id"], "actor": actor, "role": row["role"]},
         )
+        if membership_result.rowcount == 0:
+            raise HTTPException(status_code=409, detail="User is already an active workspace member")
         await db.execute(
             text("update public.workspace_invitations set accepted_at=now() where id=:id"),
             {"id": row["id"]},

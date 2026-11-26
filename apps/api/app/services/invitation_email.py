@@ -86,7 +86,9 @@ class ResendInvitationEmail:
                 body = response.json()
                 message_id = body.get("id")
                 if not isinstance(message_id, str) or not message_id:
-                    raise InvitationEmailDeliveryError("Email provider returned no message identifier")
+                    raise InvitationEmailDeliveryError(
+                        "Email provider returned no message identifier"
+                    )
                 return message_id
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
                 last_error = exc

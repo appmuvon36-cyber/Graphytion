@@ -95,10 +95,7 @@ async def resend_webhook(request: Request, db: AsyncSession = Db) -> dict[str, A
         current_status not in terminal
         and current_status != next_status
         and not (next_status == "sent" and current_status != "pending")
-        and not (
-            next_status == "delivery_delayed"
-            and current_status not in {"pending", "sent"}
-        )
+        and not (next_status == "delivery_delayed" and current_status not in {"pending", "sent"})
     )
     if can_advance:
         await db.execute(

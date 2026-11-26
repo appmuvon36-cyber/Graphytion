@@ -245,7 +245,9 @@ async def audit(
     )
 
 
-@router.post("/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
+@router.post(
+    "/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit), Depends(require_bff)]
+)
 async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.signup(payload.email, payload.password, payload.display_name)
     auth_user = result.get("user") or {}
@@ -752,9 +754,9 @@ async def deliver_invitation(
             """),
             {
                 "id": invitation_id,
-                "error": "provider_not_configured" if isinstance(
-                    exc, InvitationEmailConfigurationError
-                ) else "provider_delivery_failed",
+                "error": "provider_not_configured"
+                if isinstance(exc, InvitationEmailConfigurationError)
+                else "provider_delivery_failed",
             },
         )
         await db.commit()
@@ -792,6 +794,7 @@ async def deliver_invitation(
     )
     await db.commit()
     return dict(row)
+
 
 @router.post(
     "/workspaces/{workspace_id}/members", status_code=201, dependencies=[Depends(auth_rate_limit)]
@@ -894,8 +897,13 @@ async def create_invitation(
         )
         invitation_id = row["id"]
         await audit(
-            db, actor, workspace_id, "workspace.invitation.created", "invitation",
-            invitation_id, request
+            db,
+            actor,
+            workspace_id,
+            "workspace.invitation.created",
+            "invitation",
+            invitation_id,
+            request,
         )
         await db.commit()
     except IntegrityError as exc:
@@ -917,14 +925,24 @@ async def create_invitation(
         )
     except HTTPException:
         await audit(
-            db, actor, workspace_id, "workspace.invitation.email_failed",
-            "invitation", invitation_id, request
+            db,
+            actor,
+            workspace_id,
+            "workspace.invitation.email_failed",
+            "invitation",
+            invitation_id,
+            request,
         )
         await db.commit()
         raise
     await audit(
-        db, actor, workspace_id, "workspace.invitation.email_accepted", "invitation",
-        invitation_id, request
+        db,
+        actor,
+        workspace_id,
+        "workspace.invitation.email_accepted",
+        "invitation",
+        invitation_id,
+        request,
     )
     await db.commit()
     return {"data": result}
@@ -973,8 +991,7 @@ async def resend_invitation(
         raise HTTPException(
             status_code=409,
             detail=(
-                "Provider reported a recipient problem; correct the address "
-                "before sending again"
+                "Provider reported a recipient problem; correct the address before sending again"
             ),
         )
     if row["delivery_status"] != "failed" and row["expires_at"] > datetime.now(UTC):
@@ -989,7 +1006,8 @@ async def resend_invitation(
         actor_role = await require_permission(db, actor, workspace_id, "member.manage")
         if actor_role != "owner":
             raise HTTPException(
-                status_code=403, detail="Only the workspace owner can resend administrator invitations"
+                status_code=403,
+                detail="Only the workspace owner can resend administrator invitations",
             )
 
     raw = secrets.token_urlsafe(36)
@@ -1019,14 +1037,18 @@ async def resend_invitation(
         )
     except HTTPException:
         await audit(
-            db, actor, workspace_id, "workspace.invitation.email_failed",
-            "invitation", invitation_id, request
+            db,
+            actor,
+            workspace_id,
+            "workspace.invitation.email_failed",
+            "invitation",
+            invitation_id,
+            request,
         )
         await db.commit()
         raise
     await audit(
-        db, actor, workspace_id, "workspace.invitation.resent", "invitation",
-        invitation_id, request
+        db, actor, workspace_id, "workspace.invitation.resent", "invitation", invitation_id, request
     )
     await db.commit()
     return {"data": result}

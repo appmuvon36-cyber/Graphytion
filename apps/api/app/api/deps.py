@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session, set_rls_subject
 from app.core.security import verify_access_token
-
 from app.services.supabase_auth import supabase_auth
 
 DbSession = Depends(get_db_session)

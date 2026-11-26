@@ -41,7 +41,9 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [value.strip().rstrip("/") for value in self.cors_origins.split(",") if value.strip()]
+        return [
+            value.strip().rstrip("/") for value in self.cors_origins.split(",") if value.strip()
+        ]
 
     @property
     def database_url_value(self) -> str:
@@ -102,8 +104,12 @@ class Settings(BaseSettings):
             raise ValueError("APP_PUBLIC_URL must be an absolute HTTPS origin in production")
 
         origins = self.cors_origin_list
-        if not origins or any(urlparse(origin).scheme != "https" or "*" in origin for origin in origins):
-            raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins; wildcards are forbidden")
+        if not origins or any(
+            urlparse(origin).scheme != "https" or "*" in origin for origin in origins
+        ):
+            raise ValueError(
+                "CORS_ORIGINS must contain explicit HTTPS origins; wildcards are forbidden"
+            )
         if f"{app_url.scheme}://{app_url.netloc}" not in origins:
             raise ValueError("APP_PUBLIC_URL origin must be included in CORS_ORIGINS")
 
@@ -119,7 +125,10 @@ class Settings(BaseSettings):
                 "DATABASE_URL must use a dedicated non-administrative PostgreSQL "
                 "login and a real password"
             )
-        if "ssl=require" not in self.database_url_value and "sslmode=require" not in self.database_url_value:
+        if (
+            "ssl=require" not in self.database_url_value
+            and "sslmode=require" not in self.database_url_value
+        ):
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
 
         redis_url = urlparse(self.redis_url_value)
@@ -130,7 +139,9 @@ class Settings(BaseSettings):
 
         supabase_host = urlparse(self.supabase_url).hostname
         if supabase_host != "xtjwmezfzexvupbfsdqt.supabase.co":
-            raise ValueError("SUPABASE_URL must reference Graphytion Production project xtjwmezfzexvupbfsdqt")
+            raise ValueError(
+                "SUPABASE_URL must reference Graphytion Production project xtjwmezfzexvupbfsdqt"
+            )
         expected_issuer = f"{self.supabase_url.rstrip('/')}/auth/v1"
         if self.supabase_jwt_issuer.rstrip("/") != expected_issuer:
             raise ValueError("SUPABASE_JWT_ISSUER does not match SUPABASE_URL")
@@ -139,7 +150,8 @@ class Settings(BaseSettings):
         if len(self.bff_shared_secret_value or "") < 32:
             raise ValueError("BFF_SHARED_SECRET must contain at least 32 characters")
         if self.invitation_from_email and (
-            "@" not in self.invitation_from_email or "example.com" in self.invitation_from_email.lower()
+            "@" not in self.invitation_from_email
+            or "example.com" in self.invitation_from_email.lower()
         ):
             raise ValueError("INVITATION_FROM_EMAIL must use a real verified sender domain")
         if self.invitation_email_provider.lower() != "resend":

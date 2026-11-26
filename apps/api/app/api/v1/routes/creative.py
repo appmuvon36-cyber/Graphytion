@@ -700,6 +700,33 @@ async def _process_creative_run(
         safe_message = exc.detail.get("message", "Creative stage could not be completed") if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else (
             exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) else "Creative stage could not be completed"
         )
+        task_state = (await db.execute(text("""
+            select attempt_count,max_attempts from public.agent_tasks where id=:task
+        """), {"task": task})).mappings().first()
+        retryable = (
+            isinstance(exc, HTTPException)
+            and exc.status_code in (502, 504)
+            and task_state is not None
+            and task_state["attempt_count"] < task_state["max_attempts"]
+        )
+        if retryable:
+            await db.execute(text("""
+                update public.agent_tasks set status='retry_wait',error_code=:code,
+                    error_detail_internal=:detail,lease_expires_at=null
+                where id=:task
+            """), {"code": safe_code, "detail": str(exc)[:1000], "task": task})
+            await db.execute(text("""
+                update public.production_runs set status='queued',error_code=:code,
+                    error_message_safe=:message,worker_id=null,lease_expires_at=null
+                where id=:run
+            """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"]})
+            await db.execute(text("""
+                insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
+                values (:run,'stage.retry_scheduled',cast(:payload as jsonb),
+                  (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
+            """), {"run": run["id"], "payload": json.dumps({"stage": stage, "error_code": safe_code})})
+            await db.commit()
+            raise
         await db.execute(text("""
             update public.agent_tasks set status='failed',error_code=:code,
                 error_detail_internal=:detail,completed_at=now(),lease_expires_at=null
@@ -712,7 +739,8 @@ async def _process_creative_run(
         """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"]})
         await db.execute(text("""
             insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
-            values (:run,'stage.failed',cast(:payload as jsonb),(select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
+            values (:run,'stage.failed',cast(:payload as jsonb),
+              (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
         """), {"run": run["id"], "payload": json.dumps({"stage": stage, "error_code": safe_code})})
         await db.commit()
         if isinstance(exc, HTTPException):

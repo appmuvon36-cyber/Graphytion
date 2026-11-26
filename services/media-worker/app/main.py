@@ -1,8 +1,9 @@
 from __future__ import annotations
-import asyncio,logging,os,signal,socket,uuid
+import asyncio,json,logging,os,signal,socket,uuid
 import httpx
 from redis.asyncio import Redis
 from app.providers import OpenAITTSProvider
+from app.audio_analysis import analyze_audio_bytes
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL","INFO"))
 log=logging.getLogger("graphytion.media-worker")
@@ -42,7 +43,12 @@ class Worker:
   beat=asyncio.create_task(self.heartbeat(job_id))
   try:
    audio,mime=await self.provider.synthesize(text=job["input_text"],voice=job["voice_key"],model=job.get("model_key") or self.model_default)
-   await self.api("/internal/media-jobs/"+job_id+"/artifact",method="POST",params={"worker_id":WORKER_ID},files={"file":("voiceover.mp3",audio,mime)},timeout=httpx.Timeout(180,connect=15))
+   alignment=await self.provider.align_words(audio=audio)
+   metadata,waveform=await asyncio.to_thread(analyze_audio_bytes,audio)
+   await self.api("/internal/media-jobs/"+job_id+"/artifact",method="POST",params={"worker_id":WORKER_ID},
+    data={"alignment_json":json.dumps(alignment),"media_metadata":json.dumps(metadata)},
+    files={"file":("voiceover.mp3",audio,mime),"waveform_file":("waveform.json",waveform,"application/json")},
+    timeout=httpx.Timeout(240,connect=15))
    log.info("voiceover_completed",extra={"generation_id":job_id,"bytes":len(audio)})
   except httpx.HTTPStatusError as exc:
    code="TTS_PROVIDER_HTTP_"+str(exc.response.status_code)

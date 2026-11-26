@@ -66,6 +66,8 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> str:
     required = {"version", "fps", "width", "height", "durationFrames", "clips"}
     if not required.issubset(snapshot):
         raise HTTPException(status_code=422, detail="Timeline snapshot is missing required fields")
+    if not isinstance(snapshot.get("version"), int) or snapshot["version"] < 1:
+        raise HTTPException(status_code=422, detail="Invalid timeline schema version")
     fps, width, height, duration = (
         snapshot.get("fps"), snapshot.get("width"), snapshot.get("height"), snapshot.get("durationFrames")
     )
@@ -93,7 +95,9 @@ def _validate_snapshot(snapshot: dict[str, Any]) -> str:
         if not isinstance(start, int) or start < 0 or not isinstance(length, int) or length < 1 or start + length > duration:
             raise HTTPException(status_code=422, detail="Timeline clip frame range is invalid")
         component = clip.get("componentKey")
-        if component is not None and component not in ALLOWED_COMPONENTS:
+        if component is not None and (
+            not isinstance(component, str) or component not in ALLOWED_COMPONENTS
+        ):
             raise HTTPException(status_code=422, detail="Timeline contains a non-allowlisted component")
         if not isinstance(clip.get("props", {}), dict):
             raise HTTPException(status_code=422, detail="Timeline component props must be an object")

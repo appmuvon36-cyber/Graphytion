@@ -46,7 +46,7 @@ async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,cla
  snapshot=dict(payload.snapshot);snapshot.pop("contentHash",None);digest=validate_snapshot(snapshot);snapshot["contentHash"]=digest
  await _component_gate(db,snapshot)
  assets=collect_asset_ids(snapshot)
- await resolve_project_assets(db,project_id=project_id,workspace_id=workspace,asset_ids=assets,expires_in=300,snapshot=snapshot)
+ resolved_assets=await resolve_project_assets(db,project_id=project_id,workspace_id=workspace,asset_ids=assets,expires_in=300,snapshot=snapshot)
  await db.execute(text("select pg_advisory_xact_lock(hashtext(:project))"),{"project":str(project_id)})
  latest=(await db.execute(text("select version from public.video_timelines where project_id=:project order by version desc limit 1 for update"),{"project":project_id})).scalar_one_or_none()
  current=int(latest or 0)
@@ -58,7 +58,7 @@ async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,cla
  await db.execute(text("""insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
  values(:actor,:workspace,'timeline.version.saved','video_timeline',:id,:request,cast(:metadata as jsonb))"""),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"version":version,"hash":digest,"clips":len(snapshot["clips"]),"tracks":len(snapshot["tracks"])})})
  await db.commit()
- return {"data":{"timeline_id":str(row["id"]),"version":version,"compiled_hash":digest,"created_at":row["created_at"],"snapshot":snapshot}}
+ return {"data":{"timeline_id":str(row["id"]),"version":version,"compiled_hash":digest,"created_at":row["created_at"],"snapshot":snapshot,"resolved_assets":resolved_assets}}
 @router.get("/projects/{project_id}/timelines")
 async def list_timeline_versions(project_id:UUID,claims:AuthenticatedClaims,limit:int=50,db:AsyncSession=DbSession):
  actor=_Actor.get(claims);workspace=await _scope(db,project_id,actor,"project.read")

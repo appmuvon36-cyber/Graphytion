@@ -493,7 +493,7 @@ async def create_workspace(
 
 @router.get("/workspaces/{workspace_id}")
 async def get_workspace(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
-    await require_workspace(db, uid(claims), workspace_id)
+    await require_permission(db, uid(claims), workspace_id, "workspace.read")
     row = (
         (
             await db.execute(
@@ -976,20 +976,25 @@ async def create_project(
 @router.get("/projects/{project_id}")
 async def get_project(project_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
     actor = uid(claims)
+    workspace_id = (
+        await db.execute(
+            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            {"project": project_id},
+        )
+    ).scalar_one_or_none()
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await require_permission(db, actor, workspace_id, "project.read")
     row = (
         (
             await db.execute(
                 text("""
-      select p.*,s.settings,s.version as settings_version
-      from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
-      left join public.project_settings s on s.project_id=p.id
-      where p.id=:project
-        and m.user_id=:actor
-        and m.status='active'
-        and m.role in ('owner','admin','editor','member','viewer')
-        and p.status<>'deleted'
-    """),
-                {"project": project_id, "actor": actor},
+                    select p.*,s.settings,s.version as settings_version
+                    from public.video_projects p
+                    left join public.project_settings s on s.project_id=p.id
+                    where p.id=:project and p.workspace_id=:workspace
+                """),
+                {"project": project_id, "workspace": workspace_id},
             )
         )
         .mappings()
@@ -1009,25 +1014,15 @@ async def update_project(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    row = (
-        (
-            await db.execute(
-                text("""
-      select p.workspace_id, m.role
-        from public.video_projects p
-        join public.workspace_members m on m.workspace_id=p.workspace_id
-      where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
-    """),
-                {"project": project_id, "actor": actor},
-            )
+    workspace_id = (
+        await db.execute(
+            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            {"project": project_id},
         )
-        .mappings()
-        .first()
-    )
-    if not row:
+    ).scalar_one_or_none()
+    if workspace_id is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if row["role"] not in ("owner", "admin", "editor", "member"):
-        raise HTTPException(status_code=403, detail="Project update permission required")
+    await require_permission(db, actor, workspace_id, "project.update")
     values = payload.model_dump(exclude_unset=True)
     settings = values.pop("settings", None)
     if not values and settings is None:
@@ -1054,12 +1049,18 @@ async def update_project(
                 {"id": project_id, "settings": __import__("json").dumps(settings)},
             )
         await audit(
-            db, actor, row["workspace_id"], "project.updated", "video_project", project_id, request
+            db, actor, workspace_id, "project.updated", "video_project", project_id, request
         )
         result = (
             (
                 await db.execute(
-                    text("select * from public.video_projects where id=:id"), {"id": project_id}
+                    text("""
+                        select p.*,s.settings,s.version as settings_version
+                        from public.video_projects p
+                        left join public.project_settings s on s.project_id=p.id
+                        where p.id=:id
+                    """),
+                    {"id": project_id}
                 )
             )
             .mappings()

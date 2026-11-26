@@ -2,7 +2,7 @@ from __future__ import annotations
 import hashlib,hmac,json
 from typing import Any
 from uuid import UUID,uuid4
-from fastapi import APIRouter,Header,HTTPException,Query,Request,UploadFile
+from fastapi import APIRouter,File,Form,Header,HTTPException,Query,Request,UploadFile
 from pydantic import BaseModel,Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ class VoiceoverCreate(BaseModel):
  language:str=Field(default="id-ID",min_length=2,max_length=16)
  scene_id:UUID|None=None
  generation_config:dict[str,Any]=Field(default_factory=dict)
+ subtitle_segment_id:UUID|None=None
 class VoiceoverFailure(BaseModel):
  error_code:str=Field(min_length=1,max_length=100)
  retryable:bool=False
@@ -47,10 +48,13 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  if payload.scene_id:
   exists=await db.scalar(text("select exists(select 1 from public.storyboard_scenes ss join public.storyboards sb on sb.id=ss.storyboard_id where ss.id=:scene and sb.project_id=:project)"),{"scene":payload.scene_id,"project":project_id})
   if not exists:raise HTTPException(404,"Scene does not belong to this project")
+ if payload.subtitle_segment_id:
+  exists=await db.scalar(text("select exists(select 1 from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace)"),{"segment":payload.subtitle_segment_id,"project":project_id,"workspace":workspace})
+  if not exists:raise HTTPException(404,"Subtitle segment does not belong to this project")
  status="queued" if provider.configured() else "provider_unavailable"
  row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
  values(:workspace,:project,:scene,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
- on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
+ on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
  if row is None:
   old=(await db.execute(text("select id,status,input_text,voice_key,model_key from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
   if not old or old["input_text"]!=payload.text or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key:raise HTTPException(409,"Idempotency key was used for a different voiceover request")
@@ -101,7 +105,7 @@ async def heartbeat_media_job(generation_id:UUID,request:Request,worker_id:str=Q
  if not owner:raise HTTPException(409,"Media job lease is no longer owned")
  await set_rls_subject(db,str(owner));await db.commit();return {"data":{"generation_id":str(generation_id),"lease_extended":True}}
 @router.post("/internal/media-jobs/{generation_id}/artifact",status_code=201)
-async def complete_media_artifact(generation_id:UUID,request:Request,file:UploadFile,worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
+async def complete_media_artifact(generation_id:UUID,request:Request,file:UploadFile,waveform_file:UploadFile|None=File(default=None),alignment_json:str|None=Form(default=None),media_metadata:str|None=Form(default=None),worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
  _require_worker(request)
  owner=await db.scalar(text("select private.graphytion_media_job_owner(:id,:worker)"),{"id":generation_id,"worker":worker_id})
  if not owner:raise HTTPException(409,"Media job lease is no longer owned")
@@ -112,17 +116,50 @@ async def complete_media_artifact(generation_id:UUID,request:Request,file:Upload
  valid=file.content_type=="audio/mpeg" and (content.startswith(b"ID3") or (len(content)>1 and content[0]==0xFF and content[1]&0xE0==0xE0))
  if not valid or not 1<=len(content)<=MAX_AUDIO_BYTES:raise HTTPException(415,"Voiceover output must be a valid MP3 under 50 MB")
  asset_id=uuid4();digest=hashlib.sha256(content).hexdigest();path=f"{row['workspace_id']}/{row['project_id']}/{asset_id}.mp3"
+ waveform_path=f"{row['workspace_id']}/{row['project_id']}/{asset_id}.waveform.json"
+ waveform_content=await waveform_file.read(10*1024*1024+1) if waveform_file else b""
+ if len(waveform_content)>10*1024*1024:raise HTTPException(413,"Waveform artifact exceeds 10 MB")
  try:
+  alignment=json.loads(alignment_json) if alignment_json else {"status":"unavailable","provider":"unknown","reason":"alignment_not_supplied","words":[]}
+  if alignment.get("status") not in {"available","unavailable"} or not isinstance(alignment.get("words"),list):raise ValueError("Invalid alignment result")
+  metadata=json.loads(media_metadata) if media_metadata else None
+  if metadata is not None and (not isinstance(metadata,dict) or not isinstance(metadata.get("duration_ms"),int) or metadata["duration_ms"]<=0):raise ValueError("Invalid audio metadata")
   await SupabaseStorage().upload(bucket=BUCKET,object_path=path,content=content,content_type="audio/mpeg",upsert=False,timeout_seconds=180)
+  if waveform_content:
+   if not metadata:raise ValueError("Waveform requires media metadata")
+   waveform_hash=hashlib.sha256(waveform_content).hexdigest()
+   await SupabaseStorage().upload(bucket=BUCKET,object_path=waveform_path,content=waveform_content,content_type="application/json",upsert=False,timeout_seconds=180)
   await db.execute(text("insert into public.project_assets(id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,content_type,size_bytes,sha256) values(:id,:workspace,:project,:actor,:bucket,:path,:name,'audio/mpeg',:size,:hash)"),{"id":asset_id,"workspace":row["workspace_id"],"project":row["project_id"],"actor":row["requested_by"],"bucket":BUCKET,"path":path,"name":"voiceover-"+str(generation_id)+".mp3","size":len(content),"hash":digest})
-  await db.execute(text("update public.audio_generations set status='completed',asset_id=:asset,completed_at=now(),worker_id=null,lease_expires_at=null where id=:id"),{"asset":asset_id,"id":generation_id})
+  await db.execute(text("update public.audio_generations set status='completed',asset_id=:asset,alignment_result=cast(:alignment as jsonb),alignment_status=:alignment_status,completed_at=now(),worker_id=null,lease_expires_at=null where id=:id"),{"asset":asset_id,"alignment":json.dumps(alignment),"alignment_status":alignment["status"],"id":generation_id})
+  if waveform_content:
+   await db.execute(text("""insert into public.audio_analysis_artifacts(workspace_id,project_id,audio_generation_id,audio_asset_id,waveform_bucket,waveform_path,waveform_sha256,media_metadata)
+    values(:workspace,:project,:generation,:asset,:bucket,:path,:hash,cast(:metadata as jsonb))"""),{"workspace":row["workspace_id"],"project":row["project_id"],"generation":generation_id,"asset":asset_id,"bucket":BUCKET,"path":waveform_path,"hash":waveform_hash,"metadata":json.dumps(metadata)})
+  segment_id=row["subtitle_segment_id"]
+  if segment_id and alignment["status"]=="available":
+   segment=(await db.execute(text("""select s.id,s.track_id,s.start_ms,s.end_ms,s.text,s.speaker,s.word_timings,s.style_config,s.position_config,s.alignment_metadata,s.audio_asset_id,s.version,t.workspace_id
+    from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id
+    where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace for update of s"""),{"segment":segment_id,"project":row["project_id"],"workspace":row["workspace_id"]})).mappings().first()
+   if segment:
+    aligned=[]
+    for word in alignment["words"]:
+     if not isinstance(word,dict) or not isinstance(word.get("start_ms"),int) or not isinstance(word.get("end_ms"),int) or not isinstance(word.get("text"),str):raise ValueError("Provider returned malformed word alignment")
+     start=segment["start_ms"]+word["start_ms"];end=segment["start_ms"]+word["end_ms"]
+     if not segment["start_ms"]<=start<end<=segment["end_ms"]:raise ValueError("Provider alignment exceeds subtitle segment timing")
+     aligned.append({"text":word["text"],"start_ms":start,"end_ms":end,"audio_asset_id":str(asset_id),"provider":alignment.get("provider")})
+    snapshot={"id":str(segment["id"]),"segment_index":0,"start_ms":segment["start_ms"],"end_ms":segment["end_ms"],"text":segment["text"],"speaker":segment["speaker"],"word_timings":aligned,"style_config":segment["style_config"],"position_config":segment["position_config"],"alignment_metadata":{"provider":alignment.get("provider"),"audio_asset_id":str(asset_id)},"audio_asset_id":str(asset_id),"version":segment["version"]+1}
+    revision=(await db.scalar(text("select coalesce(max(revision),0)+1 from public.subtitle_segment_revisions where segment_id=:id"),{"id":segment_id}))
+    await db.execute(text("""update public.subtitle_segments set audio_asset_id=:asset,word_timings=cast(:words as jsonb),
+     alignment_metadata=cast(:metadata as jsonb),version=version+1,updated_at=now() where id=:id"""),{"asset":asset_id,"words":json.dumps(aligned),"metadata":json.dumps(snapshot["alignment_metadata"]),"id":segment_id})
+    await db.execute(text("""insert into public.subtitle_segment_revisions(track_id,segment_id,revision,operation,snapshot,actor_user_id,request_id)
+     values(:track,:segment,:revision,'regenerated',cast(:snapshot as jsonb),:actor,:request)"""),{"track":segment["track_id"],"segment":segment_id,"revision":revision,"snapshot":json.dumps(snapshot),"actor":row["requested_by"],"request":request.state.request_id})
   await db.commit()
  except Exception as exc:
   await db.rollback()
-  try:await SupabaseStorage().remove(bucket=BUCKET,object_path=path)
-  except Exception:pass
+  for object_path in (path,waveform_path):
+   try:await SupabaseStorage().remove(bucket=BUCKET,object_path=object_path)
+   except Exception:pass
   raise HTTPException(502,"Voiceover artifact persistence failed") from exc
- return {"data":{"generation_id":str(generation_id),"asset_id":str(asset_id),"status":"completed","size_bytes":len(content),"sha256":digest}}
+ return {"data":{"generation_id":str(generation_id),"asset_id":str(asset_id),"status":"completed","size_bytes":len(content),"sha256":digest,"alignment_status":alignment["status"],"waveform_persisted":bool(waveform_content)}}
 @router.post("/internal/media-jobs/{generation_id}/failed")
 async def fail_media_job(generation_id:UUID,payload:VoiceoverFailure,request:Request,worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
  _require_worker(request)

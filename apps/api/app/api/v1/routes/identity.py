@@ -358,7 +358,7 @@ async def update_profile(
     return {"data": dict(row)}
 
 
-@router.post("/me/avatar", status_code=201)
+@router.post("/me/avatar", status_code=201, dependencies=[Depends(auth_rate_limit)])
 async def upload_avatar(
     claims: AuthenticatedClaims,
     file: Annotated[UploadFile, File()],
@@ -627,7 +627,7 @@ async def list_invitations(
     return {"data": [dict(row) for row in rows]}
 
 
-@router.post("/workspaces/{workspace_id}/invitations", status_code=201)
+@router.post("/workspaces/{workspace_id}/invitations", status_code=201, dependencies=[Depends(auth_rate_limit)])
 async def create_invitation(
     workspace_id: UUID,
     payload: InviteCreate,
@@ -686,7 +686,7 @@ async def create_invitation(
         ) from exc
 
 
-@router.patch("/workspaces/{workspace_id}/members/{member_id}")
+@router.patch("/workspaces/{workspace_id}/members/{member_id}", dependencies=[Depends(auth_rate_limit)])
 async def update_member_role(
     workspace_id: UUID,
     member_id: UUID,
@@ -740,7 +740,7 @@ async def update_member_role(
     return {"data": {"member_id": str(member_id), "role": payload.role}}
 
 
-@router.delete("/workspaces/{workspace_id}/members/{member_id}", status_code=204)
+@router.delete("/workspaces/{workspace_id}/members/{member_id}", status_code=204, dependencies=[Depends(auth_rate_limit)])
 async def remove_workspace_member(
     workspace_id: UUID,
     member_id: UUID,
@@ -781,7 +781,7 @@ async def remove_workspace_member(
     return None
 
 
-@router.delete("/workspaces/{workspace_id}/invitations/{invitation_id}", status_code=204)
+@router.delete("/workspaces/{workspace_id}/invitations/{invitation_id}", status_code=204, dependencies=[Depends(auth_rate_limit)])
 async def cancel_invitation(
     workspace_id: UUID,
     invitation_id: UUID,
@@ -814,7 +814,7 @@ async def cancel_invitation(
     return None
 
 
-@router.post("/invitations/accept")
+@router.post("/invitations/accept", dependencies=[Depends(auth_rate_limit)])
 async def accept_invitation(
     payload: InviteAccept, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
 ):

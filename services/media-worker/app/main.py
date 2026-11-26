@@ -75,7 +75,7 @@ class Worker:
         provider_key = job.get("provider_key", "openai")
         if provider_key == "gemini":
             provider = GeminiTTSProvider(os.environ.get("GEMINI_API_KEY", ""))
-            model_default = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+            model_default = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
         elif provider_key == "openai":
             provider = OpenAITTSProvider(os.environ.get("OPENAI_API_KEY", ""))
             model_default = os.environ.get("OPENAI_TTS_MODEL", "tts-1")

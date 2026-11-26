@@ -133,7 +133,10 @@ class Settings(BaseSettings):
             "require"
         ]:
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
-        if self.supabase_service_role_key_value == self.supabase_anon_key_value and self.supabase_anon_key_value:
+        if (
+            self.supabase_service_role_key_value == self.supabase_anon_key_value
+            and self.supabase_anon_key_value
+        ):
             raise ValueError("SUPABASE_SERVICE_ROLE_KEY must be distinct from SUPABASE_ANON_KEY")
         if self.supabase_jwt_secret and len(self.supabase_jwt_secret.get_secret_value()) < 32:
             raise ValueError(
@@ -154,7 +157,9 @@ class Settings(BaseSettings):
             raise ValueError("BFF_SHARED_SECRET must contain at least 32 characters")
         if self.invitation_from_email:
             sender_address = parseaddr(self.invitation_from_email)[1]
-            sender_domain = sender_address.rsplit("@", 1)[-1].lower() if "@" in sender_address else ""
+            sender_domain = (
+                sender_address.rsplit("@", 1)[-1].lower() if "@" in sender_address else ""
+            )
             if (
                 not sender_address
                 or "." not in sender_domain

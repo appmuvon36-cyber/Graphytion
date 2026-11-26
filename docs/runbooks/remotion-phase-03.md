@@ -46,3 +46,16 @@ Apply the new migration only during the separately authorized deployment/databas
 - `PUT /projects/{project_id}/timeline` returns a new short-lived `resolved_assets` map after validating project ownership. The client replaces its preview resolver map with that response. Signed URLs remain transient and are not written into the immutable snapshot.
 - Interactive preview displays an explicit missing-media placeholder when an asset URL is not resolved. The render API continues to reject missing, foreign-project, or unavailable asset references before queuing a render.
 - Timeline Editor exposes clip-level trim/playback rate, transition-in/out, paired crossfade, crop geometry, and keyframe controls. Crossfade pairing adjusts the next clip start to create the required exact overlap.
+
+
+## Runtime database credential separation
+
+Keep the existing `DATABASE_URL` unchanged if it is the administrative/migration connection. FastAPI now prioritizes `GRAPHYTION_RUNTIME_DATABASE_URL` for its SQLAlchemy engine. Configure this new server-only variable on the Railway API service with a URL for the dedicated `graphytion_api` login, using the Graphytion direct database host or project-scoped Supavisor endpoint and TLS. Do not use the `postgres` login for the API runtime: it has BYPASSRLS and elevated role-management privileges. The role `graphytion_api` must be granted LOGIN and a unique password out-of-band; never commit or send the password through source control.
+
+## Redis capacity fallback
+
+Redis is an optional queue wake-up accelerator; PostgreSQL remains the durable job source of truth. If Railway cannot provision a Redis service because of workspace resource limits, leave `REDIS_URL` empty on API, Media Worker, and Render Worker. Both workers fall back to PostgreSQL polling and lease recovery. Do not set a reference to a Redis service that is absent from the environment.
+
+## Global render controls
+
+The Super Admin `/admin` control plane manages the singleton `platform_render_settings` record. Settings are audited and validated server-side. Render claims serialize the capacity check with a PostgreSQL advisory transaction lock and call `private.graphytion_render_runtime_capacity()` to enforce the concurrency cap and lease. The global artifact limit is bounded by the current 512 MiB API upload cap.

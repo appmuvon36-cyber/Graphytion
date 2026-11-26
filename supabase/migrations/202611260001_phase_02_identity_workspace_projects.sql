@@ -132,11 +132,15 @@ returns boolean language sql stable security definer set search_path = public, a
     where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active')
 $$;
 create or replace function public.graphytion_workspace_role(target_workspace uuid)
-returns text language sql stable security definer set search_path = public, auth as $$
+returns text language sql stable security definer set search_path = public, auth as $
   select m.role from public.workspace_members m
   where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active'
   limit 1
-$$;
+$;
+create or replace function public.graphytion_workspace_owner(target_workspace uuid)
+returns uuid language sql stable security definer set search_path = public as $
+  select w.owner_user_id from public.workspaces w where w.id=target_workspace
+$;
 
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
@@ -158,15 +162,15 @@ using (public.graphytion_is_workspace_member(id));
 drop policy if exists workspaces_update_admin on public.workspaces;
 create policy workspaces_update_admin on public.workspaces for update to authenticated
 using (public.graphytion_workspace_role(id) in ('owner','admin'))
-with check (public.graphytion_workspace_role(id) in ('owner','admin'));
+with check (public.graphytion_workspace_role(id) in ('owner','admin') and owner_user_id = public.graphytion_workspace_owner(id));
 
 drop policy if exists workspace_members_select_member on public.workspace_members;
 create policy workspace_members_select_member on public.workspace_members for select to authenticated
 using (public.graphytion_is_workspace_member(workspace_id));
 drop policy if exists workspace_members_manage_admin on public.workspace_members;
 create policy workspace_members_manage_admin on public.workspace_members for all to authenticated
-using (public.graphytion_workspace_role(workspace_id) in ('owner','admin'))
-with check (public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
+using (role <> 'owner' and public.graphytion_workspace_role(workspace_id) in ('owner','admin'))
+with check (role <> 'owner' and public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
 
 drop policy if exists workspace_invitations_admin on public.workspace_invitations;
 create policy workspace_invitations_admin on public.workspace_invitations for all to authenticated

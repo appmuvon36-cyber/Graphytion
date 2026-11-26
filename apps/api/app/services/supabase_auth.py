@@ -41,6 +41,9 @@ class SupabaseAuth:
     async def logout(self, access_token: str) -> None:
         await self._request("POST", "/logout", token=access_token)
 
+    async def update_password(self, access_token: str, password: str) -> dict[str, Any]:
+        return await self._request("PUT", "/user", token=access_token, payload={"password": password})
+
     async def recover(self, email: str) -> dict[str, Any]:
         return await self._request("POST", "/recover", payload={"email": email})
 

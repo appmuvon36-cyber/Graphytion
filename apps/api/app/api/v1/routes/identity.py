@@ -1,25 +1,37 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import secrets
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AuthenticatedClaims, current_claims
+from app.api.deps import AuthenticatedClaims
 from app.core.database import get_db_session
-from app.core.security import verify_access_token
 from app.services.supabase_auth import supabase_auth
 from app.services.workspace_authorization import WorkspacePermissionResolver
+from app.core.redis import redis_client
 
 router = APIRouter()
 Db = Depends(get_db_session)
+
+async def auth_rate_limit(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"graphytion:ratelimit:auth:{client_ip}:{request.url.path}"
+    try:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, 60)
+        if count > 10:
+            raise HTTPException(status_code=429, detail="Too many authentication requests; retry later")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Authentication rate limiter unavailable") from exc
 
 class AuthSignup(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -31,6 +43,9 @@ class AuthLogin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=1, max_length=128)
+
+class PasswordUpdate(BaseModel):
+    password: str = Field(min_length=10, max_length=128)
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=20, max_length=4096)
@@ -115,32 +130,36 @@ async def audit(db: AsyncSession, actor: UUID, workspace: UUID | None, action: s
       values (:actor,:workspace,:action,:resource,:resource_id,:request_id)
     """), {"actor":actor,"workspace":workspace,"action":action,"resource":resource,"resource_id":resource_id,"request_id":getattr(request.state,"request_id",None)})
 
-@router.post("/auth/signup", status_code=201)
+@router.post("/auth/signup", status_code=201, dependencies=[Depends(auth_rate_limit)])
 async def signup(payload: AuthSignup):
     return await supabase_auth.signup(payload.email, payload.password, payload.display_name)
 
-@router.post("/auth/login")
+@router.post("/auth/login", dependencies=[Depends(auth_rate_limit)])
 async def login(payload: AuthLogin):
     return await supabase_auth.login(payload.email, payload.password)
 
-@router.post("/auth/refresh")
+@router.post("/auth/refresh", dependencies=[Depends(auth_rate_limit)])
 async def refresh(payload: RefreshRequest):
     return await supabase_auth.refresh(payload.refresh_token)
 
-@router.post("/auth/logout", status_code=204)
+@router.post("/auth/logout", status_code=204, dependencies=[Depends(auth_rate_limit)])
 async def logout(claims: AuthenticatedClaims, authorization: str = Header()):
     await supabase_auth.logout(authorization.removeprefix("Bearer ").strip())
     return None
 
-@router.post("/auth/recovery")
+@router.post("/auth/password", dependencies=[Depends(auth_rate_limit)])
+async def update_password(payload: PasswordUpdate, claims: AuthenticatedClaims):
+    return await supabase_auth.update_password(claims["_access_token"], payload.password)
+
+@router.post("/auth/recovery", dependencies=[Depends(auth_rate_limit)])
 async def recovery(payload: EmailRequest):
     return await supabase_auth.recover(payload.email)
 
-@router.post("/auth/verify")
+@router.post("/auth/verify", dependencies=[Depends(auth_rate_limit)])
 async def verify_email(payload: VerifyEmail):
     return await supabase_auth.verify_email(payload.token_hash, payload.type)
 
-@router.post("/auth/resend-verification")
+@router.post("/auth/resend-verification", dependencies=[Depends(auth_rate_limit)])
 async def resend_verification(payload: EmailRequest):
     return await supabase_auth.resend_verification(payload.email)
 
@@ -221,6 +240,18 @@ async def update_workspace(workspace_id: UUID, payload: WorkspaceUpdate, request
     row=(await db.execute(text(f"update public.workspaces set {assignments},updated_at=now() where id=:id returning *"),{**values,"id":workspace_id})).mappings().one()
     await audit(db,user_id,workspace_id,"workspace.updated","workspace",workspace_id,request); await db.commit()
     return {"data":dict(row)}
+
+
+@router.delete("/workspaces/{workspace_id}", status_code=204)
+async def delete_workspace(workspace_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db):
+    actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner"})
+    project_count=(await db.execute(text("select count(*) from public.video_projects where workspace_id=:workspace"),{"workspace":workspace_id})).scalar_one()
+    if project_count:
+        raise HTTPException(status_code=409,detail="Workspace contains projects; archive or transfer them before deleting the workspace")
+    await audit(db,actor,workspace_id,"workspace.deleted","workspace",workspace_id,request)
+    await db.execute(text("delete from public.workspaces where id=:workspace"),{"workspace":workspace_id})
+    await db.commit()
+    return None
 
 @router.get("/workspaces/{workspace_id}/members")
 async def list_members(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):

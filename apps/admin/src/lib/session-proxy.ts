@@ -246,7 +246,9 @@ export async function handleSessionProxy(
     }
   }
 
-  const bytes = method === 'HEAD' ? null : await response.arrayBuffer();
+  const bytes = ['HEAD'].includes(method) || [204, 304].includes(response.status)
+    ? null
+    : await response.arrayBuffer();
   const headers = new Headers();
   const responseType = response.headers.get('content-type');
   if (responseType) headers.set('Content-Type', responseType);

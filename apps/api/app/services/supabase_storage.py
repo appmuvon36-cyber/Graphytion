@@ -9,7 +9,7 @@ class SupabaseStorage:
     """Server-only Supabase Storage adapter; service credentials never leave FastAPI."""
 
     def _headers(self) -> dict[str, str]:
-        key = settings.supabase_service_role_key
+        key = settings.supabase_service_role_key_value
         if not key:
             raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is not configured")
         return {"Authorization": f"Bearer {key}", "apikey": key}

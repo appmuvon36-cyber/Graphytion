@@ -5,7 +5,7 @@ import secrets
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from app.api.deps import AuthenticatedClaims
 from app.core.database import get_db_session
 from app.core.redis import redis_client
 from app.services.supabase_auth import supabase_auth
+from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -77,7 +78,6 @@ class ProfileUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, min_length=1, max_length=80)
     bio: str | None = Field(default=None, max_length=500)
-    avatar_path: str | None = Field(default=None, max_length=512)
     locale: str | None = Field(default=None, max_length=16)
     timezone: str | None = Field(default=None, max_length=64)
 
@@ -252,11 +252,6 @@ async def update_profile(
 ):
     user_id = uid(claims)
     values = payload.model_dump(exclude_unset=True)
-    if "avatar_path" in values and values["avatar_path"] is not None:
-        if not values["avatar_path"].startswith(f"{user_id}/"):
-            raise HTTPException(
-                status_code=403, detail=("Avatar path must be owned by the authenticated user")
-            )
     if not values:
         raise HTTPException(status_code=400, detail="No profile fields supplied")
     assignments = ", ".join(f"{key}=:{key}" for key in values)
@@ -277,6 +272,68 @@ async def update_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
     await db.commit()
     return {"data": dict(row)}
+
+
+@router.post("/me/avatar", status_code=201)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    claims: AuthenticatedClaims = None,
+    db: AsyncSession = Db,
+):
+    user_id = uid(claims)
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if not content or len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Avatar must be between 1 byte and 5 MB")
+    mime_signatures = {
+        "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg": content.startswith(b"\xff\xd8\xff"),
+        "image/webp": len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP",
+    }
+    content_type = file.content_type or ""
+    if content_type not in mime_signatures or not mime_signatures[content_type]:
+        raise HTTPException(status_code=415, detail="Only valid PNG, JPEG, and WebP images are accepted")
+    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[content_type]
+    object_path = f"{user_id}/{secrets.token_hex(16)}.{extension}"
+    try:
+        await SupabaseStorage().upload(
+            bucket="avatars", object_path=object_path, content=content, content_type=content_type
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Avatar storage upload failed") from exc
+    row = (
+        (await db.execute(
+            text("""
+                update public.profiles set avatar_path=:path,updated_at=now()
+                where id=:user_id
+                returning id,display_name,avatar_path,bio,locale,timezone,updated_at
+            """),
+            {"path": object_path, "user_id": user_id},
+        )).mappings().first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    await db.commit()
+    return {"data": dict(row)}
+
+
+@router.get("/me/avatar-url")
+async def get_avatar_url(claims: AuthenticatedClaims, db: AsyncSession = Db):
+    user_id = uid(claims)
+    path = (await db.execute(
+        text("select avatar_path from public.profiles where id=:user_id"),
+        {"user_id": user_id},
+    )).scalar_one_or_none()
+    if not path:
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    if not path.startswith(f"{user_id}/"):
+        raise HTTPException(status_code=403, detail="Avatar ownership check failed")
+    try:
+        signed_url = await SupabaseStorage().create_signed_url(
+            bucket="avatars", object_path=path, expires_in=300
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Avatar URL could not be created") from exc
+    return {"data": {"signed_url": signed_url, "expires_in": 300}}
 
 
 @router.get("/workspaces")

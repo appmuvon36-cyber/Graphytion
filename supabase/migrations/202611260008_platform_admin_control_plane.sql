@@ -45,6 +45,14 @@ drop policy if exists workspaces_platform_admin_read on public.workspaces;
 create policy workspaces_platform_admin_read on public.workspaces
   for select to graphytion_api using (private.graphytion_is_platform_admin());
 
+drop policy if exists workspace_invitations_platform_admin_read on public.workspace_invitations;
+create policy workspace_invitations_platform_admin_read on public.workspace_invitations
+  for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists workspace_invitations_platform_admin_update on public.workspace_invitations;
+create policy workspace_invitations_platform_admin_update on public.workspace_invitations
+  for update to graphytion_api using (private.graphytion_is_platform_admin())
+  with check (private.graphytion_is_platform_admin());
+
 drop policy if exists workspace_members_platform_admin_read on public.workspace_members;
 create policy workspace_members_platform_admin_read on public.workspace_members
   for select to graphytion_api using (private.graphytion_is_platform_admin());

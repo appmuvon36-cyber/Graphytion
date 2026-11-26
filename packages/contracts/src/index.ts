@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const UUID = z.string().uuid();
 export const Timestamp = z.string().datetime({ offset: true });
 export const AspectRatio = z.enum(['16:9','9:16','1:1','4:5','4:3']);
-export const UserRole = z.enum(['owner','admin','editor','viewer','billing']);
+export const UserRole = z.enum(['owner','admin','editor','member','viewer','billing']);
 export const ProjectStatus = z.enum(['draft','active','archived','deleted']);
 export const TaskStatus = z.enum(['pending','queued','running','succeeded','failed','retry_wait','cancelled','skipped']);
 export const RunStatus = z.enum(['queued','planning','scripting','storyboarding','asset_generation','audio_generation','subtitle_generation','timeline_compilation','ready_for_review','render_queued','rendering','quality_check','completed','failed','cancel_requested','cancelled']);

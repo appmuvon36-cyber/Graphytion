@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import Field
 from app.contracts.common import StrictModel
 
-class WorkspaceRole(StrEnum): OWNER="owner"; ADMIN="admin"; EDITOR="editor"; VIEWER="viewer"; BILLING="billing"
+class WorkspaceRole(StrEnum): OWNER="owner"; ADMIN="admin"; EDITOR="editor"; MEMBER="member"; VIEWER="viewer"; BILLING="billing"
 class ProjectStatus(StrEnum): DRAFT="draft"; ACTIVE="active"; ARCHIVED="archived"; DELETED="deleted"
 class TaskStatus(StrEnum): PENDING="pending"; QUEUED="queued"; RUNNING="running"; SUCCEEDED="succeeded"; FAILED="failed"; RETRY_WAIT="retry_wait"; CANCELLED="cancelled"; SKIPPED="skipped"
 class RenderStatus(StrEnum): QUEUED="queued"; PREPARING="preparing"; RENDERING="rendering"; UPLOADING="uploading"; VALIDATING="validating"; COMPLETED="completed"; FAILED="failed"; CANCEL_REQUESTED="cancel_requested"; CANCELLED="cancelled"

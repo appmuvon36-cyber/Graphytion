@@ -51,10 +51,10 @@ class SupabaseAuth:
     async def resend_verification(self, email: str) -> dict[str, Any]:
         return await self._request("POST", "/resend", payload={"type": "signup", "email": email})
 
-supabase_auth = SupabaseAuth()
-
     async def verify_email(self, token_hash: str, verification_type: str) -> dict[str, Any]:
         allowed = {"signup", "email", "recovery", "invite", "magiclink", "email_change"}
         if verification_type not in allowed:
             raise HTTPException(status_code=422, detail="Unsupported verification type")
         return await self._request("POST", "/verify", payload={"token_hash": token_hash, "type": verification_type})
+
+supabase_auth = SupabaseAuth()

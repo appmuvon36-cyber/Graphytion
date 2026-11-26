@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, str, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from app.api.deps import AuthenticatedClaims, current_claims
 from app.core.database import get_db_session
 from app.core.security import verify_access_token
 from app.services.supabase_auth import supabase_auth
+from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
 Db = Depends(get_db_session)
@@ -104,16 +105,9 @@ def uid(claims: dict[str, Any]) -> UUID:
         raise HTTPException(status_code=401, detail="Invalid authenticated subject") from exc
 
 async def require_workspace(db: AsyncSession, user_id: UUID, workspace_id: UUID, roles: set[str] | None = None) -> str:
-    row = (await db.execute(text("""
-        select role from public.workspace_members
-        where workspace_id=:workspace_id and user_id=:user_id and status='active'
-    """), {"workspace_id": workspace_id, "user_id": user_id})).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    role = str(row["role"])
-    if roles is not None and role not in roles:
-        raise HTTPException(status_code=403, detail="Insufficient workspace permission")
-    return role
+    return await WorkspacePermissionResolver().require_membership(
+        session=db, user_id=str(user_id), workspace_id=str(workspace_id), allowed_roles=roles
+    )
 
 async def audit(db: AsyncSession, actor: UUID, workspace: UUID | None, action: str, resource: str, resource_id: UUID | None, request: Request) -> None:
     await db.execute(text("""

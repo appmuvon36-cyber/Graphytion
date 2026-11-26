@@ -1,6 +1,5 @@
 packages:
   - "apps/web"
-  - "apps/admin"
   - "apps/remotion-studio"
   - "services/render-worker"
   - "packages/*"

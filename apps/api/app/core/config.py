@@ -1,5 +1,6 @@
+from email.utils import parseaddr
 from functools import lru_cache
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,7 +14,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    app_env: str = "local"
+    # Fail closed if the deployment forgets to declare its environment.
+    app_env: str = "production"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     app_public_url: str = "http://localhost:3000"
@@ -125,11 +127,13 @@ class Settings(BaseSettings):
                 "DATABASE_URL must use a dedicated non-administrative PostgreSQL "
                 "login and a real password"
             )
-        if (
-            "ssl=require" not in self.database_url_value
-            and "sslmode=require" not in self.database_url_value
-        ):
+        database_query = parse_qs(db_url.query)
+        if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != ["require"]:
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
+        if self.supabase_service_role_key_value == self.supabase_anon_key_value:
+            raise ValueError("SUPABASE_SERVICE_ROLE_KEY must be distinct from SUPABASE_ANON_KEY")
+        if self.supabase_jwt_secret and len(self.supabase_jwt_secret.get_secret_value()) < 32:
+            raise ValueError("SUPABASE_JWT_SECRET must contain at least 32 characters when configured")
 
         redis_url = urlparse(self.redis_url_value)
         if redis_url.scheme != "rediss" or not redis_url.hostname:
@@ -149,11 +153,14 @@ class Settings(BaseSettings):
             raise ValueError("SUPABASE_JWKS_URL does not match SUPABASE_URL")
         if len(self.bff_shared_secret_value or "") < 32:
             raise ValueError("BFF_SHARED_SECRET must contain at least 32 characters")
-        if self.invitation_from_email and (
-            "@" not in self.invitation_from_email
-            or "example.com" in self.invitation_from_email.lower()
+        sender_address = parseaddr(self.invitation_from_email or "")[1]
+        sender_domain = sender_address.rsplit("@", 1)[-1].lower() if "@" in sender_address else ""
+        if (
+            not sender_address
+            or "." not in sender_domain
+            or sender_domain in {"example.com", "example.org", "localhost"}
         ):
-            raise ValueError("INVITATION_FROM_EMAIL must use a real verified sender domain")
+            raise ValueError("INVITATION_FROM_EMAIL must use a real sender address on the verified domain")
         if self.invitation_email_provider.lower() != "resend":
             raise ValueError("Only the configured Resend invitation provider is supported")
         return self

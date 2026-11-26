@@ -91,8 +91,16 @@ export function createApiClient(options: ApiClientOptions) {
         body: JSON.stringify(body),
         headers: key ? { 'Idempotency-Key': key } : undefined,
       }),
+    put: <T>(path: string, body: unknown) =>
+      request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
     patch: <T>(path: string, body: unknown) =>
       request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
+    upload: <T>(path: string, body: FormData, key?: string) =>
+      request<T>(path, {
+        method: 'POST',
+        body,
+        headers: key ? { 'Idempotency-Key': key } : undefined,
+      }),
     delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   };
 }

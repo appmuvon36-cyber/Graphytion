@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -48,8 +49,17 @@ app.add_exception_handler(Exception, unhandled_error_handler)
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid4())
     request.state.request_id = request_id
+    started = perf_counter()
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "http_request_completed",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=round((perf_counter() - started) * 1000, 2),
+    )
     return response
 
 

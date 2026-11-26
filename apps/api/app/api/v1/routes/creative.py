@@ -804,11 +804,13 @@ async def _process_creative_run(
             "artifact": artifact_id, "output": json.dumps({"provenance": provenance, "artifact_id": str(artifact_id)}),
             "task": task, "worker": run["worker_id"],
         })
-        await db.execute(text("""
+        completed_run = await db.execute(text("""
             update public.production_runs set status='ready_for_review',current_stage=:stage,
                 progress_percent=100,completed_at=now(),worker_id=null,lease_expires_at=null
-            where id=:run and worker_id=:worker
+            where id=:run and worker_id=:worker returning id
         """), {"stage": stage, "run": run["id"], "worker": run["worker_id"]})
+        if completed_run.scalar_one_or_none() is None:
+            raise HTTPException(status_code=409, detail="Creative worker lease was lost before commit")
         await db.execute(text("""
             insert into public.workflow_checkpoints(production_run_id,stage_key,checkpoint_key,payload,content_hash)
             values (:run,:stage,:key,cast(:payload as jsonb),:hash)

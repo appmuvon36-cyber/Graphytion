@@ -118,8 +118,9 @@ async def create_render(
     if (profile["width"],profile["height"],profile["fps"]) != (snapshot["width"],snapshot["height"],snapshot["fps"]):
         raise HTTPException(422, detail="Render profile resolution and FPS must match the immutable composition snapshot")
     render_config = {"codec":profile["video_codec"],"format":profile["container"],"video_crf":profile["video_crf"],"video_bitrate":profile["video_bitrate"],"audio_codec":profile["audio_codec"],"audio_bitrate":profile["audio_bitrate"],"concurrency":profile["render_concurrency"],"priority":profile["priority"],"thumbnail_enabled":profile["thumbnail_enabled"],"preview_enabled":profile["preview_enabled"],"profile_key":profile["profile_key"],"profile_version":profile["version"]}
+    max_attempts = await db.scalar(text("select max_attempts from public.platform_render_settings where singleton_id=1")) or 3
     timeline_id = await db.scalar(text("select id from public.video_timelines where project_id=:project and compiled_hash=:hash order by version desc limit 1"), {"project":project_id,"hash":timeline_hash})
-    row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id})).mappings().first()
+    row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id,max_attempts) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id,:max_attempts) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id,"max_attempts":max_attempts})).mappings().first()
     if row is None:
         existing = (await db.execute(text("select id,status,timeline_hash,render_profile_id,render_config,composition_version from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
         if (
@@ -229,11 +230,24 @@ async def claim_render_job(
     db: AsyncSession = DbSession,
 ):
     _require_worker(request)
+    # Serialize claims around the global capacity check so multiple replicas cannot
+    # exceed the platform concurrency limit between counting and claiming.
+    await db.execute(text("select pg_advisory_xact_lock(20261127, 3003)"))
+    capacity = (await db.execute(text(
+        "select * from private.graphytion_render_runtime_capacity()"
+    ))).mappings().first()
+    if capacity is None:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Global render runtime settings are unavailable")
+    if int(capacity["active_jobs"]) >= int(capacity["max_concurrent_jobs"]):
+        await db.rollback()
+        return {"data": None}
     row = (await db.execute(text("""
         select * from private.graphytion_claim_render_job(
-            :worker,cast(:job as uuid),300
+            :worker,cast(:job as uuid),:lease_seconds
         )
-    """), {"worker": worker_id, "job": render_job_id})).mappings().first()
+    """), {"worker": worker_id, "job": render_job_id,
+           "lease_seconds": int(capacity["lease_seconds"])})).mappings().first()
     if row is None:
         await db.rollback()
         return {"data": None}
@@ -304,11 +318,15 @@ async def complete_render_artifact(
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
-    content = await file.read(MAX_RENDER_BYTES + 1)
+    configured_max_bytes = await db.scalar(text(
+        "select max_output_bytes from public.platform_render_settings where singleton_id=1"
+    ))
+    max_render_bytes = min(MAX_RENDER_BYTES, int(configured_max_bytes or MAX_RENDER_BYTES))
+    content = await file.read(max_render_bytes + 1)
     container = row["render_config"].get("format","mp4")
     is_mp4 = len(content)>=12 and content[4:8]==b"ftyp"
     is_webm = len(content)>=4 and content[:4]==bytes.fromhex("1a45dfa3")
-    if len(content)<12 or len(content)>MAX_RENDER_BYTES or not ((container=="mp4" and is_mp4) or (container=="webm" and is_webm)):
+    if len(content)<12 or len(content)>max_render_bytes or not ((container=="mp4" and is_mp4) or (container=="webm" and is_webm)):
         raise HTTPException(status_code=415, detail="Render output does not match its persisted container profile")
     mime_type = "video/webm" if container=="webm" else "video/mp4"
     extension = "webm" if container=="webm" else "mp4"

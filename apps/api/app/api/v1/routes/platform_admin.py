@@ -661,6 +661,19 @@ async def admin_toggle_motion_component(component_key:str,payload:MotionComponen
     await db.commit();return {"data":dict(row)}
 
 
+@router.get("/workers")
+async def admin_list_workers(claims: AuthenticatedClaims, db: AsyncSession = DbSession):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select worker_id,worker_type,hostname,version,status,metadata,started_at,last_seen_at,
+               case when last_seen_at > now()-interval '90 seconds' then 'online' else 'stale' end runtime_status
+        from public.worker_heartbeats
+        order by worker_type, last_seen_at desc
+    """))).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
 @router.get("/render-jobs")
 async def admin_list_render_jobs(claims:AuthenticatedClaims,page:int=Query(default=1,ge=1),per_page:int=Query(default=50,ge=1,le=100),status:str|None=Query(default=None,max_length=32),db:AsyncSession=DbSession):
     actor=_actor(claims);await _require_platform_admin(db,actor)

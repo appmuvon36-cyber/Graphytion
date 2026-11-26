@@ -196,9 +196,17 @@ returns text language sql stable security definer set search_path = public, auth
 $$;
 
 create or replace function public.graphytion_workspace_owner(target_workspace uuid)
-returns uuid language sql stable security definer set search_path = public as $$
-  select w.owner_user_id from public.workspaces w where w.id=target_workspace
-$$;
+returns uuid language sql stable security definer set search_path = public, auth as $
+  select w.owner_user_id
+  from public.workspaces w
+  where w.id=target_workspace
+    and exists (
+      select 1 from public.workspace_members m
+      where m.workspace_id=target_workspace
+        and m.user_id=auth.uid()
+        and m.status='active'
+    )
+$;
 
 create or replace function public.graphytion_protect_workspace_owner()
 returns trigger language plpgsql set search_path = public as $$
@@ -232,6 +240,19 @@ $$;
 drop trigger if exists workspace_members_protect_identity on public.workspace_members;
 create trigger workspace_members_protect_identity before update on public.workspace_members
 for each row execute function public.graphytion_protect_membership_identity();
+
+-- Keep SECURITY DEFINER helpers private to authenticated callers and avoid exposing trigger functions as RPCs.
+revoke all on function public.graphytion_sync_auth_profile() from public, anon, authenticated;
+revoke all on function public.graphytion_touch_updated_at() from public, anon, authenticated;
+revoke all on function public.graphytion_protect_workspace_owner() from public, anon, authenticated;
+revoke all on function public.graphytion_protect_membership_identity() from public, anon, authenticated;
+revoke all on function public.graphytion_protect_project_tenant() from public, anon, authenticated;
+revoke all on function public.graphytion_is_workspace_member(uuid) from public, anon, authenticated;
+revoke all on function public.graphytion_workspace_role(uuid) from public, anon, authenticated;
+revoke all on function public.graphytion_workspace_owner(uuid) from public, anon, authenticated;
+grant execute on function public.graphytion_is_workspace_member(uuid) to authenticated;
+grant execute on function public.graphytion_workspace_role(uuid) to authenticated;
+grant execute on function public.graphytion_workspace_owner(uuid) to authenticated;
 
 create or replace function public.graphytion_protect_project_tenant()
 returns trigger language plpgsql set search_path = public as $$

@@ -18,6 +18,7 @@ from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.composition_validation import validate_snapshot
 from app.services.composition_assets import collect_asset_ids, resolve_project_assets
+from app.services.queue_notifications import notify_worker
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
@@ -130,7 +131,8 @@ async def create_render(
         values (:actor,:workspace,'render.queued','render_job',:job,:request_id)
     """), {"actor": actor, "workspace": workspace_id, "job": row["id"], "request_id": request.state.request_id})
     await db.commit()
-    # Workers poll PostgreSQL directly; the persisted render_jobs row is the queue.
+    await notify_worker("render", str(row["id"]))
+    # PostgreSQL remains durable; Redis is a best-effort worker wake-up channel.
     return {"data": {"render_job_id": str(row["id"]), "status": "queued", "timeline_hash": timeline_hash}}
 
 

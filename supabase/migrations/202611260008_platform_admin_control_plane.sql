@@ -60,6 +60,10 @@ create policy workspace_members_platform_admin_read on public.workspace_members
 drop policy if exists video_projects_platform_admin_read on public.video_projects;
 create policy video_projects_platform_admin_read on public.video_projects
   for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists video_projects_platform_admin_update on public.video_projects;
+create policy video_projects_platform_admin_update on public.video_projects
+  for update to graphytion_api using (private.graphytion_is_platform_admin())
+  with check (private.graphytion_is_platform_admin());
 
 drop policy if exists audit_logs_platform_admin_read on public.audit_logs;
 create policy audit_logs_platform_admin_read on public.audit_logs

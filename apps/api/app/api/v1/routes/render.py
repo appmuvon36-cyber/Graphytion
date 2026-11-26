@@ -430,3 +430,33 @@ async def download_render(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Render download URL could not be created") from exc
     return {"data": {"signed_url": signed_url, "expires_in": 300}}
+
+
+@router.post("/renders/{render_job_id}/cancel")
+async def cancel_queued_render(
+    render_job_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    row = (await db.execute(text("""
+        select id,project_id,workspace_id,status from public.render_jobs where id=:job
+    """), {"job": render_job_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Render job not found")
+    await _project_workspace(db, row["project_id"], actor, "project.update")
+    if row["status"] != "queued":
+        raise HTTPException(status_code=409, detail="Only queued render jobs can be cancelled; active Remotion renders are not interruptible")
+    await db.execute(text("""
+        update public.render_jobs set status='cancelled',completed_at=now(),
+            worker_id=null,lease_expires_at=null
+        where id=:job and status='queued'
+    """), {"job": render_job_id})
+    await db.execute(text("""
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
+        values (:actor,:workspace,'render.cancelled','render_job',:job,:request_id)
+    """), {"actor": actor, "workspace": row["workspace_id"], "job": render_job_id,
+           "request_id": request.state.request_id})
+    await db.commit()
+    return {"data": {"render_job_id": str(render_job_id), "status": "cancelled"}}

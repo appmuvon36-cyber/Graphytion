@@ -276,6 +276,16 @@ alter table public.project_settings enable row level security;
 alter table public.api_idempotency_keys enable row level security;
 alter table public.audit_logs enable row level security;
 
+-- Explicit Data API privileges: this project uses FastAPI as the only write path.
+-- Authenticated clients receive only the read/update privileges covered by RLS.
+grant usage on schema public to authenticated, service_role;
+grant select on public.profiles, public.workspaces, public.workspace_members,
+  public.video_projects, public.project_settings, public.audit_logs to authenticated;
+grant update on public.workspaces to authenticated;
+grant all privileges on public.profiles, public.workspaces, public.workspace_members,
+  public.workspace_invitations, public.video_projects, public.project_settings,
+  public.api_idempotency_keys, public.audit_logs to service_role;
+
 drop policy if exists profiles_select_self on public.profiles;
 create policy profiles_select_self on public.profiles for select to authenticated
 using (id=auth.uid());

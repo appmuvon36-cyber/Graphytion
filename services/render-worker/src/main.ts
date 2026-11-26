@@ -1,5 +1,5 @@
 import {createClient} from 'redis';
-import {selectComposition, renderMedia} from '@remotion/renderer';
+import {makeCancelSignal, selectComposition, renderMedia} from '@remotion/renderer';
 import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -56,6 +56,21 @@ async function processJob(jobId?: string): Promise<boolean> {
   const directory = await mkdtemp(join(tmpdir(), 'graphytion-render-'));
   const outputPath = join(directory, `${claimed.id}.mp4`);
   let lastProgressAt = 0;
+  let currentProgress = 0;
+  const {cancelSignal, cancel} = makeCancelSignal();
+  let cancelInvoked = false;
+  const cancelRender = () => { if (!cancelInvoked) { cancelInvoked = true; cancel(); } };
+  const leaseHeartbeat = setInterval(async () => {
+    try {
+      const update = await api<{cancel_requested?: boolean}>(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
+        method: 'PATCH', body: JSON.stringify({progress_percent: Math.min(99.9, currentProgress)}),
+      });
+      if (update.cancel_requested) cancelRender();
+    } catch (error) {
+      console.error('render_lease_heartbeat_failed', {render_job_id: claimed.id, error});
+      cancelRender();
+    }
+  }, 30000);
   try {
     const inputProps = {snapshot: claimed.timeline_snapshot};
     const composition = await selectComposition({
@@ -69,7 +84,9 @@ async function processJob(jobId?: string): Promise<boolean> {
       codec: 'h264',
       outputLocation: outputPath,
       inputProps,
+      cancelSignal,
       onProgress: async ({progress}) => {
+        currentProgress = Math.min(99.9, Math.max(0, progress * 100));
         const now = Date.now();
         if (progress >= 1 || now - lastProgressAt >= 5000) {
           lastProgressAt = now;
@@ -77,7 +94,7 @@ async function processJob(jobId?: string): Promise<boolean> {
             method: 'PATCH',
             body: JSON.stringify({progress_percent: Math.min(99.9, Math.max(0, progress * 100))}),
           });
-          if (update.cancel_requested) throw new Error('RENDER_CANCEL_REQUESTED');
+          if (update.cancel_requested) cancelRender();
         }
       },
     });
@@ -108,6 +125,7 @@ async function processJob(jobId?: string): Promise<boolean> {
     console.error('render_failed', {render_job_id: claimed.id, message});
     return true;
   } finally {
+    clearInterval(leaseHeartbeat);
     await rm(directory, {recursive: true, force: true});
   }
 }

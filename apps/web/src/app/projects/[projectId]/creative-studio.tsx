@@ -37,7 +37,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
   const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
-  const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);\n  const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});\n  const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
+  const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
+  const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});
+  const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
   const [voiceText,setVoiceText]=useState('');
   const [voiceKey,setVoiceKey]=useState('alloy');
   const [voiceModel,setVoiceModel]=useState('tts-1');

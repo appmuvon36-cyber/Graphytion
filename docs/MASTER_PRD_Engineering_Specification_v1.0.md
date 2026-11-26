@@ -346,7 +346,7 @@ flowchart TB
 
 -   Job state dan antrean durable berada di Supabase PostgreSQL.
 -   Workers melakukan claim secara transaksional dengan `FOR UPDATE SKIP LOCKED`, lease owner, heartbeat, retry dan expired-lease recovery.
--   Worker polling melalui FastAPI; tidak diperlukan broker eksternal atau Redis.
+-   Worker polling melalui FastAPI; tidak diperlukan broker eksternal.
 -   Idempotency dan job lifecycle tetap dicatat di PostgreSQL.
 
 ## 4.3 Recommended repository structure

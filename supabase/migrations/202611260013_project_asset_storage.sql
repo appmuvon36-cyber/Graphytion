@@ -16,7 +16,7 @@ create table if not exists public.project_assets (
   content_type text not null,
   size_bytes bigint not null check (size_bytes > 0 and size_bytes <= 52428800),
   sha256 text not null check (sha256 ~ '^[a-f0-9]{64}$'),
-  status text not null default 'active' check (status in ('active','deleted')),
+  status text not null default 'active' check (status in ('active','deleting','delete_failed','deleted')),
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   unique(id,project_id,workspace_id)

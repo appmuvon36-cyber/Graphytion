@@ -41,7 +41,11 @@ function csrfMatches(request: NextRequest): boolean {
 
 function checkOrigin(request: NextRequest): boolean {
   try {
-    return request.headers.get('origin') === config().origin;
+    const expected = config().origin;
+    const origin = request.headers.get('origin');
+    if (origin) return origin === expected;
+    const referer = request.headers.get('referer');
+    return Boolean(referer && new URL(referer).origin === expected);
   } catch {
     return false;
   }
@@ -115,7 +119,12 @@ async function refreshTokens(request: NextRequest): Promise<TokenPayload | null>
     '/auth/refresh',
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Graphytion-Client-IP': request.headers.get('x-real-ip')
+          ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+          ?? 'unknown',
+      },
       body: JSON.stringify({ refresh_token: refreshToken }),
     },
     undefined,
@@ -163,6 +172,14 @@ export async function handleSessionProxy(
     const value = request.headers.get(name);
     if (value) forwardedHeaders.set(name, value);
   }
+  // The API trusts this client address only when the accompanying BFF secret is valid.
+  forwardedHeaders.set(
+    'X-Graphytion-Client-IP',
+    request.headers.get('x-real-ip')
+      ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+      ?? 'unknown',
+  );
+  forwardedHeaders.set('X-Graphytion-BFF-Secret', config().bffSecret);
 
   if (path === 'auth/session' && method === 'GET') {
     let response = accessToken ? await upstream('/me', { method: 'GET' }, accessToken) : null;

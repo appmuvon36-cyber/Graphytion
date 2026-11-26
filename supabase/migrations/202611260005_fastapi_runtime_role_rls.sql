@@ -292,6 +292,59 @@ with check (
   )
 );
 
+create or replace function public.graphytion_protect_invitation_update()
+returns trigger
+language plpgsql
+set search_path = public, private, auth
+as $invitation_guard$
+declare
+  actor_role text;
+begin
+  actor_role := private.graphytion_workspace_role(old.workspace_id);
+  if new.id is distinct from old.id
+    or new.workspace_id is distinct from old.workspace_id
+    or new.email is distinct from old.email
+    or new.role is distinct from old.role
+    or new.invited_by is distinct from old.invited_by
+    or new.created_at is distinct from old.created_at
+  then
+    raise exception 'invitation identity and role are immutable'
+      using errcode = '42501';
+  end if;
+
+  if actor_role in ('owner','admin') then
+    if old.role='admin' and actor_role<>'owner' then
+      raise exception 'only workspace owner can manage administrator invitations'
+        using errcode = '42501';
+    end if;
+  else
+    if not private.graphytion_invitation_matches_user(old.email,auth.uid())
+      or old.accepted_at is not null
+      or new.accepted_at is null
+      or new.cancelled_at is distinct from old.cancelled_at
+      or new.token_hash is distinct from old.token_hash
+      or new.expires_at is distinct from old.expires_at
+      or new.delivery_status is distinct from old.delivery_status
+      or new.delivery_attempts is distinct from old.delivery_attempts
+      or new.provider_message_id is distinct from old.provider_message_id
+      or new.sent_at is distinct from old.sent_at
+      or new.last_delivery_attempt_at is distinct from old.last_delivery_attempt_at
+      or new.last_delivery_error is distinct from old.last_delivery_error
+    then
+      raise exception 'invitee may only accept their own pending invitation'
+        using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end
+$invitation_guard$;
+
+revoke all on function public.graphytion_protect_invitation_update() from public,anon,authenticated,graphytion_runtime;
+drop trigger if exists workspace_invitations_protect_update on public.workspace_invitations;
+create trigger workspace_invitations_protect_update
+before update on public.workspace_invitations
+for each row execute function public.graphytion_protect_invitation_update();
+
 drop policy if exists api_idempotency_runtime_all on public.api_idempotency_keys;
 create policy api_idempotency_runtime_all
 on public.api_idempotency_keys for all to graphytion_runtime
@@ -309,6 +362,9 @@ with check (
 -- Keep the API login role non-administrative and unable to create schema objects.
 alter role graphytion_runtime nosuperuser nocreatedb nocreaterole inherit noreplication;
 alter role graphytion_api nosuperuser nocreatedb nocreaterole inherit noreplication;
+revoke create on schema public,private from graphytion_runtime,graphytion_api;
+comment on role graphytion_runtime is 'Non-login RLS-scoped privilege group for Graphytion FastAPI.';
+comment on role graphytion_api is 'Non-login runtime database identity; owner must set LOGIN and password out-of-band.';
 
 commit;
 

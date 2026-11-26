@@ -12,8 +12,6 @@ from sqlalchemy import text
 
 from app.api.v1.routes.creative import CreativeRunRequest, _process_creative_run
 from app.core.database import SessionLocal, set_rls_subject
-from app.core.redis import redis_client
-from app.services.creative_queue import CREATIVE_GROUP, CREATIVE_STREAM, enqueue_creative_run
 
 logger = logging.getLogger("graphytion.creative_worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
@@ -154,10 +152,7 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             )
             if exc.status_code in (502, 504):
                 await asyncio.sleep(min(2 ** int(claimed["attempt_count"]), 15))
-                try:
-                    await enqueue_creative_run(str(claimed["run_id"]))
-                except Exception:
-                    logger.exception("creative_retry_signal_failed", extra={"run_id": str(claimed["run_id"])})
+                # PostgreSQL polling discovers the retry after its retry_wait timestamp.
             return True
         except Exception:
             logger.exception("creative_worker_unhandled_failure", extra={"run_id": str(claimed["run_id"])})
@@ -187,56 +182,20 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                 pass
 
 
-async def _ensure_group() -> None:
-    try:
-        await redis_client.xgroup_create(CREATIVE_STREAM, CREATIVE_GROUP, id="0", mkstream=True)
-    except Exception as exc:
-        if "BUSYGROUP" not in str(exc):
-            raise
-
-
 async def run_worker() -> None:
-    await _ensure_group()
-    consumer = WORKER_ID
-    logger.info("creative_worker_started", extra={"worker_id": WORKER_ID})
+    logger.info("creative_worker_started", extra={"worker_id": WORKER_ID, "queue": "postgresql"})
     while True:
-        # Reclaim messages left pending by a worker that exited unexpectedly.
         try:
-            claimed_messages = await redis_client.xautoclaim(
-                CREATIVE_STREAM, CREATIVE_GROUP, consumer, min_idle_time=60000,
-                start_id="0-0", count=5,
-            )
-            messages = claimed_messages[1] if len(claimed_messages) > 1 else []
-            for message_id, fields in messages:
-                try:
-                    await _claim_and_execute(fields.get("run_id"))
-                finally:
-                    await redis_client.xack(CREATIVE_STREAM, CREATIVE_GROUP, message_id)
-        except Exception:
-            logger.exception("creative_worker_reclaim_failed")
-
-        try:
-            batches = await redis_client.xreadgroup(
-                CREATIVE_GROUP, consumer, {CREATIVE_STREAM: ">"}, count=5, block=5000
-            )
-            for _, messages in batches:
-                for message_id, fields in messages:
-                    try:
-                        await _claim_and_execute(fields.get("run_id"))
-                    finally:
-                        await redis_client.xack(CREATIVE_STREAM, CREATIVE_GROUP, message_id)
-        except Exception:
-            logger.exception("creative_worker_stream_read_failed")
-            await asyncio.sleep(2)
-
-        # PostgreSQL recovery scan covers the commit-to-Redis crash window and
-        # expired leases; Redis is never the durable queue of record.
-        try:
+            processed = False
             while await _claim_and_execute(None):
-                pass
+                processed = True
+            if not processed:
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            logger.exception("creative_worker_database_recovery_scan_failed")
-            await asyncio.sleep(2)
+            logger.exception("creative_worker_database_poll_failed")
+            await asyncio.sleep(3)
 
 
 def main() -> None:

@@ -272,12 +272,12 @@ flowchart TB
   API --> DB[(Supabase PostgreSQL)]
   API --> ORCH[Production Orchestrator]
   ORCH --> LLM[LLM Gateway / Model Router]
-  ORCH --> Q[Redis Queue]
+  ORCH --> DB[(Supabase PostgreSQL Job Queue)]
   ORCH --> MEDIA[Media & Voice Services]
   MEDIA --> STORAGE[(Supabase Storage)]
-  Q --> AIW[AI Worker]
-  Q --> MW[Media Worker]
-  Q --> RW[Remotion Render Worker]
+  DB --> AIW[AI Worker]
+  DB --> MW[Media Worker]
+  DB --> RW[Remotion Render Worker]
   AIW --> LLM
   AIW --> DB
   MW --> TTS[TTS / Alignment / FFmpeg]
@@ -342,12 +342,12 @@ flowchart TB
 -   Render output validation.
 -   Upload hasil ke Supabase Storage.
 
-### Redis
+### PostgreSQL job queue
 
--   Queue transport, short-lived locks, concurrency coordination, rate
-    limiting.
--   Bukan source of truth.
--   Job state akhir dan artifacts tetap dicatat di PostgreSQL.
+-   Job state dan antrean durable berada di Supabase PostgreSQL.
+-   Workers melakukan claim secara transaksional dengan `FOR UPDATE SKIP LOCKED`, lease owner, heartbeat, retry dan expired-lease recovery.
+-   Worker polling melalui FastAPI; tidak diperlukan broker eksternal atau Redis.
+-   Idempotency dan job lifecycle tetap dicatat di PostgreSQL.
 
 ## 4.3 Recommended repository structure
 
@@ -2559,7 +2559,7 @@ saat implementasi:
 -   OpenAI Text-to-Speech:
     https://platform.openai.com/docs/guides/text-to-speech
 -   FFmpeg documentation: https://ffmpeg.org/documentation.html
--   Redis documentation: https://redis.io/docs/
+-   PostgreSQL documentation: https://www.postgresql.org/docs/
 
 **Peringatan:** API, model, provider capability, pricing, dependency
 compatibility, dan lisensi dapat berubah. Engineering wajib

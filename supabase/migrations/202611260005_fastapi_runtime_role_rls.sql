@@ -58,17 +58,31 @@ grant authenticated to graphytion_runtime;
 grant graphytion_runtime to graphytion_api;
 grant usage on schema public, private, auth to graphytion_runtime;
 grant execute on function auth.uid() to graphytion_runtime;
-grant select,insert,update,delete on table
-  public.profiles,
-  public.workspaces,
-  public.workspace_members,
-  public.workspace_invitations,
-  public.video_projects,
-  public.project_settings,
-  public.api_idempotency_keys,
-  public.audit_logs
-to graphytion_runtime;
+-- Grant only the SQL operations and columns used by FastAPI.
+-- No runtime DELETE on memberships, invitations, projects, project settings or audit history.
+grant select,insert,update,delete on table public.workspaces to graphytion_runtime;
+grant select,insert,update on table public.workspace_members to graphytion_runtime;
+grant select on table public.workspace_invitations to graphytion_runtime;
+grant insert (workspace_id,email,role,token_hash,invited_by,expires_at,
+              delivery_status,delivery_attempts,last_delivery_attempt_at)
+  on table public.workspace_invitations to graphytion_runtime;
+grant update (token_hash,expires_at,accepted_at,cancelled_at,delivery_status,
+              delivery_attempts,last_delivery_attempt_at,last_delivery_error,
+              provider_message_id,sent_at)
+  on table public.workspace_invitations to graphytion_runtime;
+grant select,insert,update on table public.video_projects to graphytion_runtime;
+grant select,insert,update on table public.project_settings to graphytion_runtime;
+grant select,insert,update,delete on table public.api_idempotency_keys to graphytion_runtime;
+grant select,insert on table public.audit_logs to graphytion_runtime;
 grant usage,select on all sequences in schema public to graphytion_runtime;
+
+-- The service-role key is used only by the private Storage adapter, never by the
+-- FastAPI SQL path or browser Data API. Remove its broad legacy grants on domain tables.
+revoke all privileges on table
+  public.profiles, public.workspaces, public.workspace_members,
+  public.workspace_invitations, public.video_projects, public.project_settings,
+  public.api_idempotency_keys, public.audit_logs
+from service_role;
 grant execute on function private.graphytion_is_workspace_member(uuid) to graphytion_runtime;
 grant execute on function private.graphytion_workspace_role(uuid) to graphytion_runtime;
 grant execute on function private.graphytion_workspace_owner(uuid) to graphytion_runtime;
@@ -283,7 +297,11 @@ using (
   private.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member')
 )
 with check (
-  private.graphytion_workspace_role(workspace_id) in ('owner','admin','editor','member')
+  private.graphytion_workspace_role(workspace_id) in ('owner','admin')
+  or (
+    status <> 'deleted'
+    and private.graphytion_workspace_role(workspace_id) in ('editor','member')
+  )
 );
 
 drop policy if exists project_settings_insert_runtime on public.project_settings;
@@ -414,8 +432,8 @@ with check (
 );
 
 -- Keep the API login role non-administrative and unable to create schema objects.
-alter role graphytion_runtime nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
-alter role graphytion_api nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
+alter role graphytion_runtime nologin nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
+alter role graphytion_api nologin nosuperuser nocreatedb nocreaterole nobypassrls inherit noreplication;
 revoke create on schema public,private from graphytion_runtime,graphytion_api;
 comment on role graphytion_runtime is 'Non-login RLS-scoped privilege group for Graphytion FastAPI.';
 comment on role graphytion_api is 'Non-login runtime database identity; owner must set LOGIN and password out-of-band.';

@@ -276,8 +276,8 @@ async def update_profile(
 
 @router.post("/me/avatar", status_code=201)
 async def upload_avatar(
+    claims: AuthenticatedClaims,
     file: UploadFile = File(...),
-    claims: AuthenticatedClaims = None,
     db: AsyncSession = Db,
 ):
     user_id = uid(claims)

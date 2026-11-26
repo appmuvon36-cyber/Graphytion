@@ -9,13 +9,28 @@ alter table public.workspace_invitations
   add column if not exists last_delivery_attempt_at timestamptz,
   add column if not exists last_delivery_error text;
 
-alter table public.workspace_invitations
-  add constraint workspace_invitations_delivery_status_check
-  check (delivery_status in ('pending','sent','failed'));
-
-alter table public.workspace_invitations
-  add constraint workspace_invitations_delivery_attempts_check
-  check (delivery_attempts >= 0);
+do $delivery_constraints$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname='workspace_invitations_delivery_status_check'
+      and conrelid='public.workspace_invitations'::regclass
+  ) then
+    alter table public.workspace_invitations
+      add constraint workspace_invitations_delivery_status_check
+      check (delivery_status in ('pending','sent','failed'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname='workspace_invitations_delivery_attempts_check'
+      and conrelid='public.workspace_invitations'::regclass
+  ) then
+    alter table public.workspace_invitations
+      add constraint workspace_invitations_delivery_attempts_check
+      check (delivery_attempts >= 0);
+  end if;
+end
+$delivery_constraints$;
 
 create index if not exists workspace_invitations_delivery_status_idx
   on public.workspace_invitations(delivery_status, last_delivery_attempt_at)

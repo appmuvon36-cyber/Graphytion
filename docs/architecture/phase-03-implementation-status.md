@@ -13,7 +13,7 @@
 | Multi-layer composition contracts and component registry | IMPLEMENTED | Existing versioned composition runtime and allowlisted component registry remain the shared source. |
 | Immutable timeline snapshots and render pinning | IMPLEMENTED | Existing snapshot/version/hash and render-job contracts are present. Runtime job execution is not verified. |
 | Remotion preview and render composition reuse | IMPLEMENTED | Existing Remotion composition bundle is shared; render-worker build is being refreshed. Browser preview/render parity is not yet runtime-verified. |
-| Gemini TTS provider adapter | IMPLEMENTED | Media Worker now routes Gemini/OpenAI per persisted job; Gemini WAV/PCM is converted to MP3 with FFmpeg. |
+| Gemini TTS provider adapter | IMPLEMENTED | Media Worker routes Gemini/OpenAI per persisted job; Gemini 3.8 Flash-Lite is the API-key default, style metadata is supported, WAV/PCM is converted to MP3 with FFmpeg. |
 | Gemini TTS production generation | BLOCKED | Media Worker has the Gemini credential and latest code deployment, but FastAPI private DNS does not resolve while API is not running. No real TTS job has completed. |
 | Word-level alignment | DEFERRED | Gemini TTS does not return word-level timestamps. OpenAI Whisper alignment remains optional and requires `OPENAI_API_KEY`; no fabricated alignment is written. |
 | Audio metadata and waveform artifacts | IMPLEMENTED | Existing real audio-analysis pipeline remains in the Media Worker. Runtime artifact persistence awaits API connectivity. |
@@ -33,12 +33,14 @@
 - Migrations 004 and 005 were last recorded as pending. Migration 005 creates the least-privilege `graphytion_api` runtime role; its LOGIN/password setup must be completed before the runtime URL can work.
 - Migrations 016–019 were previously recorded as committed but unapplied. The exact current production migration history has not been re-read in this execution because the Graphytion Supabase project is not connected through the available Supabase connector.
 - Do not bypass the database-role check by using `postgres`, `supabase_admin`, or an RLS-bypass role.
-- The API now accepts `SUPABASE_SECRET_ROLE_KEY` as an alias for the server-side Supabase secret and can start without Resend configured; invitations remain unavailable until Resend is configured.
+- The API now accepts `SUPABASE_SECRET_ROLE_KEY` as an alias for the server-side Supabase secret and can start without Resend configured; invitations remain unavailable until Resend is configured. Gemini 3.8 Flash-Lite is used with the configured Gemini API key; the full Gemini 3.8 Flash TTS endpoint requires the separate Gemini Enterprise API authentication path.
 
 Required database URL shape after the runtime role has been created and enabled:
 
 ```text
 postgresql+asyncpg://graphytion_api:<password>@db.xtjwmezfzexvupbfsdqt.supabase.co:5432/postgres?ssl=require
+
+Or, for Supavisor transaction pooling, use the project-scoped login `graphytion_api.xtjwmezfzexvupbfsdqt` on the `*.pooler.supabase.com` host with TLS. The API disables asyncpg's prepared statement cache for Supavisor.
 ```
 
 A conventional `postgresql://` or `postgres://` URL is normalized to the asyncpg scheme, but the database user and host are still strictly validated.

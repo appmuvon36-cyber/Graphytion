@@ -41,8 +41,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});
   const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
   const [voiceText,setVoiceText]=useState('');
-  const [voiceKey,setVoiceKey]=useState('alloy');
-  const [voiceModel,setVoiceModel]=useState('tts-1');
+  const [voiceProvider,setVoiceProvider]=useState<'gemini'|'openai'>('gemini');
+  const [voiceKey,setVoiceKey]=useState('Kore');
+  const [voiceModel,setVoiceModel]=useState('gemini-3.8-flash-lite-tts');
   const [selectedVoiceSubtitleSegmentId,setSelectedVoiceSubtitleSegmentId]=useState('');
   const [newSubtitleText,setNewSubtitleText]=useState('');
   const [subtitleImport,setSubtitleImport]=useState('');
@@ -229,7 +230,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     try{
       const result=await call<{data:{voiceover_id:string;status:string;provider_configured:boolean}}>('/projects/'+projectId+'/voiceovers',{
         method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
-        body:JSON.stringify({text:voiceText,provider_key:'openai',model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID',...(selectedVoiceSubtitleSegmentId?{subtitle_segment_id:selectedVoiceSubtitleSegmentId}:{})}),
+        body:JSON.stringify({text:voiceText,provider_key:voiceProvider,model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID',...(selectedVoiceSubtitleSegmentId?{subtitle_segment_id:selectedVoiceSubtitleSegmentId}:{})}),
       });
       setNotice(result.data.status==='provider_unavailable'?'Voiceover job tersimpan, tetapi provider credentials belum dikonfigurasi. Tidak ada audio yang dibuat.':'Voiceover job queued · '+result.data.voiceover_id);
       await load();
@@ -530,8 +531,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
           {subtitleTracks.flatMap(track=>track.segments.map(segment=><option key={segment.id} value={segment.id}>{track.language} · #{segment.segment_index+1} · {segment.text.slice(0,70)}</option>))}
         </select>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8}}>
-          <select aria-label="TTS model" value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} style={field}><option value="tts-1">TTS Standard</option><option value="tts-1-hd">TTS HD</option><option value="gpt-4o-mini-tts">GPT-4o mini TTS</option></select>
-          <select aria-label="TTS voice" value={voiceKey} onChange={e=>setVoiceKey(e.target.value)} style={field}>{['alloy','ash','coral','echo','fable','onyx','nova','sage','shimmer','verse'].map(v=><option key={v}>{v}</option>)}</select>
+          <select aria-label="TTS provider" value={voiceProvider} onChange={e=>{const provider=e.target.value as 'gemini'|'openai';setVoiceProvider(provider);setVoiceModel(provider==='gemini'?'gemini-3.8-flash-lite-tts':'tts-1');setVoiceKey(provider==='gemini'?'Kore':'alloy');}} style={field}><option value="gemini">Google Gemini TTS</option><option value="openai">OpenAI TTS</option></select>
+          <select aria-label="TTS model" value={voiceModel} onChange={e=>setVoiceModel(e.target.value)} style={field}>{voiceProvider==='gemini'?<option value="gemini-3.8-flash-lite-tts">Gemini Flash Lite TTS</option>:<><option value="tts-1">TTS Standard</option><option value="tts-1-hd">TTS HD</option><option value="gpt-4o-mini-tts">GPT-4o mini TTS</option></>}</select>
+          <select aria-label="TTS voice" value={voiceKey} onChange={e=>setVoiceKey(e.target.value)} style={field}>{(voiceProvider==='gemini'?['Kore','Puck','Charon','Fenrir','Aoede','Leda','Orus','Zephyr','Callirrhoe','Autonoe','Enceladus','Iapetus','Umbriel','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Alnilam','Schedar','Gacrux','Pulcherrima','Achird','Zubenelgenubi','Vindemiatrix','Sadachbia','Sadaltager','Sulafat']:['alloy','ash','coral','echo','fable','onyx','nova','sage','shimmer','verse']).map(v=><option key={v}>{v}</option>)}</select>
           <button disabled={busy||!voiceText.trim()} style={button}>Generate voice-over</button>
         </div>
       </form>

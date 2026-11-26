@@ -164,6 +164,18 @@ async def require_workspace(
     )
 
 
+async def require_permission(
+    db: AsyncSession, user_id: UUID, workspace_id: UUID, permission: str
+) -> str:
+    role = await WorkspacePermissionResolver().require_permission(
+        session=db,
+        user_id=str(user_id),
+        workspace_id=str(workspace_id),
+        permission=permission,
+    )
+    return role.value
+
+
 async def audit(
     db: AsyncSession,
     actor: UUID,
@@ -503,7 +515,7 @@ async def update_workspace(
     db: AsyncSession = Db,
 ):
     user_id = uid(claims)
-    await require_workspace(db, user_id, workspace_id, {"owner", "admin"})
+    await require_permission(db, user_id, workspace_id, "workspace.update")
     values = payload.model_dump(exclude_unset=True)
     if not values:
         raise HTTPException(status_code=400, detail="No workspace fields supplied")
@@ -536,7 +548,7 @@ async def delete_workspace(
     workspace_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
 ):
     actor = uid(claims)
-    await require_workspace(db, actor, workspace_id, {"owner"})
+    await require_permission(db, actor, workspace_id, "workspace.delete")
     project_count = (
         await db.execute(
             text("select count(*) from public.video_projects where workspace_id=:workspace"),
@@ -561,7 +573,7 @@ async def delete_workspace(
 
 @router.get("/workspaces/{workspace_id}/members")
 async def list_members(workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db):
-    await require_workspace(db, uid(claims), workspace_id, {"owner", "admin", "editor", "member"})
+    await require_permission(db, uid(claims), workspace_id, "member.read")
     rows = (
         (
             await db.execute(
@@ -588,7 +600,7 @@ async def create_invitation(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    actor_role = await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    actor_role = await require_permission(db, actor, workspace_id, "member.manage")
     if payload.role == "admin" and actor_role != "owner":
         raise HTTPException(
             status_code=403, detail="Only the workspace owner can invite an administrator"
@@ -648,7 +660,7 @@ async def update_member_role(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    await require_permission(db, actor, workspace_id, "member.manage")
     target = (
         (
             await db.execute(
@@ -865,9 +877,7 @@ async def list_projects(
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    await require_workspace(
-        db, uid(claims), workspace_id, {"owner", "admin", "editor", "member", "viewer"}
-    )
+    await require_permission(db, uid(claims), workspace_id, "project.read")
     rows = (
         (
             await db.execute(
@@ -903,7 +913,7 @@ async def create_project(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    await require_workspace(db, actor, workspace_id, {"owner", "admin", "editor", "member"})
+    await require_permission(db, actor, workspace_id, "project.create")
     try:
         reservation_id, cached = await reserve_idempotency(
             db,

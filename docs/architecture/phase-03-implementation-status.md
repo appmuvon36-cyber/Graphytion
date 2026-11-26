@@ -148,3 +148,15 @@ Production runtime remains blocked by the dedicated database login/password and 
 - Media Worker, Render Worker, Web, and Remotion Studio each have a successful deployment/online replica in the current Railway inventory. Worker process liveness is not evidence of API connectivity or successful job processing.
 
 Phase 03 remains OPEN. No production job or media generation was executed.
+
+
+## Runtime credential separation and validator correction — 2026-11-27
+
+- Railway deployment logs now expose only sanitized database connection identity fields (host, username, port, driver), never the password.
+- The observed production value was a syntactically valid SQLAlchemy URL targeting the correct Graphytion direct database host, but its login identity was `postgres`. This is not a URL-format error; it is an administrative database identity and cannot be accepted as the FastAPI least-privilege runtime role under AGENTS.md and the Phase 02 security model.
+- To avoid requiring replacement of the existing `DATABASE_URL`, FastAPI now prioritizes a separate `GRAPHYTION_RUNTIME_DATABASE_URL` environment variable. The existing `DATABASE_URL` remains untouched and is only a backward-compatible fallback when the runtime-specific variable is absent.
+- The runtime URL must use `graphytion_api` (or its project-scoped Supavisor login), the Graphytion database endpoint, TLS, and a real password. No administrator credentials are accepted for runtime.
+- The Railway API service has not yet been supplied with `GRAPHYTION_RUNTIME_DATABASE_URL`; therefore the latest API deployment cannot become healthy until that least-privilege credential is provisioned. No Supabase schema mutation or migration was run during this continuation.
+- Source commits: `40ae329732f5fd8c1bba2bd1e64c6ccba7ab13f8` (runtime URL precedence), `61579c520be0e815abbdbddbfbcaeddcaa1ed9f6` (.env example), `115c62225e63de3f77cb8f83431da861e1318c44` (diagnostic wording).
+
+Phase 03 remains OPEN. This is a configuration boundary blocker, not a database URL syntax defect. No TTS, render, or synthetic production job was executed.

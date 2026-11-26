@@ -1,5 +1,7 @@
 import hashlib
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -69,8 +71,20 @@ async def _audit(
     )
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (UUID, date, datetime)):
+        return value.isoformat() if isinstance(value, (date, datetime)) else str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _snapshot_hash(value: dict[str, Any]) -> str:
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(_json_safe(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -105,7 +119,7 @@ async def _record_version(
             "hash": _snapshot_hash(snapshot),
             "actor": actor,
             "summary": summary,
-            "snapshot": json.dumps(snapshot, ensure_ascii=False),
+            "snapshot": json.dumps(_json_safe(snapshot), ensure_ascii=False),
         },
     )
 
@@ -207,10 +221,10 @@ async def create_brief(
             "sources": json.dumps(payload.source_references, ensure_ascii=False), "actor": actor,
         },
     )).mappings().one()
-    snapshot = dict(row)
+    snapshot = _json_safe(dict(row))
     await _record_version(db, workspace_id=workspace_id, project_id=project_id,
         artifact_type="creative_brief", artifact_id=row["id"], version=version,
-        actor=actor, snapshot={k: str(v) if isinstance(v, UUID) else v for k,v in snapshot.items()},
+        actor=actor, snapshot=snapshot,
         summary="Creative brief created")
     await _audit(db, request, actor, workspace_id, "creative_brief.created", "creative_brief", row["id"])
     await db.commit()
@@ -282,7 +296,7 @@ async def create_script(
         "cta": payload.cta, "duration": payload.estimated_duration_ms,
         "words": payload.word_count, "actor": actor,
     })).mappings().one()
-    snapshot = {k: str(v) if isinstance(v, UUID) else v for k,v in dict(row).items()}
+    snapshot = _json_safe(dict(row))
     await _record_version(db, workspace_id=workspace_id, project_id=project_id,
         artifact_type="video_script", artifact_id=row["id"], version=version,
         actor=actor, snapshot=snapshot, summary="Script created")
@@ -414,8 +428,7 @@ async def create_storyboard(
             "motion": json.dumps(scene.motion_plan, ensure_ascii=False),
             "assets": json.dumps(scene.asset_requirements, ensure_ascii=False),
         })
-    snapshot = {"storyboard": {k: str(v) if isinstance(v, UUID) else v for k,v in dict(row).items()},
-                "scenes": [scene.model_dump() for scene in payload.scenes]}
+    snapshot = _json_safe({"storyboard": dict(row), "scenes": [scene.model_dump() for scene in payload.scenes]})
     await _record_version(db, workspace_id=workspace_id, project_id=project_id,
         artifact_type="storyboard", artifact_id=row["id"], version=version,
         actor=actor, snapshot=snapshot, summary="Storyboard created")

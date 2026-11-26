@@ -137,3 +137,14 @@ Source commits in this continuation:
 - `2b60120bd114a8a2dad444ab3a3e4941251c8c65` — storyboard render requires explicit snapshot.
 
 Production runtime remains blocked by the dedicated database login/password and API startup validation. Railway logs still show the API deployment failing at `DATABASE_URL` validation, with worker DNS lookups failing while the API has no running replica. No Redis service is provisioned; PostgreSQL polling remains the durable queue fallback. Phase 03 remains OPEN.
+
+
+## Railway dependency wiring — 2026-11-27
+
+- Corrected production watch patterns for `@graphytion/web`, `@graphytion/remotion-studio`, and `@graphytion/render-worker`. Web and Remotion Studio now rebuild when shared `packages/**` or workspace manifests/lockfiles change; Render Worker additionally watches the Remotion Studio bundle source. These Railway config updates are live for subsequent deployments and were not staged.
+- Existing service inventory confirms one API, one Web, one Media Worker, one Remotion Studio, and one Render Worker. No duplicate application service was created.
+- A verified Railway Redis template deployment was requested for the production environment. The service was not yet present in the environment inventory at the time of this record; do not treat Redis as provisioned or wired until it appears and its private `REDIS_URL` is attached to API and both workers.
+- Latest observed Railway API deployment still fails startup at the deliberate `DATABASE_URL` validator because the configured value does not satisfy the dedicated `graphytion_api` login/password requirement. The API private endpoint therefore has no healthy replica; worker logs show DNS lookup failures to `graphytionapi.railway.internal` while the API is down.
+- Media Worker, Render Worker, Web, and Remotion Studio each have a successful deployment/online replica in the current Railway inventory. Worker process liveness is not evidence of API connectivity or successful job processing.
+
+Phase 03 remains OPEN. No production job or media generation was executed.

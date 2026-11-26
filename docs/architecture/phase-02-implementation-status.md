@@ -42,13 +42,11 @@ All three migrations completed successfully and are present in Supabase migratio
 ## Remaining completion gates — do not claim Phase 02 fully complete yet
 
 1. Configure production API secrets/connection settings (`DATABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, Redis URL, CORS origin) in the API runtime; no deployment was performed.
-2. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
-3. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
-4. Confirm/configure the production API database login. Prefer a dedicated least-privilege PostgreSQL login with only required table/sequence privileges; do not assume that granting the PostgREST `service_role` role also configures the SQLAlchemy direct connection.
-5. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
-6. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
-7. Run a controlled end-to-end check with an authorized, verified Graphytion user after runtime configuration: signup/login/refresh/logout, profile, workspace create/list/update, role enforcement, invitation acceptance, project CRUD, avatar upload/signed URL. The production Auth schema currently contains zero users; do not create synthetic users or fake production records without explicit direction.
-8. Confirm actual API-to-Postgres and Redis connectivity using the production runtime after its environment is configured. No staging environment or deployment is authorized by this status update.
+2. Confirm/configure the production API database login. Prefer a dedicated least-privilege PostgreSQL login with only required table/sequence privileges; do not assume that granting the PostgREST `service_role` role also configures the SQLAlchemy direct connection.
+3. Configure an invitation email provider and sender identity. Current invitation flow creates a hashed token and returns the raw token to the admin UI; delivery is not yet integrated.
+4. Replace browser `sessionStorage` token persistence with a secure HttpOnly-cookie/BFF session design and CSRF protections before treating browser session security as production-hardened.
+5. Run a controlled end-to-end check with an authorized, verified Graphytion user after runtime configuration: signup/login/refresh/logout, profile, workspace create/list/update, role enforcement, invitation acceptance, project CRUD, avatar upload/signed URL. The production Auth schema currently contains zero users; do not create synthetic users or fake production records without explicit direction.
+6. Confirm actual API-to-Postgres and Redis connectivity using the production runtime after its environment is configured. No staging environment or deployment is authorized by this status update.
 
 ## Data safety and recovery
 

@@ -304,6 +304,70 @@ async def complete_render_artifact(
                      "output_size_bytes": len(content), "sha256": digest}}
 
 
+@router.post("/internal/render-jobs/{render_job_id}/artifacts", status_code=201)
+async def create_render_sidecar_artifact(
+    render_job_id: UUID,
+    request: Request,
+    file: UploadFile,
+    artifact_type: str = Query(pattern=r"^(thumbnail|preview)$"),
+    worker_id: str = Query(min_length=1, max_length=128),
+    db: AsyncSession = DbSession,
+):
+    """Persist a thumbnail or preview separately; never changes final render completion state."""
+    _require_worker(request)
+    owner_id = await db.scalar(text("select private.graphytion_render_job_owner(:job,:worker)"),
+                               {"job": render_job_id, "worker": worker_id})
+    if owner_id is None:
+        raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
+    await set_rls_subject(db, str(owner_id))
+    row = (await db.execute(text("""
+        select id,workspace_id,project_id,worker_id,status,snapshot_version
+        from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
+    """), {"job": render_job_id, "worker": worker_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
+    content = await file.read(100 * 1024 * 1024 + 1)
+    mime = file.content_type or ""
+    if artifact_type == "thumbnail":
+        valid = ((mime == "image/jpeg" and content.startswith(bytes.fromhex("ffd8ff"))) or
+                 (mime == "image/png" and content.startswith(bytes.fromhex("89504e470d0a1a0a"))))
+        maximum = 20 * 1024 * 1024
+    else:
+        valid = ((mime == "video/mp4" and len(content) >= 12 and content[4:8] == b"ftyp") or
+                 (mime == "video/webm" and content.startswith(bytes.fromhex("1a45dfa3"))))
+        maximum = 100 * 1024 * 1024
+    if not valid or not 1 <= len(content) <= maximum:
+        raise HTTPException(status_code=415, detail="Sidecar artifact bytes do not match its declared media type")
+    digest = hashlib.sha256(content).hexdigest()
+    extension = {"image/jpeg":"jpg","image/png":"png","video/mp4":"mp4","video/webm":"webm"}[mime]
+    object_path = f"{row['workspace_id']}/{row['project_id']}/{render_job_id}/{artifact_type}.{extension}"
+    try:
+        await SupabaseStorage().upload(bucket=RENDER_BUCKET, object_path=object_path,
+                                       content=content, content_type=mime, upsert=True, timeout_seconds=180)
+        await db.execute(text("""
+            insert into public.render_artifacts
+            (workspace_id,project_id,render_job_id,artifact_type,storage_bucket,storage_path,
+             mime_type,size_bytes,sha256,snapshot_version)
+            values(:workspace,:project,:job,:type,:bucket,:path,:mime,:size,:hash,:snapshot)
+            on conflict(render_job_id,artifact_type) do update set
+              storage_bucket=excluded.storage_bucket,storage_path=excluded.storage_path,
+              mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,sha256=excluded.sha256,
+              snapshot_version=excluded.snapshot_version,created_at=now()
+        """), {"workspace":row["workspace_id"],"project":row["project_id"],"job":render_job_id,
+               "type":artifact_type,"bucket":RENDER_BUCKET,"path":object_path,"mime":mime,
+               "size":len(content),"hash":digest,"snapshot":row["snapshot_version"]})
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        try:
+            await SupabaseStorage().remove(bucket=RENDER_BUCKET, object_path=object_path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail="Sidecar artifact persistence failed") from exc
+    return {"data":{"render_job_id":str(render_job_id),"artifact_type":artifact_type,
+                    "storage_path":object_path,"mime_type":mime,"size_bytes":len(content),"sha256":digest}}
+
+
 @router.post("/internal/render-jobs/{render_job_id}/failed")
 async def fail_render_job(
     render_job_id: UUID,

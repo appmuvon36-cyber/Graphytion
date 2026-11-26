@@ -2,29 +2,48 @@
 
 **Phase:** Monorepo Foundation, Dependency & Shared Contracts  
 **Branch:** `main`  
-**Status:** Implementation committed; completion gate remains open.
+**Status:** COMPLETE — dependency and build completion gates passed.
 
 ## Implemented and committed
+
 - pnpm workspace and Turborepo root configuration, shared TypeScript compiler settings, formatting configuration and environment example.
 - Customer and Admin Next.js application foundations.
 - FastAPI application, API versioning, request IDs, structured logging, validation/error envelopes, JWT/JWKS verification foundation, async SQLAlchemy engine, Redis transport and Supabase Storage adapter.
-- Python domain contract models and TypeScript/Zod contracts covering identity/workspace, projects, scripts/storyboards/scenes, runs/tasks/checkpoints, media/audio/subtitles, timeline/composition, render, provider/model, usage and audit domains.
+- Python domain contract models and TypeScript/Zod contracts.
 - Typed API client, design tokens and UI primitives.
 - Remotion composition registry, allowlisted component registry, timeline validation, frame conversion and Player foundation.
 - AI, media and render worker process entrypoints.
 - Dockerfiles, Docker Compose, Docker ignore rules and local development documentation.
 
-## Explicitly not done in Phase 01
-- No Supabase tables or migrations were created or applied.
-- No production data, Auth users, Storage objects, or credentials were changed.
-- No deployment was triggered.
-- Worker task consumers and persistent workflow execution are deferred to their dedicated phases; the Phase 01 worker processes only establish process and queue connectivity and do not acknowledge or simulate jobs.
-- Workspace membership persistence and actual RBAC decisions are deferred to Phase 02.
+## Reproducible dependency locks
 
-## Remaining completion gates
-1. Generate and commit a real `pnpm-lock.yaml` from the committed workspace manifests using pnpm 10.12.1.
-2. Generate and commit Python lockfiles (for example `uv.lock`) for the API and worker projects using Python 3.12.
-3. Run focused dependency resolution, TypeScript typecheck and Python import/lint checks in a suitable build environment. Do not connect to production Supabase for tests.
-4. Fix any dependency or compilation issues found and update this report with evidence.
+Generated from the committed manifests using the pinned toolchain:
 
-The dependency versions in package manifests and Python project files are pinned, but lockfiles are not present yet. Therefore Phase 01 must not be marked COMPLETE until the remaining gates are closed.
+- `pnpm-lock.yaml` — pnpm 10.12.1.
+- `apps/api/uv.lock` — UV with Python 3.12.
+- `services/ai-worker/uv.lock` — UV with Python 3.12.
+- `services/media-worker/uv.lock` — UV with Python 3.12.
+
+## Verification evidence
+
+GitHub Actions run `45793551790` completed with **success** on source commit `1037138e48f4c9d0f9a16c64c1de96da4e71fe15`. The workflow performed:
+
+1. Real pnpm and UV dependency resolution.
+2. Frozen pnpm install and locked UV sync for API and both Python workers.
+3. Workspace TypeScript typecheck.
+4. Next.js customer and admin production builds.
+5. Remotion Studio typecheck and bundle.
+6. Shared contracts and API client typechecks.
+7. PostgreSQL syntax parsing of the Phase 02 migration.
+8. Python compile, Ruff lint, FastAPI import/OpenAPI, worker compile/import, and FastAPI startup smoke check.
+
+The workflow committed the final Python formatting changes to `main` as `095ed6d38749fe5d67f4607fffa43ea6ecf1a071`. The four lockfiles are present on that branch.
+
+## Phase boundary and production safety
+
+- Phase 01 itself creates no production schema and applies no migration.
+- The Phase 02 migration is version-controlled separately at `supabase/migrations/202611260001_phase_02_identity_workspace_projects.sql`; it has **not** been applied to Supabase.
+- No production data, Auth users, Storage objects, or deployment targets were changed by Phase 01 verification.
+- Worker task consumers and persistent workflow execution remain in their dedicated later phases.
+
+Phase 01 dependency, typecheck, build and startup completion gates are closed. Phase 02 database activation is tracked separately and requires explicit production migration authorization.

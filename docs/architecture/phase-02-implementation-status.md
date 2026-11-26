@@ -36,11 +36,12 @@ Redis has been removed from the production architecture. Render, media and creat
 
 ### Browser session boundary
 
-- Customer Web and Admin use same-origin Next.js BFF routes.
+- Customer dashboard and Super Admin are served by one Next.js Web service. Super Admin routes are `/admin` and `/admin/workspaces`; no standalone Admin service or Next.js app is required.
+- Both customer and Super Admin use the Web service's same-origin Next.js BFF routes.
 - Login/signup/verification token exchange is restricted to requests carrying the server-only BFF shared secret.
 - Access and refresh tokens are set as host-only HttpOnly cookies; production cookies are Secure, SameSite=Lax and Path=/.
 - Refresh and logout are handled server-side. CSRF uses a separate random cookie, request header and exact Origin check.
-- Legacy `sessionStorage` and `localStorage` token persistence was removed from the inspected Customer Studio and Admin Control Plane components. A repository scan of the 16 Web/Admin/API-client TypeScript files found no `sessionStorage` or `localStorage` references.
+- Legacy `sessionStorage` and `localStorage` token persistence was removed from the Customer Studio and consolidated Super Admin components.
 - Browser API client no longer accepts or injects bearer tokens; only the same-origin BFF reads HttpOnly cookies and attaches upstream Authorization. BFF auth responses expose only user ID/email, and the verification callback is non-cacheable with a no-referrer policy.
 - Supabase confirmation/recovery email templates must be changed to the server-side token-hash callback; the existing project settings were not changed.
 
@@ -81,7 +82,7 @@ No real account or production test record was created.
 1. Explicitly authorize applying migrations `202611260004` and `202611260005` to Supabase Production. They are additive and contain no DROP/DELETE data operations, but are not applied under the current no-migration-without-authorization rule.
 2. After migration 005, enable LOGIN and set a unique password for `graphytion_api` in Supabase SQL editor/secret manager; configure API `DATABASE_URL` with this role and TLS.
 3. Configure API hosting secrets: `APP_ENV`, `APP_PUBLIC_URL`, `CORS_ORIGINS`, Supabase anon/service keys, `BFF_SHARED_SECRET`, database URL, Resend API key, verified sender and webhook secret.
-4. Configure both Next.js services with their own `APP_PUBLIC_URL`, server-only `GRAPHYTION_API_URL` and the matching `GRAPHYTION_BFF_SHARED_SECRET`.
+4. Configure the single Next.js Web service with `APP_PUBLIC_URL`, server-only `GRAPHYTION_API_URL` and `GRAPHYTION_BFF_SHARED_SECRET`; the `/admin` routes share this BFF and its host-only session cookies.
 5. Configure Supabase Auth Site URL, redirect allowlist and signup/recovery templates to call `/api/auth/callback?token_hash={{ .TokenHash }}&type=...`.
 6. Configure Resend sender domain and register `https://<api-domain>/api/v1/webhooks/resend`.
 7. After deployment is separately authorized, verify `/api/v1/ready` from the real API runtime. No hosting secrets or deployments were changed by this work.

@@ -318,7 +318,10 @@ async def update_password(
 async def recovery(payload: EmailRequest, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.recover(payload.email)
     await audit_auth_event(
-        db, request, "auth.recovery.requested", metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()}
+        db,
+        request,
+        "auth.recovery.requested",
+        metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()},
     )
     return result
 
@@ -336,7 +339,10 @@ async def verify_email(payload: VerifyEmail, request: Request, db: AsyncSession 
 async def resend_verification(payload: EmailRequest, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.resend_verification(payload.email)
     await audit_auth_event(
-        db, request, "auth.verification.resent", metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()}
+        db,
+        request,
+        "auth.verification.resent",
+        metadata={"email_sha256": hashlib.sha256(payload.email.lower().encode()).hexdigest()},
     )
     return result
 
@@ -1025,7 +1031,9 @@ async def list_projects(
                 raise ValueError("cursor and offset conflict")
             offset = decoded_offset
         except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
-            raise HTTPException(status_code=400, detail="Invalid project pagination cursor") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid project pagination cursor"
+            ) from exc
     await require_permission(db, uid(claims), workspace_id, "project.read")
     rows = (
         (

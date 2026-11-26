@@ -37,7 +37,8 @@ returns table(
   requested_by uuid,
   input_snapshot jsonb,
   current_stage text,
-  attempt_count integer
+  attempt_count integer,
+  worker_id text
 )
 language plpgsql
 security definer
@@ -93,7 +94,7 @@ begin
 
   return query select
     v_run.id, v_run.project_id, v_run.workspace_id, v_run.requested_by,
-    v_run.input_snapshot, v_run.current_stage, v_run.attempt_count;
+    v_run.input_snapshot, v_run.current_stage, v_run.attempt_count, v_run.worker_id;
 end;
 $$;
 

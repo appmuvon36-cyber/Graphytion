@@ -9,6 +9,7 @@ import socket
 import uuid
 
 import httpx
+from redis.asyncio import Redis
 
 from app.audio_analysis import analyze_audio_bytes
 from app.providers import GeminiTTSProvider, OpenAITTSProvider
@@ -30,6 +31,8 @@ class Worker:
             headers={"Authorization": "Bearer " + TOKEN},
             timeout=httpx.Timeout(180, connect=15),
         )
+        redis_url = os.environ.get("REDIS_URL")
+        self.redis = Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1, socket_timeout=POLL_INTERVAL_SECONDS + 1) if redis_url else None
         self.stop = asyncio.Event()
 
     async def api(self, path: str, **kwargs):
@@ -154,13 +157,24 @@ class Worker:
                 except Exception:
                     log.exception("media_job_recovery_failed")
             if not processed:
-                try:
-                    await asyncio.wait_for(self.stop.wait(), timeout=POLL_INTERVAL_SECONDS)
-                except TimeoutError:
-                    pass
+                await self.wait_for_work()
+
+    async def wait_for_work(self) -> None:
+        if self.redis is not None:
+            try:
+                await self.redis.blpop("graphytion:media:jobs", timeout=POLL_INTERVAL_SECONDS)
+                return
+            except Exception:
+                log.warning("redis_media_queue_unavailable_falling_back_to_postgres_poll")
+        try:
+            await asyncio.wait_for(self.stop.wait(), timeout=POLL_INTERVAL_SECONDS)
+        except TimeoutError:
+            pass
 
     async def close(self) -> None:
         await self.http.aclose()
+        if self.redis is not None:
+            await self.redis.aclose()
 
 
 async def main() -> None:

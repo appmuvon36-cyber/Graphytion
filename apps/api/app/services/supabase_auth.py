@@ -130,4 +130,46 @@ class SupabaseAuth:
         )
 
 
+    async def admin_request(
+        self, method: str, path: str, *, payload: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        service_key = settings.supabase_service_role_key_value
+        if not service_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Supabase Auth Admin API requires SUPABASE_SERVICE_ROLE_KEY",
+            )
+        headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                response = await client.request(
+                    method, f"{self.base_url}{path}", headers=headers, json=payload
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Supabase Auth Admin request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail="Supabase Auth Admin API unavailable") from exc
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        if response.is_error:
+            detail = body.get("msg") or body.get("message") or "Supabase Auth Admin request failed"
+            raise HTTPException(status_code=response.status_code, detail=detail)
+        return body if isinstance(body, dict) else {}
+
+    async def list_users(self, *, page: int, per_page: int) -> dict[str, Any]:
+        return await self.admin_request("GET", f"/admin/users?page={page}&per_page={per_page}")
+
+    async def set_user_ban(self, user_id: str, *, banned: bool) -> dict[str, Any]:
+        duration = "876000h" if banned else "none"
+        return await self.admin_request(
+            "PUT", f"/admin/users/{user_id}", payload={"ban_duration": duration}
+        )
+
+
 supabase_auth = SupabaseAuth()

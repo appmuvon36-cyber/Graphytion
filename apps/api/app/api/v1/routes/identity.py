@@ -22,6 +22,11 @@ from app.services.idempotency import (
     reserve_idempotency,
     validate_idempotency_key,
 )
+from app.services.invitation_email import (
+    InvitationEmailConfigurationError,
+    InvitationEmailDeliveryError,
+    invitation_email,
+)
 from app.services.supabase_auth import supabase_auth
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import (
@@ -675,7 +680,8 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
         (
             await db.execute(
                 text("""
-                    select id,workspace_id,email,role,invited_by,expires_at,created_at
+                    select id,workspace_id,email,role,invited_by,expires_at,created_at,delivery_status,
+                      delivery_attempts,sent_at
                     from public.workspace_invitations
                     where workspace_id=:workspace and accepted_at is null
                       and cancelled_at is null and expires_at>now()
@@ -688,6 +694,74 @@ async def list_invitations(workspace_id: UUID, claims: AuthenticatedClaims, db: 
         .all()
     )
     return {"data": [dict(row) for row in rows]}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/members", status_code=201, dependencies=[Depends(auth_rate_limit)]
+)
+@router.post(
+    "/workspaces/{workspace_id}/invitations",
+    status_code=201,
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def deliver_invitation(
+    *,
+    db: AsyncSession,
+    invitation_id: UUID,
+    recipient: str,
+    workspace_name: str,
+    role: str,
+    raw_token: str,
+    digest: str,
+) -> dict[str, Any]:
+    try:
+        provider_message_id = await invitation_email.send(
+            recipient=recipient,
+            workspace_name=workspace_name,
+            role=role,
+            raw_token=raw_token,
+            idempotency_key=f"graphytion-invitation-{invitation_id}-{digest[:16]}",
+        )
+    except (InvitationEmailConfigurationError, InvitationEmailDeliveryError) as exc:
+        await db.execute(
+            text("""
+                update public.workspace_invitations
+                set delivery_status='failed',
+                    delivery_attempts=delivery_attempts+1,
+                    last_delivery_attempt_at=now(),
+                    last_delivery_error=:error
+                where id=:id
+            """),
+            {"id": invitation_id, "error": "provider_not_configured" if isinstance(
+                exc, InvitationEmailConfigurationError
+            ) else "provider_delivery_failed"},
+        )
+        await db.commit()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    row = (
+        (
+            await db.execute(
+                text("""
+                    update public.workspace_invitations
+                    set delivery_status='sent',
+                        delivery_attempts=delivery_attempts+1,
+                        provider_message_id=:message_id,
+                        sent_at=now(),
+                        last_delivery_attempt_at=now(),
+                        last_delivery_error=null
+                    where id=:id
+                    returning id,workspace_id,email,role,expires_at,created_at,
+                              delivery_status,delivery_attempts,sent_at
+                """),
+                {"id": invitation_id, "message_id": provider_message_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    await db.commit()
+    return dict(row)
 
 
 @router.post(
@@ -711,49 +785,69 @@ async def create_invitation(
         raise HTTPException(
             status_code=403, detail="Only the workspace owner can invite an administrator"
         )
+    try:
+        invitation_email.assert_configured()
+    except InvitationEmailConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    email = payload.email.strip().lower()
     already_member = (
         await db.execute(
             text("""
                 select exists (
-                    select 1
-                    from auth.users u
+                    select 1 from auth.users u
                     join public.workspace_members m on m.user_id=u.id
                     where m.workspace_id=:workspace
-                      and lower(u.email)=lower(:email)
-                      and m.status='active'
+                      and lower(u.email)=:email and m.status='active'
                 )
             """),
-            {"workspace": workspace_id, "email": payload.email},
+            {"workspace": workspace_id, "email": email},
         )
     ).scalar_one()
     if already_member:
         raise HTTPException(
             status_code=409, detail="This user is already an active workspace member"
         )
-    await db.execute(
-        text("""
-            update public.workspace_invitations set cancelled_at=now()
-            where workspace_id=:workspace and lower(email)=lower(:email)
-              and accepted_at is null and cancelled_at is null and expires_at<=now()
-        """),
-        {"workspace": workspace_id, "email": payload.email},
-    )
+    pending = (
+        await db.execute(
+            text("""
+                select exists (
+                    select 1 from public.workspace_invitations
+                    where workspace_id=:workspace and lower(email)=:email
+                      and accepted_at is null and cancelled_at is null and expires_at>now()
+                )
+            """),
+            {"workspace": workspace_id, "email": email},
+        )
+    ).scalar_one()
+    if pending:
+        raise HTTPException(
+            status_code=409,
+            detail="A pending invitation already exists; use resend on the existing invitation",
+        )
+
     raw = secrets.token_urlsafe(36)
     digest = hashlib.sha256(raw.encode()).hexdigest()
     try:
+        workspace_name = (
+            await db.execute(
+                text("select name from public.workspaces where id=:workspace"),
+                {"workspace": workspace_id},
+            )
+        ).scalar_one()
         row = (
             (
                 await db.execute(
                     text("""
-          insert into public.workspace_invitations(
-            workspace_id, email, role, token_hash, invited_by, expires_at
-          )
-          values (:workspace,lower(:email),:role,:digest,:actor,now()+interval '7 days')
-          returning id,workspace_id,email,role,expires_at,created_at
-        """),
+                        insert into public.workspace_invitations(
+                            workspace_id,email,role,token_hash,invited_by,expires_at,delivery_status
+                        )
+                        values (:workspace,:email,:role,:digest,:actor,now()+interval '7 days','pending')
+                        returning id
+                    """),
                     {
                         "workspace": workspace_id,
-                        "email": payload.email,
+                        "email": email,
                         "role": payload.role,
                         "digest": digest,
                         "actor": actor,
@@ -763,22 +857,108 @@ async def create_invitation(
             .mappings()
             .one()
         )
+        invitation_id = row["id"]
         await audit(
-            db,
-            actor,
-            workspace_id,
-            "workspace.invitation.created",
-            "invitation",
-            row["id"],
-            request,
+            db, actor, workspace_id, "workspace.invitation.created", "invitation",
+            invitation_id, request
         )
         await db.commit()
-        return {"data": dict(row), "invitation_token": raw}
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=409, detail="A pending invitation already exists for this email"
         ) from exc
+
+    result = await deliver_invitation(
+        db=db,
+        invitation_id=invitation_id,
+        recipient=email,
+        workspace_name=workspace_name,
+        role=payload.role,
+        raw_token=raw,
+        digest=digest,
+    )
+    await audit(
+        db, actor, workspace_id, "workspace.invitation.email_accepted", "invitation",
+        invitation_id, request
+    )
+    await db.commit()
+    return {"data": result}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/invitations/{invitation_id}/resend",
+    status_code=202,
+    dependencies=[Depends(auth_rate_limit)],
+)
+async def resend_invitation(
+    workspace_id: UUID,
+    invitation_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = Db,
+):
+    actor = uid(claims)
+    await require_permission(db, actor, workspace_id, "member.manage")
+    try:
+        invitation_email.assert_configured()
+    except InvitationEmailConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    row = (
+        (
+            await db.execute(
+                text("""
+                    select i.email,i.role,w.name as workspace_name
+                    from public.workspace_invitations i
+                    join public.workspaces w on w.id=i.workspace_id
+                    where i.id=:invitation and i.workspace_id=:workspace
+                      and i.accepted_at is null and i.cancelled_at is null
+                    for update of i
+                """),
+                {"invitation": invitation_id, "workspace": workspace_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Pending invitation not found")
+    if row["role"] == "admin":
+        actor_role = await require_permission(db, actor, workspace_id, "member.manage")
+        if actor_role != "owner":
+            raise HTTPException(
+                status_code=403, detail="Only the workspace owner can resend administrator invitations"
+            )
+
+    raw = secrets.token_urlsafe(36)
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    await db.execute(
+        text("""
+            update public.workspace_invitations
+            set token_hash=:digest,expires_at=now()+interval '7 days',
+                delivery_status='pending',provider_message_id=null,
+                last_delivery_error=null
+            where id=:id
+        """),
+        {"id": invitation_id, "digest": digest},
+    )
+    await db.commit()
+    result = await deliver_invitation(
+        db=db,
+        invitation_id=invitation_id,
+        recipient=row["email"],
+        workspace_name=row["workspace_name"],
+        role=row["role"],
+        raw_token=raw,
+        digest=digest,
+    )
+    await audit(
+        db, actor, workspace_id, "workspace.invitation.resent", "invitation",
+        invitation_id, request
+    )
+    await db.commit()
+    return {"data": result}
 
 
 @router.patch(

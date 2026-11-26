@@ -27,11 +27,16 @@ async def auth_rate_limit(request: Request) -> None:
         if count == 1:
             await redis_client.expire(key, 60)
         if count > 10:
-            raise HTTPException(status_code=429, detail="Too many authentication requests; retry later")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many authentication requests; retry later",
+            )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Authentication rate limiter unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Authentication rate limiter unavailable"
+        ) from exc
 
 class AuthSignup(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -55,7 +60,10 @@ class EmailRequest(BaseModel):
 
 class VerifyEmail(BaseModel):
     token_hash: str = Field(min_length=20, max_length=512)
-    type: str = Field(default="signup", pattern=r"^(signup|email|recovery|invite|magiclink|email_change)$")
+    type: str = Field(
+        default="signup",
+        pattern=r"^(signup|email|recovery|invite|magiclink|email_change)$",
+    )
 
 class ProfileUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -126,7 +134,9 @@ async def require_workspace(db: AsyncSession, user_id: UUID, workspace_id: UUID,
 
 async def audit(db: AsyncSession, actor: UUID, workspace: UUID | None, action: str, resource: str, resource_id: UUID | None, request: Request) -> None:
     await db.execute(text("""
-      insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
+      insert into public.audit_logs(
+        actor_user_id, workspace_id, action, resource_type, resource_id, request_id
+      )
       values (:actor,:workspace,:action,:resource,:resource_id,:request_id)
     """), {"actor":actor,"workspace":workspace,"action":action,"resource":resource,"resource_id":resource_id,"request_id":getattr(request.state,"request_id",None)})
 
@@ -182,7 +192,9 @@ async def update_profile(payload: ProfileUpdate, claims: AuthenticatedClaims, db
     values = payload.model_dump(exclude_unset=True)
     if "avatar_path" in values and values["avatar_path"] is not None:
         if not values["avatar_path"].startswith(f"{user_id}/"):
-            raise HTTPException(status_code=403, detail="Avatar path must be owned by the authenticated user")
+            raise HTTPException(status_code=403, detail=(
+                    "Avatar path must be owned by the authenticated user"
+                ))
     if not values:
         raise HTTPException(status_code=400, detail="No profile fields supplied")
     assignments = ", ".join(f"{key}=:{key}" for key in values)
@@ -237,7 +249,10 @@ async def update_workspace(workspace_id: UUID, payload: WorkspaceUpdate, request
     if "settings" in values:
         values["settings"] = __import__("json").dumps(values["settings"])
     assignments=", ".join(("settings=cast(:settings as jsonb)" if key=="settings" else f"{key}=:{key}") for key in values)
-    row=(await db.execute(text(f"update public.workspaces set {assignments},updated_at=now() where id=:id returning *"),{**values,"id":workspace_id})).mappings().one()
+    row=(await db.execute(text(f"""
+        update public.workspaces set {assignments}, updated_at=now()
+        where id=:id returning *
+      """),{**values,"id":workspace_id})).mappings().one()
     await audit(db,user_id,workspace_id,"workspace.updated","workspace",workspace_id,request); await db.commit()
     return {"data":dict(row)}
 
@@ -247,7 +262,10 @@ async def delete_workspace(workspace_id: UUID, request: Request, claims: Authent
     actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner"})
     project_count=(await db.execute(text("select count(*) from public.video_projects where workspace_id=:workspace"),{"workspace":workspace_id})).scalar_one()
     if project_count:
-        raise HTTPException(status_code=409,detail="Workspace contains projects; archive or transfer them before deleting the workspace")
+        raise HTTPException(status_code=409,detail=(
+                "Workspace contains projects; archive or transfer them "
+                "before deleting the workspace"
+            ))
     await audit(db,actor,workspace_id,"workspace.deleted","workspace",workspace_id,request)
     await db.execute(text("delete from public.workspaces where id=:workspace"),{"workspace":workspace_id})
     await db.commit()
@@ -268,7 +286,9 @@ async def create_invitation(workspace_id: UUID,payload: InviteCreate,request: Re
     actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner","admin"})
     raw=secrets.token_urlsafe(36); digest=hashlib.sha256(raw.encode()).hexdigest()
     row=(await db.execute(text("""
-      insert into public.workspace_invitations(workspace_id,email,role,token_hash,invited_by,expires_at)
+      insert into public.workspace_invitations(
+        workspace_id, email, role, token_hash, invited_by, expires_at
+      )
       values (:workspace,lower(:email),:role,:digest,:actor,now()+interval '7 days')
       returning id,workspace_id,email,role,expires_at,created_at
     """),{"workspace":workspace_id,"email":payload.email,"role":payload.role,"digest":digest,"actor":actor})).mappings().one()
@@ -279,7 +299,11 @@ async def create_invitation(workspace_id: UUID,payload: InviteCreate,request: Re
 @router.patch("/workspaces/{workspace_id}/members/{member_id}")
 async def update_member_role(workspace_id: UUID, member_id: UUID, payload: RoleUpdate, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db):
     actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner","admin"})
-    target=(await db.execute(text("select user_id,role from public.workspace_members where id=:member and workspace_id=:workspace and status='active'"),{"member":member_id,"workspace":workspace_id})).mappings().first()
+    target=(await db.execute(text("""
+        select user_id, role
+        from public.workspace_members
+        where id=:member and workspace_id=:workspace and status='active'
+    """),{"member":member_id,"workspace":workspace_id})).mappings().first()
     if not target: raise HTTPException(status_code=404,detail="Workspace member not found")
     if target["role"]=="owner": raise HTTPException(status_code=409,detail="Workspace ownership cannot be changed through role management")
     if payload.role=="owner": raise HTTPException(status_code=400,detail="Use the ownership transfer workflow")
@@ -293,7 +317,11 @@ async def update_member_role(workspace_id: UUID, member_id: UUID, payload: RoleU
 @router.delete("/workspaces/{workspace_id}/members/{member_id}",status_code=204)
 async def remove_workspace_member(workspace_id: UUID, member_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db):
     actor=uid(claims); actor_role=await require_workspace(db,actor,workspace_id,{"owner","admin"})
-    target=(await db.execute(text("select user_id,role from public.workspace_members where id=:member and workspace_id=:workspace and status='active'"),{"member":member_id,"workspace":workspace_id})).mappings().first()
+    target=(await db.execute(text("""
+        select user_id, role
+        from public.workspace_members
+        where id=:member and workspace_id=:workspace and status='active'
+    """),{"member":member_id,"workspace":workspace_id})).mappings().first()
     if not target: raise HTTPException(status_code=404,detail="Workspace member not found")
     if target["role"]=="owner": raise HTTPException(status_code=409,detail="Workspace owner cannot be removed")
     if target["role"]=="admin" and actor_role!="owner": raise HTTPException(status_code=403,detail="Only the owner can remove an administrator")
@@ -307,7 +335,8 @@ async def cancel_invitation(workspace_id: UUID, invitation_id: UUID, request: Re
     actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner","admin"})
     result=await db.execute(text("""
       update public.workspace_invitations set cancelled_at=now()
-      where id=:invitation and workspace_id=:workspace and accepted_at is null and cancelled_at is null
+      where id=:invitation and workspace_id=:workspace
+        and accepted_at is null and cancelled_at is null
     """),{"invitation":invitation_id,"workspace":workspace_id})
     if result.rowcount==0: raise HTTPException(status_code=404,detail="Pending invitation not found")
     await audit(db,actor,workspace_id,"workspace.invitation.cancelled","invitation",invitation_id,request)
@@ -342,7 +371,8 @@ async def leave_workspace(workspace_id: UUID,claims: AuthenticatedClaims,db: Asy
     actor=uid(claims)
     role=await require_workspace(db,actor,workspace_id)
     if role=="owner": raise HTTPException(status_code=409,detail="Transfer ownership before leaving")
-    await db.execute(text("update public.workspace_members set status='left' where workspace_id=:workspace and user_id=:user"),{"workspace":workspace_id,"user":actor})
+    await db.execute(text("update public.workspace_members set status='left'
+        where workspace_id=:workspace and user_id=:user"),{"workspace":workspace_id,"user":actor})
     await db.commit()
     return None
 
@@ -363,10 +393,17 @@ async def create_project(workspace_id: UUID,payload: ProjectCreate,request: Requ
     actor=uid(claims); await require_workspace(db,actor,workspace_id,{"owner","admin","editor","member"})
     try:
         row=(await db.execute(text("""
-          insert into public.video_projects(workspace_id,created_by,name,description,production_mode,default_language,target_duration_ms,aspect_ratio,width,height,fps)
-          values (:workspace,:actor,:name,:description,:mode,:language,:duration,:ratio,:width,:height,:fps) returning *
+          insert into public.video_projects(
+            workspace_id, created_by, name, description, production_mode,
+            default_language, target_duration_ms, aspect_ratio, width, height, fps
+          )
+          values (
+            :workspace, :actor, :name, :description, :mode, :language,
+            :duration, :ratio, :width, :height, :fps
+          ) returning *
         """),{"workspace":workspace_id,"actor":actor,"name":payload.name.strip(),"description":payload.description,"mode":payload.production_mode,"language":payload.default_language,"duration":payload.target_duration_ms,"ratio":payload.aspect_ratio,"width":payload.width,"height":payload.height,"fps":payload.fps})).mappings().one()
-        await db.execute(text("insert into public.project_settings(project_id,settings) values (:id,cast(:settings as jsonb))"),{"id":row["id"],"settings":__import__("json").dumps(payload.settings)})
+        await db.execute(text("insert into public.project_settings(project_id, settings)
+            values (:id, cast(:settings as jsonb))"),{"id":row["id"],"settings":__import__("json").dumps(payload.settings)})
         await audit(db,actor,workspace_id,"project.created","video_project",row["id"],request); await db.commit()
         return {"data":dict(row)}
     except Exception:
@@ -388,7 +425,9 @@ async def get_project(project_id: UUID,claims: AuthenticatedClaims,db: AsyncSess
 async def update_project(project_id: UUID,payload: ProjectUpdate,request: Request,claims: AuthenticatedClaims,db: AsyncSession=Db):
     actor=uid(claims)
     row=(await db.execute(text("""
-      select p.workspace_id,m.role from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
+      select p.workspace_id, m.role
+        from public.video_projects p
+        join public.workspace_members m on m.workspace_id=p.workspace_id
       where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
     """),{"project":project_id,"actor":actor})).mappings().first()
     if not row: raise HTTPException(status_code=404,detail="Project not found")
@@ -401,8 +440,12 @@ async def update_project(project_id: UUID,payload: ProjectUpdate,request: Reques
             await db.execute(text(f"update public.video_projects set {assignments},updated_at=now() where id=:id"),{**values,"id":project_id})
         if settings is not None:
             await db.execute(text("""
-              insert into public.project_settings(project_id,settings,version) values (:id,cast(:settings as jsonb),1)
-              on conflict (project_id) do update set settings=excluded.settings,version=project_settings.version+1,updated_at=now()
+              insert into public.project_settings(project_id, settings, version)
+                values (:id, cast(:settings as jsonb), 1)
+              on conflict (project_id) do update set
+                settings=excluded.settings,
+                version=project_settings.version+1,
+                updated_at=now()
             """),{"id":project_id,"settings":__import__("json").dumps(settings)})
         await audit(db,actor,row["workspace_id"],"project.updated","video_project",project_id,request)
         result=(await db.execute(text("select * from public.video_projects where id=:id"),{"id":project_id})).mappings().one()
@@ -421,12 +464,17 @@ async def restore_project(project_id: UUID,request: Request,claims: Authenticate
 async def _set_project_status(project_id: UUID,new_status: str,request: Request,claims: AuthenticatedClaims,db: AsyncSession):
     actor=uid(claims)
     row=(await db.execute(text("""
-      select p.workspace_id,m.role from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
+      select p.workspace_id, m.role
+        from public.video_projects p
+        join public.workspace_members m on m.workspace_id=p.workspace_id
       where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
     """),{"project":project_id,"actor":actor})).mappings().first()
     if not row: raise HTTPException(status_code=404,detail="Project not found")
     if row["role"] not in ("owner","admin","editor"): raise HTTPException(status_code=403,detail="Project lifecycle permission required")
-    result=(await db.execute(text("update public.video_projects set status=:status,updated_at=now() where id=:id returning *"),{"status":new_status,"id":project_id})).mappings().one()
+    result=(await db.execute(text("""
+            update public.video_projects set status=:status, updated_at=now()
+            where id=:id returning *
+        """),{"status":new_status,"id":project_id})).mappings().one()
     await audit(db,actor,row["workspace_id"],f"project.{new_status}","video_project",project_id,request); await db.commit()
     return {"data":dict(result)}
 
@@ -434,11 +482,16 @@ async def _set_project_status(project_id: UUID,new_status: str,request: Request,
 async def delete_project(project_id: UUID,request: Request,claims: AuthenticatedClaims,db: AsyncSession=Db):
     actor=uid(claims)
     row=(await db.execute(text("""
-      select p.workspace_id,m.role from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
+      select p.workspace_id, m.role
+        from public.video_projects p
+        join public.workspace_members m on m.workspace_id=p.workspace_id
       where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
     """),{"project":project_id,"actor":actor})).mappings().first()
     if not row: raise HTTPException(status_code=404,detail="Project not found")
     if row["role"] not in ("owner","admin"): raise HTTPException(status_code=403,detail="Project delete permission required")
-    await db.execute(text("update public.video_projects set status='deleted',updated_at=now() where id=:id"),{"id":project_id})
+    await db.execute(text("""
+            update public.video_projects set status='deleted', updated_at=now()
+            where id=:id
+        """),{"id":project_id})
     await audit(db,actor,row["workspace_id"],"project.deleted","video_project",project_id,request); await db.commit()
     return None

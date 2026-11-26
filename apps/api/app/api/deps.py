@@ -8,7 +8,8 @@ async def current_claims(authorization: Annotated[str | None, Header()] = None) 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     token = authorization.removeprefix("Bearer ").strip()
     claims = verify_access_token(token)
-    # Check the live Supabase session as well as JWT signature/claims so revoked sessions fail closed.
+    # Check the live Supabase session as well as JWT claims.
+    # This also rejects sessions revoked after token issuance.
     user = await supabase_auth.verify_user(token)
     if str(user.get("id")) != str(claims.get("sub")):
         raise HTTPException(status_code=401, detail="Authenticated identity mismatch")

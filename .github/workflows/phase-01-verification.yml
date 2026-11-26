@@ -82,7 +82,7 @@ jobs:
         run: |
           uv run ruff format app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/services/supabase_auth.py app/services/workspace_authorization.py
           uv run python -m compileall -q app
-          uv run ruff check app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/services/supabase_auth.py app/services/workspace_authorization.py
+          uv run ruff check --fix app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/services/supabase_auth.py app/services/workspace_authorization.py
           uv run python -c "from app.main import app; assert app.openapi()"
 
       - name: FastAPI startup smoke check

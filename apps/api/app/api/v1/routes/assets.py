@@ -179,13 +179,23 @@ async def delete_project_asset(
         select id,project_id,workspace_id,bucket,object_path,status
         from public.project_assets where id=:asset
     """), {"asset": asset_id})).mappings().first()
-    if row is None or row["status"] != "active":
+    if row is None or row["status"] == "deleted":
         raise HTTPException(status_code=404, detail="Project asset not found")
+    if row["status"] not in ("active", "deleting", "delete_failed"):
+        raise HTTPException(status_code=409, detail="Project asset is already in a lifecycle transition")
     await _project_workspace(db, row["project_id"], actor, "project.update")
+    await db.execute(text("""
+        update public.project_assets set status='deleting' where id=:asset
+    """), {"asset": asset_id})
+    await db.commit()
     try:
         await SupabaseStorage().remove(bucket=row["bucket"], object_path=row["object_path"])
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Project asset storage deletion failed") from exc
+        await db.execute(text("""
+            update public.project_assets set status='delete_failed' where id=:asset
+        """), {"asset": asset_id})
+        await db.commit()
+        raise HTTPException(status_code=502, detail="Project asset storage deletion failed; retry is available") from exc
     await db.execute(text("""
         update public.project_assets set status='deleted',deleted_at=now()
         where id=:asset

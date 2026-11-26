@@ -178,7 +178,7 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             heartbeat_task.cancel()
             try:
                 await heartbeat_task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 pass
 
 

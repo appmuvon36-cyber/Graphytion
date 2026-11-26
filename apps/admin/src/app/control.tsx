@@ -4,7 +4,8 @@ import { useCallback,useEffect,useMemo,useState } from 'react';
 import { ApiClientError,createApiClient } from '@graphytion/api-client';
 import type { WorkspaceApi, WorkspaceMemberApi, WorkspaceInvitationApi, VideoProjectApi } from '@graphytion/contracts';
 type Workspace=WorkspaceApi;
-type Member=WorkspaceMemberApi;\ntype Project=VideoProjectApi;
+type Member=WorkspaceMemberApi;
+type Project=VideoProjectApi;
 type Invitation=WorkspaceInvitationApi & {delivery_status?:'pending'|'sent'|'delivered'|'delivery_delayed'|'bounced'|'complained'|'failed';delivery_attempts?:number;sent_at?:string|null};
 const apiBase=typeof window!=='undefined'?window.location.origin+'/api':'http://localhost:3001/api';
 export default function ControlPlane(){

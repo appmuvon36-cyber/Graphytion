@@ -121,9 +121,15 @@ async def create_render(
     timeline_id = await db.scalar(text("select id from public.video_timelines where project_id=:project and compiled_hash=:hash order by version desc limit 1"), {"project":project_id,"hash":timeline_hash})
     row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id})).mappings().first()
     if row is None:
-        existing = (await db.execute(text("select id,status,timeline_hash from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
-        if existing is None or existing["timeline_hash"] != timeline_hash:
-            raise HTTPException(409, detail="Idempotency-Key was used for a different render snapshot")
+        existing = (await db.execute(text("select id,status,timeline_hash,render_profile_id,render_config,composition_version from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
+        if (
+            existing is None
+            or existing["timeline_hash"] != timeline_hash
+            or existing["render_profile_id"] != profile["id"]
+            or existing["render_config"] != render_config
+            or existing["composition_version"] != payload.composition_version
+        ):
+            raise HTTPException(409, detail="Idempotency-Key was used for a different render request")
         await db.rollback()
         return {"data":{"render_job_id":str(existing["id"]),"status":existing["status"],"replayed":True}}
     await db.execute(text("""

@@ -573,10 +573,7 @@ async def delete_workspace(
     if project_count:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "Workspace contains projects; archive or transfer them "
-                "before deleting the workspace"
-            ),
+            detail="Workspace contains project records; deletion is blocked to preserve project history.",
         )
     await audit(db, actor, workspace_id, "workspace.deleted", "workspace", workspace_id, request)
     await db.execute(

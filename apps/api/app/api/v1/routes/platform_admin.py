@@ -338,3 +338,37 @@ async def platform_cancel_invitation(
                  "invitation", invitation_id, {"workspace_id": str(row["workspace_id"])})
     await db.commit()
     return None
+
+
+class PlatformProjectStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(draft|archived)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.patch("/projects/{project_id}/status")
+async def platform_update_project_status(
+    project_id: UUID,
+    payload: PlatformProjectStatusUpdate,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    row = (await db.execute(text("""
+        select status from public.video_projects where id=:project and status <> 'deleted' for update
+    """), {"project": project_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if payload.status == "archived" and row["status"] not in ("draft", "active"):
+        raise HTTPException(status_code=409, detail="Only draft or active projects can be archived")
+    if payload.status == "draft" and row["status"] != "archived":
+        raise HTTPException(status_code=409, detail="Only archived projects can be restored")
+    await db.execute(text("""
+        update public.video_projects set status=:status,updated_at=now()
+        where id=:project
+    """), {"status": payload.status, "project": project_id})
+    await _audit(db, request, actor, "platform.project.status_changed",
+                 "project", project_id, {"from": row["status"], "to": payload.status, "reason": payload.reason})
+    await db.commit()
+    return {"data": {"project_id": str(project_id), "status": payload.status}}

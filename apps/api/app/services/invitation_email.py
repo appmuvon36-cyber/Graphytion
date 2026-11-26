@@ -79,10 +79,15 @@ class ResendInvitationEmail:
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
                     response = await client.post(self.endpoint, headers=headers, json=payload)
-                if response.status_code in (429, 500, 502, 503, 504) and attempt == 0:
-                    await asyncio.sleep(1)
-                    continue
-                response.raise_for_status()
+                if response.status_code in (429, 500, 502, 503, 504):
+                    if attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                    response.raise_for_status()
+                if response.is_error:
+                    # Do not retry permanent provider errors (invalid sender, recipient,
+                    # authentication, or malformed payload); surface one redacted failure.
+                    response.raise_for_status()
                 body = response.json()
                 message_id = body.get("id")
                 if not isinstance(message_id, str) or not message_id:
@@ -90,7 +95,7 @@ class ResendInvitationEmail:
                         "Email provider returned no message identifier"
                     )
                 return message_id
-            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
                 last_error = exc
                 if attempt == 0:
                     await asyncio.sleep(1)

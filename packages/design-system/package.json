@@ -1,0 +1,1 @@
+{"name":"@graphytion/design-system","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.tsx","./tokens":"./src/tokens.ts"},"peerDependencies":{"react":"^19.1.1"},"scripts":{"lint":"tsc --noEmit","typecheck":"tsc --noEmit","build":"tsc --noEmit"},"devDependencies":{"@types/react":"19.1.16","typescript":"5.9.3"}}

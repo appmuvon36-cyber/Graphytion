@@ -7,8 +7,8 @@ import type { ProfileApi, WorkspaceApi, VideoProjectApi, WorkspacePermissionsApi
 type Profile = ProfileApi;
 type Workspace = WorkspaceApi;
 type Project = VideoProjectApi;
-type AuthResult = { access_token:string; refresh_token:string; expires_in:number; user:{id:string;email:string} };
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000/api/v1';
+type AuthResult = { authenticated?:boolean; user?:{id:string;email:string}|null };
+const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
 
 export default function Studio() {
   const [access,setAccess] = useState('');
@@ -49,34 +49,20 @@ export default function Studio() {
   const [editDescription,setEditDescription] = useState('');
   const [projectDetail,setProjectDetail] = useState<Record<string,unknown>|null>(null);
 
-  const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>(typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null) || access}),[access]);
-  const publicApi = useMemo(()=>createApiClient({baseUrl:apiBase}),[]);
+  const api = useMemo(()=>createApiClient({baseUrl:apiBase}),[]);
+  const publicApi = api;
   const call = useCallback(async <T,>(path:string,init:RequestInit={})=>{
     try { return await api.request<T>(path,init); }
     catch (e) {
-      if (e instanceof ApiClientError && e.status===401 && typeof window!=='undefined') {
-        const refreshToken=sessionStorage.getItem('graphytion.refresh');
-        if (refreshToken) {
-          try {
-            const tokens=await publicApi.request<AuthResult>('/auth/refresh',{method:'POST',body:JSON.stringify({refresh_token:refreshToken})});
-            sessionStorage.setItem('graphytion.access',tokens.access_token);
-            sessionStorage.setItem('graphytion.refresh',tokens.refresh_token);
-            setAccess(tokens.access_token);
-            return await api.request<T>(path,init);
-          } catch {
-            sessionStorage.removeItem('graphytion.access');
-            sessionStorage.removeItem('graphytion.refresh');
-            setAccess('');
-          }
-        } else {
-          sessionStorage.removeItem('graphytion.access');
-          sessionStorage.removeItem('graphytion.refresh');
-          setAccess('');
-        }
+      if (e instanceof ApiClientError && e.status===401) {
+        setAccess('');
+        setProfile(null);
+        setWorkspaces([]);
+        setProjects([]);
       }
       throw e;
     }
-  },[api,publicApi]);
+  },[api]);
 
   const loadWorkspaceData=useCallback(async(id:string,filters:{q?:string;status?:string;sort?:string;offset?:number}={})=>{
     if(!id){setProjects([]);setProjectTotal(0);return;}
@@ -105,20 +91,31 @@ export default function Studio() {
   },[call,loadWorkspaceData,workspaceId]);
 
   useEffect(()=>{
-    const saved=sessionStorage.getItem('graphytion.access');
-    if(saved){setAccess(saved);}
-    const fragment=new URLSearchParams(window.location.hash.replace(/^#/,''));
-    const fragmentAccess=fragment.get('access_token');
-    const fragmentRefresh=fragment.get('refresh_token');
-    if(fragmentAccess&&fragmentRefresh){
-      sessionStorage.setItem('graphytion.access',fragmentAccess);
-      sessionStorage.setItem('graphytion.refresh',fragmentRefresh);
-      setAccess(fragmentAccess);
-      setPasswordRecovery(fragment.get('type')==='recovery');
-      window.history.replaceState({},document.title,window.location.pathname+window.location.search);
-      setNotice(fragment.get('type')==='recovery'?'Verifikasi pemulihan berhasil. Atur password baru.':'Email berhasil diverifikasi. Sesi aktif.');
+    let active=true;
+    const currentUrl=new URL(window.location.href);
+    if(currentUrl.searchParams.get('recovery')==='1'){
+      setPasswordRecovery(true);
+      setNotice('Verifikasi pemulihan berhasil. Atur password baru.');
+      currentUrl.searchParams.delete('recovery');
+      window.history.replaceState({},document.title,currentUrl.pathname+currentUrl.search+currentUrl.hash);
     }
-  },[]);
+    const fragment=new URLSearchParams(window.location.hash.replace(/^#/,''));
+    const invitation=fragment.get('invite');
+    if(invitation){
+      setInvitationToken(invitation);
+      window.history.replaceState({},document.title,window.location.pathname+window.location.search);
+      setNotice('Undangan workspace ditemukan. Masuk atau daftar dengan email penerima untuk menerimanya.');
+    } else if(fragment.has('access_token')||fragment.has('refresh_token')){
+      window.history.replaceState({},document.title,window.location.pathname+window.location.search);
+      setNotice('Tautan autentikasi lama dibersihkan. Silakan masuk kembali untuk membuat sesi aman.');
+    }
+    fetch('/api/csrf',{credentials:'include',cache:'no-store'}).finally(()=>{
+      api.request<{authenticated:boolean}>('/auth/session')
+        .then(result=>{if(active)setAccess(result.authenticated?'cookie-session':'');})
+        .catch(()=>{if(active)setAccess('');});
+    });
+    return ()=>{active=false;};
+  },[api]);
   useEffect(()=>{
     if(!access)return;
     setLoadingAccount(true);
@@ -138,14 +135,13 @@ export default function Studio() {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
       const body=await publicApi.request<AuthResult>(mode==='login'?'/auth/login':'/auth/signup',{method:'POST',body:JSON.stringify(mode==='login'?{email,password}:{email,password,display_name:displayName})});
-      if(!body.access_token){setNotice('Akun berhasil didaftarkan. Periksa email untuk verifikasi, lalu masuk setelah akun aktif.');setNeedsVerification(true);setMode('login');return;}
-      const tokens=body as AuthResult;
-      sessionStorage.setItem('graphytion.access',tokens.access_token); sessionStorage.setItem('graphytion.refresh',tokens.refresh_token); setAccess(tokens.access_token); setNotice('Berhasil masuk.');
+      if(!body.authenticated){setNotice('Akun berhasil didaftarkan. Periksa email untuk verifikasi, lalu masuk setelah akun aktif.');setNeedsVerification(true);setMode('login');return;}
+      setAccess('cookie-session'); setNotice('Berhasil masuk.');
     } catch(e){setError(e instanceof Error?e.message:'Autentikasi gagal');} finally{setBusy(false);}
   }
   async function logout(){
-    try{await call('/auth/logout',{method:'POST'});}catch{}
-    sessionStorage.removeItem('graphytion.access');sessionStorage.removeItem('graphytion.refresh');setAccess('');setProfile(null);setWorkspaces([]);setProjects([]);setNotice('Sesi telah diakhiri.');
+    try{await publicApi.request('/auth/logout',{method:'POST'});}catch{}
+    setAccess('');setProfile(null);setWorkspaces([]);setProjects([]);setNotice('Sesi telah diakhiri.');
   }
   async function resendVerification(){
     setBusy(true);setError('');

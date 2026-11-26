@@ -140,6 +140,7 @@ async function main() {
       }
       if (Date.now() - lastRecoveryScan >= 15000) {
         lastRecoveryScan = Date.now();
+        await api('internal/render-jobs/recover', {method: 'POST'});
         await processJob();
       }
     } catch (error) {

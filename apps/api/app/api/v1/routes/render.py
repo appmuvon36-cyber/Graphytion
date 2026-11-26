@@ -177,6 +177,37 @@ async def get_render(
     return {"data": dict(row)}
 
 
+@router.get("/renders/{render_job_id}/artifacts")
+async def list_render_sidecar_artifacts(
+    render_job_id: UUID,
+    claims: AuthenticatedClaims,
+    expires_in: int = Query(default=300, ge=30, le=21600),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    job = (await db.execute(text("select project_id from public.render_jobs where id=:id"),
+                            {"id": render_job_id})).mappings().first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Render job not found")
+    await _project_workspace(db, job["project_id"], actor, "project.read")
+    rows = (await db.execute(text("""
+        select id,artifact_type,storage_bucket,storage_path,mime_type,size_bytes,sha256,
+               snapshot_version,created_at
+        from public.render_artifacts where render_job_id=:job
+        order by artifact_type
+    """), {"job": render_job_id})).mappings().all()
+    artifacts = []
+    storage = SupabaseStorage()
+    for row in rows:
+        artifacts.append({
+            **dict(row),
+            "signed_url": await storage.create_signed_url(
+                bucket=row["storage_bucket"], object_path=row["storage_path"], expires_in=expires_in
+            ),
+        })
+    return {"data": artifacts}
+
+
 @router.post("/internal/render-jobs/recover")
 async def recover_render_jobs(
     request: Request,

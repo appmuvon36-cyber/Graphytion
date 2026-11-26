@@ -728,7 +728,7 @@ async def accept_invitation(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Invitation is invalid or expired")
-        await db.execute(
+        membership_result = await db.execute(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:actor,:role,'active')

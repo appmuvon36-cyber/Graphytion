@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.config import settings
 from app.core.database import set_rls_subject
-from app.core.redis import redis_client
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.composition_validation import validate_snapshot
@@ -22,7 +21,6 @@ from app.services.composition_assets import collect_asset_ids, resolve_project_a
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
-RENDER_STREAM = "graphytion:render:jobs"
 RENDER_BUCKET = "render-artifacts"
 MAX_RENDER_BYTES = 512 * 1024 * 1024
 ALLOWED_COMPONENTS = {"core.title-card.v1","visual.image.v1","visual.video.v1","visual.shape.v1","text.basic.v1","data.chart.v1","audio.clip.v1","text.subtitle.v1"}
@@ -132,11 +130,7 @@ async def create_render(
         values (:actor,:workspace,'render.queued','render_job',:job,:request_id)
     """), {"actor": actor, "workspace": workspace_id, "job": row["id"], "request_id": request.state.request_id})
     await db.commit()
-    try:
-        await redis_client.xadd(RENDER_STREAM, {"render_job_id": str(row["id"])}, maxlen=10000, approximate=True)
-    except Exception:
-        # The worker's database recovery scan claims persisted queued jobs.
-        pass
+    # Workers poll PostgreSQL directly; the persisted render_jobs row is the queue.
     return {"data": {"render_job_id": str(row["id"]), "status": "queued", "timeline_hash": timeline_hash}}
 
 

@@ -196,7 +196,7 @@ returns text language sql stable security definer set search_path = public, auth
 $$;
 
 create or replace function public.graphytion_workspace_owner(target_workspace uuid)
-returns uuid language sql stable security definer set search_path = public, auth as $
+returns uuid language sql stable security definer set search_path = public, auth as $graphytion$
   select w.owner_user_id
   from public.workspaces w
   where w.id=target_workspace
@@ -206,7 +206,7 @@ returns uuid language sql stable security definer set search_path = public, auth
         and m.user_id=auth.uid()
         and m.status='active'
     )
-$;
+$graphytion$;
 
 create or replace function public.graphytion_protect_workspace_owner()
 returns trigger language plpgsql set search_path = public as $$

@@ -30,6 +30,9 @@ export default function Studio() {
   const [busy,setBusy] = useState(false);
   const [profileName,setProfileName] = useState('');
   const [profileBio,setProfileBio] = useState('');
+  const [newPassword,setNewPassword] = useState('');
+  const [passwordRecovery,setPasswordRecovery] = useState(false);
+  const [needsVerification,setNeedsVerification] = useState(false);
   const [avatarFile,setAvatarFile] = useState<File|null>(null);
   const [invitationToken,setInvitationToken] = useState('');
   const [editingProject,setEditingProject] = useState<Project|null>(null);
@@ -81,6 +84,17 @@ export default function Studio() {
   useEffect(()=>{
     const saved=sessionStorage.getItem('graphytion.access');
     if(saved){setAccess(saved);}
+    const fragment=new URLSearchParams(window.location.hash.replace(/^#/,''));
+    const fragmentAccess=fragment.get('access_token');
+    const fragmentRefresh=fragment.get('refresh_token');
+    if(fragmentAccess&&fragmentRefresh){
+      sessionStorage.setItem('graphytion.access',fragmentAccess);
+      sessionStorage.setItem('graphytion.refresh',fragmentRefresh);
+      setAccess(fragmentAccess);
+      setPasswordRecovery(fragment.get('type')==='recovery');
+      window.history.replaceState({},document.title,window.location.pathname+window.location.search);
+      setNotice(fragment.get('type')==='recovery'?'Verifikasi pemulihan berhasil. Atur password baru.':'Email berhasil diverifikasi. Sesi aktif.');
+    }
   },[]);
   useEffect(()=>{
     if(!access)return;
@@ -91,7 +105,7 @@ export default function Studio() {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
       const body=await publicApi.request<AuthResult>(mode==='login'?'/auth/login':'/auth/signup',{method:'POST',body:JSON.stringify(mode==='login'?{email,password}:{email,password,display_name:displayName})});
-      if(!body.access_token){setNotice('Akun berhasil didaftarkan. Periksa email untuk verifikasi, lalu masuk setelah akun aktif.');setMode('login');return;}
+      if(!body.access_token){setNotice('Akun berhasil didaftarkan. Periksa email untuk verifikasi, lalu masuk setelah akun aktif.');setNeedsVerification(true);setMode('login');return;}
       const tokens=body as AuthResult;
       sessionStorage.setItem('graphytion.access',tokens.access_token); sessionStorage.setItem('graphytion.refresh',tokens.refresh_token); setAccess(tokens.access_token); setNotice('Berhasil masuk.');
     } catch(e){setError(e instanceof Error?e.message:'Autentikasi gagal');} finally{setBusy(false);}
@@ -99,6 +113,16 @@ export default function Studio() {
   async function logout(){
     try{await call('/auth/logout',{method:'POST'});}catch{}
     sessionStorage.removeItem('graphytion.access');sessionStorage.removeItem('graphytion.refresh');setAccess('');setProfile(null);setWorkspaces([]);setProjects([]);setNotice('Sesi telah diakhiri.');
+  }
+  async function resendVerification(){
+    setBusy(true);setError('');
+    try{await publicApi.request('/auth/resend-verification',{method:'POST',body:JSON.stringify({email})});setNotice('Jika akun membutuhkan verifikasi, email telah diminta untuk dikirim ulang.');}
+    catch(e){setError(e instanceof Error?e.message:'Tidak dapat mengirim ulang verifikasi');}finally{setBusy(false);}
+  }
+  async function changePassword(event:React.FormEvent<HTMLFormElement>){
+    event.preventDefault();setBusy(true);setError('');
+    try{await call('/auth/password',{method:'POST',body:JSON.stringify({password:newPassword})});setNewPassword('');setPasswordRecovery(false);setNotice('Password berhasil diperbarui.');}
+    catch(e){setError(e instanceof Error?e.message:'Password tidak dapat diperbarui');}finally{setBusy(false);}
   }
   async function recover(){
     setBusy(true);setError('');setNotice('');
@@ -178,6 +202,8 @@ export default function Studio() {
       <button disabled={busy} style={button}>{busy?'Memproses…':mode==='login'?'Masuk':'Buat akun'}</button>
       <button type="button" onClick={()=>setMode(mode==='login'?'signup':'login')} style={{...button,background:'#edf3f9',color:'#173f72'}}>{mode==='login'?'Daftar akun baru':'Kembali ke login'}</button>
       {mode==='login'&&<button type="button" onClick={recover} style={{border:0,background:'transparent',color:'#47719e',cursor:'pointer'}}>Lupa password?</button>}
+      {needsVerification&&<button type="button" disabled={busy} onClick={resendVerification} style={{border:0,background:'transparent',color:'#47719e',cursor:'pointer'}}>Kirim ulang email verifikasi</button>}
+
     </form>
     {error&&<p role="alert" style={{color:'#b42318'}}>{error}</p>}{notice&&<p role="status" style={{color:'#176b45'}}>{notice}</p>}
   </main>;
@@ -190,7 +216,7 @@ export default function Studio() {
     {error&&<p role="alert" style={{padding:12,background:'#fff1f0',color:'#b42318',borderRadius:10}}>{error}</p>}{notice&&<p role="status" style={{padding:12,background:'#ecfdf3',color:'#176b45',borderRadius:10}}>{notice}</p>}
     <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:16,marginBottom:20}}>
       <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Workspace</h2><select aria-label="Pilih workspace" value={workspaceId} onChange={e=>{setWorkspaceId(e.target.value);setWorkspaceEditName(workspaces.find(w=>w.id===e.target.value)?.name||'');loadWorkspaceData(e.target.value).catch(x=>setError(String(x)));}} style={field}><option value="">Pilih workspace</option>{workspaces.map(w=><option key={w.id} value={w.id}>{w.name} · {w.role}</option>)}</select><p style={{color:'#68788e',fontSize:13}}>{workspaces.length} workspace tersedia</p>{workspaceId&&<><form onSubmit={updateWorkspace} style={{display:'flex',gap:8,marginTop:8}}><input aria-label="Ubah nama workspace" value={workspaceEditName||workspaces.find(w=>w.id===workspaceId)?.name||''} onChange={e=>setWorkspaceEditName(e.target.value)} style={field}/><button disabled={busy||!['owner','admin'].includes(selectedRole)} style={button}>Simpan nama</button></form>{selectedRole!=='owner'&&<button onClick={leaveWorkspace} disabled={busy} style={{...button,background:'#fff1f0',color:'#b42318',marginTop:8}}>Keluar workspace</button>}</>}<form onSubmit={createWorkspace} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Nama workspace" placeholder="Nama workspace baru" value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} required style={field}/><input aria-label="Slug workspace" placeholder="slug-workspace" value={workspaceSlug} onChange={e=>setWorkspaceSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))} required style={field}/><button disabled={busy} style={button}>Buat workspace</button></form></div>
-      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Profil akun</h2><form onSubmit={saveProfile} style={{display:'grid',gap:8}}><input aria-label="Nama tampilan" placeholder="Nama tampilan" value={profileName} onChange={e=>setProfileName(e.target.value)} style={field}/><textarea aria-label="Bio" placeholder="Bio singkat" value={profileBio} onChange={e=>setProfileBio(e.target.value)} rows={3} style={field}/><button disabled={busy} style={button}>Simpan profil</button></form><form onSubmit={uploadAvatar} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Avatar PNG JPEG WebP" type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>setAvatarFile(e.target.files?.[0]||null)}/><button disabled={busy||!avatarFile} style={{...button,background:'#edf3f9',color:'#173f72'}}>Upload avatar private</button></form>{profile?.avatar_path&&<p style={{fontSize:12,color:'#68788e'}}>Avatar: {profile.avatar_path}</p>}</div>
+      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Profil akun</h2><form onSubmit={saveProfile} style={{display:'grid',gap:8}}><input aria-label="Nama tampilan" placeholder="Nama tampilan" value={profileName} onChange={e=>setProfileName(e.target.value)} style={field}/><textarea aria-label="Bio" placeholder="Bio singkat" value={profileBio} onChange={e=>setProfileBio(e.target.value)} rows={3} style={field}/><button disabled={busy} style={button}>Simpan profil</button></form><form onSubmit={uploadAvatar} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Avatar PNG JPEG WebP" type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>setAvatarFile(e.target.files?.[0]||null)}/><button disabled={busy||!avatarFile} style={{...button,background:'#edf3f9',color:'#173f72'}}>Upload avatar private</button></form>{profile?.avatar_path&&<p style={{fontSize:12,color:'#68788e'}}>Avatar: {profile.avatar_path}</p>}{passwordRecovery&&<form onSubmit={changePassword} style={{display:'grid',gap:8,marginTop:16}}><strong>Atur password baru</strong><input aria-label="Password baru" type="password" minLength={10} required value={newPassword} onChange={e=>setNewPassword(e.target.value)} style={field}/><button disabled={busy} style={button}>Simpan password baru</button></form>}</div>
     </section>
     <section style={{...card,marginBottom:18}}><h2 style={{marginTop:0,fontSize:18}}>Gabung workspace</h2><form onSubmit={acceptInvitation} style={{display:'flex',gap:8,flexWrap:'wrap'}}><input aria-label="Token invitation" placeholder="Tempel token invitation" value={invitationToken} onChange={e=>setInvitationToken(e.target.value)} required style={{...field,flex:1,minWidth:220}}/><button disabled={busy} style={button}>Terima undangan</button></form></section>
     <section style={card}>

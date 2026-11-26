@@ -33,7 +33,6 @@ class Settings(BaseSettings):
         default=SecretStr("postgresql+asyncpg://graphytion_api:CHANGE_ME@localhost:5432/postgres"),
         repr=False,
     )
-    redis_url: SecretStr = Field(default=SecretStr("redis://localhost:6379/0"), repr=False)
     invitation_email_provider: str = "resend"
     resend_api_key: SecretStr | None = Field(default=None, repr=False)
     resend_webhook_secret: SecretStr | None = Field(default=None, repr=False)

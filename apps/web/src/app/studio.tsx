@@ -6,7 +6,9 @@ import type { ProfileApi, WorkspaceApi, VideoProjectApi, WorkspacePermissionsApi
 
 type Profile = ProfileApi;
 type Workspace = WorkspaceApi;
-type Project = VideoProjectApi;\ntype Member = WorkspaceMemberApi;\ntype Invitation = WorkspaceInvitationApi & { delivery_status?: string; delivery_attempts?: number; sent_at?: string | null };
+type Project = VideoProjectApi;
+type Member = WorkspaceMemberApi;
+type Invitation = WorkspaceInvitationApi & { delivery_status?: string; delivery_attempts?: number; sent_at?: string | null };
 type AuthResult = { authenticated?:boolean; user?:{id:string;email:string}|null };
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
 
@@ -18,7 +20,11 @@ export default function Studio() {
   const [displayName,setDisplayName] = useState('');
   const [mode,setMode] = useState<'login'|'signup'>('login');
   const [workspaces,setWorkspaces] = useState<Workspace[]>([]);
-  const [permissions,setPermissions] = useState<string[]>([]);\n  const [members,setMembers] = useState<Member[]>([]);\n  const [invitations,setInvitations] = useState<Invitation[]>([]);\n  const [inviteEmail,setInviteEmail] = useState('');\n  const [inviteRole,setInviteRole] = useState<'member'|'viewer'|'editor'|'admin'|'billing'>('member');
+  const [permissions,setPermissions] = useState<string[]>([]);
+  const [members,setMembers] = useState<Member[]>([]);
+  const [invitations,setInvitations] = useState<Invitation[]>([]);
+  const [inviteEmail,setInviteEmail] = useState('');
+  const [inviteRole,setInviteRole] = useState<'member'|'viewer'|'editor'|'admin'|'billing'>('member');
   const [workspaceId,setWorkspaceId] = useState('');
   const [projects,setProjects] = useState<Project[]>([]);
   const [projectTotal,setProjectTotal] = useState(0);

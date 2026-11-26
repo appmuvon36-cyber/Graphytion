@@ -204,7 +204,9 @@ async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
     if auth_user.get("id"):
         await db.execute(
             text("""
-                insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+                insert into public.audit_logs(
+                    actor_user_id, action, resource_type, resource_id, request_id
+                )
                 values (:actor,'auth.login','user',:resource,:request_id)
             """),
             {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
@@ -412,7 +414,7 @@ async def create_workspace(
             .mappings()
             .one()
         )
-        membership_result = await db.execute(
+        await db.execute(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:user,'owner','active')
@@ -886,7 +888,11 @@ async def get_project(project_id: UUID, claims: AuthenticatedClaims, db: AsyncSe
       select p.*,s.settings,s.version as settings_version
       from public.video_projects p join public.workspace_members m on m.workspace_id=p.workspace_id
       left join public.project_settings s on s.project_id=p.id
-      where p.id=:project and m.user_id=:actor and m.status='active' and m.role in ('owner','admin','editor','member','viewer') and p.status<>'deleted'
+      where p.id=:project
+        and m.user_id=:actor
+        and m.status='active'
+        and m.role in ('owner','admin','editor','member','viewer')
+        and p.status<>'deleted'
     """),
                 {"project": project_id, "actor": actor},
             )

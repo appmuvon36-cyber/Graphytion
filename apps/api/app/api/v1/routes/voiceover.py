@@ -75,7 +75,12 @@ async def get_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncSes
  actor=_actor(claims);row=(await db.execute(text("select * from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
  if not row:raise HTTPException(404,"Voiceover job not found")
  await _scope(db,row["project_id"],actor,"project.read")
- return {"data":{k:row[k] for k in ("id","project_id","scene_id","provider_key","model_key","voice_key","language","status","asset_id","error_code","attempt_count","created_at","completed_at")}}
+ analysis=(await db.execute(text("""select waveform_bucket,waveform_path,waveform_sha256,media_metadata,created_at
+  from public.audio_analysis_artifacts where audio_generation_id=:id"""),{"id":voiceover_id})).mappings().first()
+ waveform=None
+ if analysis:
+  waveform={**dict(analysis),"signed_url":await SupabaseStorage().create_signed_url(bucket=analysis["waveform_bucket"],object_path=analysis["waveform_path"],expires_in=300)}
+ return {"data":{**{k:row[k] for k in ("id","project_id","scene_id","subtitle_segment_id","provider_key","model_key","voice_key","language","status","asset_id","error_code","attempt_count","created_at","completed_at","alignment_status","alignment_result")},"audio_analysis":waveform}}
 @router.post("/voiceovers/{voiceover_id}/retry",status_code=202)
 async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_actor(claims)

@@ -22,13 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims
 from app.core.config import settings
 from app.core.database import get_db_session, set_rls_subject
-_AUTH_RATE_LIMIT_WINDOW_SECONDS = 60.0
-_AUTH_RATE_LIMIT_MAX_REQUESTS = 10
-_AUTH_RATE_LIMIT_MAX_BUCKETS = 10_000
-_AUTH_RATE_LIMIT_LOCK = asyncio.Lock()
-_AUTH_RATE_LIMIT_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
-
-
 from app.services.idempotency import (
     complete_idempotency,
     reserve_idempotency,
@@ -46,6 +39,13 @@ from app.services.workspace_authorization import (
     WorkspacePermissionResolver,
     WorkspaceRole,
 )
+
+_AUTH_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_AUTH_RATE_LIMIT_MAX_REQUESTS = 10
+_AUTH_RATE_LIMIT_MAX_BUCKETS = 10_000
+_AUTH_RATE_LIMIT_LOCK = asyncio.Lock()
+_AUTH_RATE_LIMIT_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
+
 
 router = APIRouter()
 Db = Depends(get_db_session)

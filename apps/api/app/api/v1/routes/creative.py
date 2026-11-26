@@ -849,7 +849,9 @@ async def execute_creative_stage(
     stage_status = "queued"
     input_snapshot = {
         "stage": stage, "input_prompt": payload.input_prompt, "brief_id": str(payload.brief_id) if payload.brief_id else None,
-        "script_id": str(payload.script_id) if payload.script_id else None,\n        "scene_id": str(payload.scene_id) if payload.scene_id else None,\n        "revision_instruction": payload.revision_instruction,
+        "script_id": str(payload.script_id) if payload.script_id else None,
+        "scene_id": str(payload.scene_id) if payload.scene_id else None,
+        "revision_instruction": payload.revision_instruction,
         "source_material": payload.source_material,
         "approved_component_candidates": payload.approved_component_candidates,
     }

@@ -7,7 +7,7 @@ name = "graphytion-api"
 version = "0.1.0"
 description = "Graphytion FastAPI control plane"
 requires-python = ">=3.12,<3.14"
-dependencies = ["fastapi==0.119.0","uvicorn[standard]==0.38.0","pydantic==2.12.3","pydantic-settings==2.11.0","sqlalchemy[asyncio]==2.0.44","asyncpg==0.30.0","alembic==1.17.0","PyJWT[crypto]==2.10.1","httpx==0.28.1","structlog==25.4.0","python-multipart==0.0.20"]
+dependencies = ["fastapi==0.119.0","uvicorn[standard]==0.38.0","pydantic==2.12.3","pydantic-settings==2.11.0","sqlalchemy[asyncio]==2.0.44","asyncpg==0.30.0","alembic==1.17.0","PyJWT[crypto]==2.10.1","httpx==0.28.1","structlog==25.4.0","python-multipart==0.0.20","redis==6.4.0"]
 [project.scripts]
 graphytion-creative-worker = "app.workers.creative:main"
 

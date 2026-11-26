@@ -15,6 +15,7 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.core.logging import configure_logging, logger
+from app.core.database import engine
 from app.core.redis import redis_client
 
 configure_logging(settings.log_level)
@@ -25,6 +26,7 @@ async def lifespan(_: FastAPI):
     logger.info("application_starting", environment=settings.app_env)
     yield
     await redis_client.aclose()
+    await engine.dispose()
 
 
 app = FastAPI(

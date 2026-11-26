@@ -40,6 +40,10 @@ Each frontend requires server-only variables:
 
 Do not configure `NEXT_PUBLIC_API_BASE_URL` to point at FastAPI. Browser requests must use the same-origin `/api` BFF. Host-only cookies are issued separately for each frontend origin.
 
+### API replica constraint
+
+The current authentication rate limiter is process-local to avoid an external cache dependency. Keep the FastAPI service at one replica until a shared PostgreSQL-backed rate-limit store is implemented and migrated. PostgreSQL worker queues remain safe for multiple worker replicas through transactional job leases.
+
 ## 2. Database runtime role
 
 Migration `202611260005_fastapi_runtime_role_rls.sql` creates:

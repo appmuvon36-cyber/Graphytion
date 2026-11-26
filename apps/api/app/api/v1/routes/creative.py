@@ -382,6 +382,7 @@ async def approve_storyboard(
     row = (await db.execute(text("""
         update public.storyboards set status='approved'
         where id=:storyboard and project_id=:project and workspace_id=:workspace
+          and status <> 'superseded'
           and exists (
             select 1 from public.video_scripts s
             where s.id=public.storyboards.script_id and s.status='approved'

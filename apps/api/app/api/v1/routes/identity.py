@@ -591,6 +591,30 @@ async def list_members(workspace_id: UUID, claims: AuthenticatedClaims, db: Asyn
     return {"data": [dict(r) for r in rows]}
 
 
+@router.get("/workspaces/{workspace_id}/invitations")
+async def list_invitations(
+    workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = Db
+):
+    await require_permission(db, uid(claims), workspace_id, "member.manage")
+    rows = (
+        (
+            await db.execute(
+                text("""
+                    select id,workspace_id,email,role,invited_by,expires_at,created_at
+                    from public.workspace_invitations
+                    where workspace_id=:workspace and accepted_at is null
+                      and cancelled_at is null and expires_at>now()
+                    order by created_at desc
+                """),
+                {"workspace": workspace_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return {"data": [dict(row) for row in rows]}
+
+
 @router.post("/workspaces/{workspace_id}/invitations", status_code=201)
 async def create_invitation(
     workspace_id: UUID,

@@ -54,6 +54,7 @@ async def _heartbeat(run_id: str, actor_id: str, task_id: str) -> None:
 async def _claim_and_execute(run_id: str | None = None) -> bool:
     async with SessionLocal() as db:
         await db.execute(text("select private.graphytion_finalize_creative_runs()"))
+        await db.commit()
         claimed = (await db.execute(text("""
             select * from private.graphytion_claim_creative_run(
                 :worker_id, cast(:run_id as uuid), :lease_seconds

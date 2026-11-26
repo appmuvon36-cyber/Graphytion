@@ -18,7 +18,7 @@ export class ApiClientError extends Error {
 
 function readCsrfCookie(): string | null {
   if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(/(?:^|;\\s*)graphytion\\.csrf=([^;]+)/);
+  const match = document.cookie.match(/(?:^|;\s*)graphytion\.csrf=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -49,7 +49,7 @@ export function createApiClient(options: ApiClientOptions) {
     if (token) headers.set('Authorization', `Bearer ${token}`);
     if (!headers.has('X-Request-ID')) headers.set('X-Request-ID', crypto.randomUUID());
     const url = new URL(
-      path.replace(/^\\//, ''),
+      path.replace(/^\//, ''),
       options.baseUrl.endsWith('/') ? options.baseUrl : `${options.baseUrl}/`,
     );
     const response = await fetcher(url, {

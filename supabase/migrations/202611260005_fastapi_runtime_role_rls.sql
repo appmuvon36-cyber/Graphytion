@@ -216,6 +216,11 @@ with check (
     and (role<>'admin' or private.graphytion_workspace_role(workspace_id)='owner')
   )
   or (user_id=auth.uid() and status='left')
+  or (
+    user_id=auth.uid()
+    and status='active'
+    and private.graphytion_can_accept_invitation(workspace_id,role)
+  )
 );
 
 drop policy if exists workspace_invitations_select_runtime on public.workspace_invitations;

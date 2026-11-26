@@ -404,8 +404,10 @@ async def create_project(workspace_id: UUID,payload: ProjectCreate,request: Requ
             :duration, :ratio, :width, :height, :fps
           ) returning *
         """),{"workspace":workspace_id,"actor":actor,"name":payload.name.strip(),"description":payload.description,"mode":payload.production_mode,"language":payload.default_language,"duration":payload.target_duration_ms,"ratio":payload.aspect_ratio,"width":payload.width,"height":payload.height,"fps":payload.fps})).mappings().one()
-        await db.execute(text("insert into public.project_settings(project_id, settings)
-            values (:id, cast(:settings as jsonb))"),{"id":row["id"],"settings":__import__("json").dumps(payload.settings)})
+        await db.execute(text("""
+            insert into public.project_settings(project_id, settings)
+            values (:id, cast(:settings as jsonb))
+        """),{"id":row["id"],"settings":__import__("json").dumps(payload.settings)})
         await audit(db,actor,workspace_id,"project.created","video_project",row["id"],request); await db.commit()
         return {"data":dict(row)}
     except Exception:

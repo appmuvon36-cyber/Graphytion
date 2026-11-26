@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.creative_pipeline import creative_pipeline
+from app.services.creative_queue import enqueue_creative_run
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
@@ -505,62 +506,17 @@ class CreativeRunRequest(BaseModel):
     approved_component_candidates: list[str] = Field(default_factory=list, max_length=100)
 
 
-@router.post("/projects/{project_id}/creative-runs/{stage}")
-async def execute_creative_stage(
-    project_id: UUID,
-    stage: Literal["brief", "script", "storyboard"],
-    payload: CreativeRunRequest,
+async def _process_creative_run(
+    db: AsyncSession,
     request: Request,
-    claims: AuthenticatedClaims,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    workspace_id = await _project_scope(db, project_id, actor, "project.update")
-    if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
-        raise HTTPException(status_code=400, detail="Idempotency-Key header must contain 16-128 characters")
-
-    stage_status = {"brief": "planning", "script": "scripting", "storyboard": "storyboarding"}[stage]
-    input_snapshot = {
-        "stage": stage, "input_prompt": payload.input_prompt, "brief_id": str(payload.brief_id) if payload.brief_id else None,
-        "script_id": str(payload.script_id) if payload.script_id else None,
-        "source_material": payload.source_material,
-        "approved_component_candidates": payload.approved_component_candidates,
-    }
-    run = (await db.execute(text("""
-        insert into public.production_runs(
-            project_id,workspace_id,requested_by,status,current_stage,input_snapshot,
-            config_snapshot,idempotency_key
-        ) values (:project,:workspace,:actor,:status,:stage,cast(:input as jsonb),'{}'::jsonb,:key)
-        on conflict (workspace_id,idempotency_key) do nothing returning *
-    """), {
-        "project": project_id, "workspace": workspace_id, "actor": actor,
-        "stage": stage, "status": stage_status, "input": json.dumps(input_snapshot, ensure_ascii=False),
-        "key": idempotency_key,
-    })).mappings().first()
-    if run is None:
-        existing = (await db.execute(text("""
-            select id,status,input_snapshot from public.production_runs
-            where workspace_id=:workspace and idempotency_key=:key
-        """), {"workspace": workspace_id, "key": idempotency_key})).mappings().first()
-        if existing and existing["input_snapshot"] == input_snapshot:
-            return {"data": {"run_id": str(existing["id"]), "status": existing["status"], "replayed": True}}
-        raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different creative request")
-
-    task = (await db.execute(text("""
-        insert into public.agent_tasks(
-            production_run_id,agent_key,task_type,status,input_payload,max_attempts
-        ) values (:run,:agent,:task,'running',cast(:input as jsonb),2) returning id
-    """), {
-        "run": run["id"], "agent": {"brief":"prompt_interpreter","script":"scriptwriter","storyboard":"story_director+storyboard_director"}[stage],
-        "task": stage, "input": json.dumps(input_snapshot, ensure_ascii=False),
-    })).scalar_one()
-    await db.execute(text("""
-        insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
-        values (:run,'stage.started',cast(:payload as jsonb),1)
-    """), {"run": run["id"], "payload": json.dumps({"stage": stage})})
-    await db.commit()
-
+    actor: UUID,
+    workspace_id: UUID,
+    project_id: UUID,
+    stage: str,
+    payload: CreativeRunRequest,
+    run: Any,
+    task: UUID,
+) -> dict[str, Any]:
     try:
         if stage == "brief":
             if not payload.input_prompt:
@@ -762,6 +718,71 @@ async def execute_creative_stage(
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=500, detail="Creative stage failed") from exc
+
+
+@router.post("/projects/{project_id}/creative-runs/{stage}")
+async def execute_creative_stage(
+    project_id: UUID,
+    stage: Literal["brief", "script", "storyboard"],
+    payload: CreativeRunRequest,
+    request: Request,
+    claims: AuthenticatedClaims,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    workspace_id = await _project_scope(db, project_id, actor, "project.update")
+    if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header must contain 16-128 characters")
+
+    stage_status = "queued"
+    input_snapshot = {
+        "stage": stage, "input_prompt": payload.input_prompt, "brief_id": str(payload.brief_id) if payload.brief_id else None,
+        "script_id": str(payload.script_id) if payload.script_id else None,
+        "source_material": payload.source_material,
+        "approved_component_candidates": payload.approved_component_candidates,
+    }
+    run = (await db.execute(text("""
+        insert into public.production_runs(
+            project_id,workspace_id,requested_by,status,current_stage,input_snapshot,
+            config_snapshot,idempotency_key
+        ) values (:project,:workspace,:actor,:status,:stage,cast(:input as jsonb),'{}'::jsonb,:key)
+        on conflict (workspace_id,idempotency_key) do nothing returning *
+    """), {
+        "project": project_id, "workspace": workspace_id, "actor": actor,
+        "stage": stage, "status": stage_status, "input": json.dumps(input_snapshot, ensure_ascii=False),
+        "key": idempotency_key,
+    })).mappings().first()
+    if run is None:
+        existing = (await db.execute(text("""
+            select id,status,input_snapshot from public.production_runs
+            where workspace_id=:workspace and idempotency_key=:key
+        """), {"workspace": workspace_id, "key": idempotency_key})).mappings().first()
+        if existing and existing["input_snapshot"] == input_snapshot:
+            return {"data": {"run_id": str(existing["id"]), "status": existing["status"], "replayed": True}}
+        raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different creative request")
+
+    task = (await db.execute(text("""
+        insert into public.agent_tasks(
+            production_run_id,agent_key,task_type,status,input_payload,max_attempts
+        ) values (:run,:agent,:task,'queued',cast(:input as jsonb),3) returning id
+    """), {
+        "run": run["id"], "agent": {"brief":"prompt_interpreter","script":"scriptwriter","storyboard":"story_director+storyboard_director"}[stage],
+        "task": stage, "input": json.dumps(input_snapshot, ensure_ascii=False),
+    })).scalar_one()
+    await db.execute(text("""
+        insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
+        values (:run,'stage.started',cast(:payload as jsonb),1)
+    """), {"run": run["id"], "payload": json.dumps({"stage": stage})})
+    await db.commit()
+
+    try:
+        await enqueue_creative_run(str(run["id"]))
+    except Exception:
+        # PostgreSQL is the durable source of truth; the worker's recovery scan
+        # will re-publish queued runs if Redis is temporarily unavailable.
+        pass
+    return {"data": {"run_id": str(run["id"]), "status": "queued"}}
 
 
 @router.get("/projects/{project_id}/creative-runs")

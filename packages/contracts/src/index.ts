@@ -9,6 +9,63 @@ export const TaskStatus = z.enum(['pending','queued','running','succeeded','fail
 export const RunStatus = z.enum(['queued','planning','scripting','storyboarding','asset_generation','audio_generation','subtitle_generation','timeline_compilation','ready_for_review','render_queued','rendering','quality_check','completed','failed','cancel_requested','cancelled']);
 export const RenderStatus = z.enum(['queued','preparing','rendering','uploading','validating','completed','failed','cancel_requested','cancelled']);
 
+export const ProfileApiSchema = z.object({
+  id: UUID,
+  display_name: z.string().nullable(),
+  avatar_path: z.string().nullable(),
+  bio: z.string().nullable(),
+  locale: z.string(),
+  timezone: z.string(),
+  created_at: Timestamp.optional(),
+  updated_at: Timestamp.optional(),
+}).strict();
+export const WorkspaceApiSchema = z.object({
+  id: UUID,
+  name: z.string().min(1).max(120),
+  slug: z.string().min(2).max(64),
+  owner_user_id: UUID,
+  settings: z.record(z.string(), z.unknown()).optional(),
+  role: UserRole.optional(),
+  created_at: Timestamp,
+  updated_at: Timestamp,
+}).strict();
+export const WorkspaceMemberApiSchema = z.object({
+  id: UUID,
+  workspace_id: UUID,
+  user_id: UUID,
+  role: UserRole,
+  status: z.enum(['active','suspended','left']),
+  created_at: Timestamp,
+  display_name: z.string().nullable().optional(),
+}).strict();
+export const WorkspaceInvitationApiSchema = z.object({
+  id: UUID,
+  workspace_id: UUID,
+  email: z.email(),
+  role: z.enum(['admin','editor','member','viewer','billing']),
+  invited_by: UUID,
+  expires_at: Timestamp,
+  created_at: Timestamp,
+}).strict();
+export const VideoProjectApiSchema = z.object({
+  id: UUID,
+  workspace_id: UUID,
+  created_by: UUID,
+  name: z.string().min(1).max(160),
+  description: z.string().max(4000).nullable(),
+  production_mode: z.enum(['motion_graphic','explainer','presentation','social_short','documentary_lite']),
+  status: ProjectStatus,
+  default_language: z.string().min(2),
+  target_duration_ms: z.number().int().positive().nullable(),
+  aspect_ratio: AspectRatio,
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  fps: z.number().int().min(1).max(120),
+  settings: z.record(z.string(), z.unknown()).optional(),
+  settings_version: z.number().int().positive().optional(),
+  created_at: Timestamp,
+  updated_at: Timestamp,
+}).strict();
 export const UserSchema = z.object({id:UUID,email:z.email().optional(),displayName:z.string().max(160).nullable(),avatarPath:z.string().nullable(),createdAt:Timestamp}).strict();
 export const WorkspaceSchema = z.object({id:UUID,name:z.string().min(1).max(120),slug:z.string().min(2).max(80),ownerUserId:UUID,createdAt:Timestamp,updatedAt:Timestamp}).strict();
 export const MembershipSchema = z.object({id:UUID,workspaceId:UUID,userId:UUID,role:UserRole,status:z.enum(['active','invited','suspended']),createdAt:Timestamp}).strict();
@@ -30,6 +87,11 @@ export const AuditEventSchema = z.object({id:UUID,actorUserId:UUID.nullable(),ac
 export const ApiErrorSchema = z.object({code:z.string(),message:z.string(),requestId:z.string().optional(),details:z.record(z.string(),z.unknown()).optional()}).strict();
 export const ApiResponseSchema = <T extends z.ZodType>(data:T) => z.object({data,meta:z.object({requestId:z.string(),contractVersion:z.literal('1'),timestamp:Timestamp}).strict()}).strict();
 export const PaginationSchema = z.object({limit:z.number().int().min(1).max(100),cursor:z.string().nullable()}).strict();
+export type ProfileApi = z.infer<typeof ProfileApiSchema>;
+export type WorkspaceApi = z.infer<typeof WorkspaceApiSchema>;
+export type WorkspaceMemberApi = z.infer<typeof WorkspaceMemberApiSchema>;
+export type WorkspaceInvitationApi = z.infer<typeof WorkspaceInvitationApiSchema>;
+export type VideoProjectApi = z.infer<typeof VideoProjectApiSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type Membership = z.infer<typeof MembershipSchema>;

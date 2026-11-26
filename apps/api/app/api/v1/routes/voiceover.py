@@ -11,16 +11,14 @@ from app.core.config import settings
 from app.core.database import set_rls_subject
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
-from app.services.tts_gateway import OpenAITTSProvider
 
 router=APIRouter();permissions=WorkspacePermissionResolver()
 BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
-provider=OpenAITTSProvider(settings.openai_api_key_value or "")
 class VoiceoverCreate(BaseModel):
  text:str=Field(min_length=1,max_length=20000)
- provider_key:str=Field(default="openai",pattern=r"^openai$")
- model_key:str=Field(default="tts-1",pattern=r"^(tts-1|tts-1-hd|gpt-4o-mini-tts)$")
- voice_key:str=Field(default="alloy",pattern=r"^(alloy|ash|coral|echo|fable|onyx|nova|sage|shimmer|verse)$")
+ provider_key:str=Field(default="gemini",pattern=r"^(gemini|openai)$")
+ model_key:str=Field(default="gemini-2.5-flash-preview-tts",min_length=3,max_length=100)
+ voice_key:str=Field(default="Kore",min_length=2,max_length=40)
  language:str=Field(default="id-ID",min_length=2,max_length=16)
  scene_id:UUID|None=None
  generation_config:dict[str,Any]=Field(default_factory=dict)
@@ -50,7 +48,7 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  if payload.subtitle_segment_id:
   exists=await db.scalar(text("select exists(select 1 from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace)"),{"segment":payload.subtitle_segment_id,"project":project_id,"workspace":workspace})
   if not exists:raise HTTPException(404,"Subtitle segment does not belong to this project")
- status="queued" if provider.configured() else "provider_unavailable"
+ status="queued"
  row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,subtitle_segment_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
  values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
  on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
@@ -61,7 +59,7 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  await db.execute(text("insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata) values(:actor,:workspace,'voiceover.requested','audio_generation',:id,:request,cast(:metadata as jsonb))"),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"status":status})})
  await db.commit()
  # The committed audio_generations row is polled directly by the media worker.
- return {"data":{"voiceover_id":str(row["id"]),"status":status,"provider_configured":provider.configured()}}
+ return {"data":{"voiceover_id":str(row["id"]),"status":status,"provider_configured":"worker_resolves_provider_credentials"}}
 @router.get("/projects/{project_id}/voiceovers")
 async def list_voiceovers(project_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_actor(claims);await _scope(db,project_id,actor,"project.read")
@@ -98,7 +96,7 @@ async def claim_media_job(request:Request,worker_id:str=Query(min_length=1,max_l
  row=(await db.execute(text("select * from private.graphytion_claim_audio_generation(:worker,cast(:id as uuid))"),{"id":generation_id,"worker":worker_id})).mappings().first()
  if not row:await db.rollback();return {"data":None}
  await set_rls_subject(db,str(row["requested_by"]));await db.commit()
- return {"data":{"id":str(row["id"]),"project_id":str(row["project_id"]),"workspace_id":str(row["workspace_id"]),"requested_by":str(row["requested_by"]),"input_text":row["input_text"],"voice_key":row["voice_key"],"model_key":row["model_key"],"generation_config":row["generation_config"],"language":row["language"],"attempt_count":row["attempt_count"]}}
+ return {"data":{"id":str(row["id"]),"project_id":str(row["project_id"]),"workspace_id":str(row["workspace_id"]),"requested_by":str(row["requested_by"]),"input_text":row["input_text"],"provider_key":row["provider_key"],"voice_key":row["voice_key"],"model_key":row["model_key"],"generation_config":row["generation_config"],"language":row["language"],"attempt_count":row["attempt_count"]}}
 @router.post("/internal/media-jobs/{generation_id}/heartbeat")
 async def heartbeat_media_job(generation_id:UUID,request:Request,worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
  _require_worker(request)

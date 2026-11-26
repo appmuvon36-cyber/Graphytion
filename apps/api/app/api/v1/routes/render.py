@@ -29,7 +29,7 @@ ALLOWED_COMPONENTS = {"core.title-card.v1"}
 class RenderCreate(BaseModel):
     snapshot: dict[str, Any]
     codec: str = Field(default="h264", pattern=r"^h264$")
-    composition_version: str = Field(default="1.0.0", min_length=1, max_length=32)
+    composition_version: str = Field(default="1.1.0", min_length=1, max_length=32)
 
 
 class RenderProgress(BaseModel):

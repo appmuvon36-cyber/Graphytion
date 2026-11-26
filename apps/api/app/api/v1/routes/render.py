@@ -183,9 +183,9 @@ async def list_renders(
     actor = _actor(claims)
     await _project_workspace(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
-        select id,project_id,status,composition_id,composition_version,timeline_hash,
-               progress_percent,output_path,output_size_bytes,error_code,error_message_safe,
-               started_at,completed_at,created_at
+        select id,project_id,workspace_id,requested_by,status,composition_id,composition_version,timeline_hash,
+               progress_percent,output_bucket,output_path,output_size_bytes,output_sha256,
+               error_code,error_message_safe,started_at,completed_at,created_at
         from public.render_jobs where project_id=:project
         order by created_at desc limit :limit offset :offset
     """), {"project": project_id, "limit": per_page, "offset": (page - 1) * per_page})).mappings().all()

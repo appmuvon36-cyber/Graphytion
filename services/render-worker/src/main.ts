@@ -5,6 +5,7 @@ import {promisify} from 'node:util';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
+import Redis from 'ioredis';
 
 const apiBaseUrl = process.env.GRAPHYTION_API_BASE_URL ?? (() => { throw new Error('GRAPHYTION_API_BASE_URL is required'); })();
 const workerToken = process.env.INTERNAL_WORKER_TOKEN;
@@ -23,6 +24,8 @@ if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeou
 }
 
 const workerId = `render:${process.env.HOSTNAME ?? 'worker'}:${process.pid}:${randomUUID().slice(0, 8)}`;
+const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, {connectTimeout: 1500, maxRetriesPerRequest: 1, retryStrategy: (times) => Math.min(times * 500, 5000)}) : null;
+redis?.on('error', (error) => console.warn('render_redis_unavailable_postgres_poll_remains_active', error.message));
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -204,8 +207,21 @@ async function processJob(jobId?: string): Promise<boolean> {
   }
 }
 
+async function waitForWork() {
+  if (!redis) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    return;
+  }
+  try {
+    await redis.blpop('graphytion:render:jobs', 3);
+  } catch (error) {
+    console.warn('render_redis_wakeup_failed_using_postgres_poll', error);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+
 async function main() {
-  console.info('graphytion_render_worker_started', {worker_id: workerId, queue: 'postgresql'});
+  console.info('graphytion_render_worker_started', {worker_id: workerId, queue: 'postgresql+redis-wakeup'});
   let lastRecoveryScan = 0;
   while (true) {
     try {
@@ -214,7 +230,7 @@ async function main() {
         await api('internal/render-jobs/recover', {method: 'POST'});
       }
       const processed = await processJob();
-      if (!processed) await new Promise(resolve => setTimeout(resolve, 3000));
+      if (!processed) await waitForWork();
     } catch (error) {
       console.error('render_worker_poll_error', error);
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -224,6 +240,7 @@ async function main() {
 
 async function shutdown() {
   console.info('graphytion_render_worker_stopping', {worker_id: workerId});
+  if (redis) await redis.quit().catch(() => redis.disconnect());
   process.exit(0);
 }
 process.once('SIGINT', shutdown);

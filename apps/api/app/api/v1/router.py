@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.routes import creative, health, identity, system, webhooks
+from app.api.v1.routes import creative, health, identity, platform_admin, system, webhooks
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])

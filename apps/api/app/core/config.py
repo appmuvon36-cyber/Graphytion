@@ -36,6 +36,7 @@ class Settings(BaseSettings):
         default=SecretStr("postgresql+asyncpg://graphytion_api:CHANGE_ME@localhost:5432/postgres"),
         repr=False,
     )
+    redis_url: SecretStr | None = Field(default=None, repr=False)
     invitation_email_provider: str = "resend"
     resend_api_key: SecretStr | None = Field(default=None, repr=False)
     resend_webhook_secret: SecretStr | None = Field(default=None, repr=False)
@@ -55,6 +56,10 @@ class Settings(BaseSettings):
     @property
     def database_url_value(self) -> str:
         return self.database_url.get_secret_value()
+
+    @property
+    def redis_url_value(self) -> str | None:
+        return self.redis_url.get_secret_value() if self.redis_url else None
 
     @property
     def supabase_anon_key_value(self) -> str | None:

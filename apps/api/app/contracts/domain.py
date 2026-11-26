@@ -24,3 +24,16 @@ class TimelineContract(StrictModel): id: UUID; project_id: UUID; version: int = 
 class RenderJobContract(StrictModel): id: UUID; project_id: UUID; workspace_id: UUID; timeline_id: UUID; status: RenderStatus; progress_percent: float = Field(ge=0,le=100)
 class UsageContract(StrictModel): id: UUID; workspace_id: UUID; provider_key: str; model_key: str; currency: str = Field(min_length=3,max_length=3); created_at: datetime
 class AuditContract(StrictModel): id: UUID; actor_user_id: UUID | None; action: str; resource_type: str; resource_id: UUID | None; created_at: datetime
+
+class VoiceProfileContract(StrictModel): provider_key: str; voice_key: str; display_name: str; language: str
+class AudioGenerationContract(StrictModel): id: UUID; project_id: UUID; scene_id: UUID | None; provider_key: str; voice_key: str; status: TaskStatus; created_at: datetime
+class SubtitleSegmentContract(StrictModel): id: UUID; segment_index: int = Field(ge=0); text: str; start_ms: int = Field(ge=0); end_ms: int = Field(gt=0)
+class SubtitleTrackContract(StrictModel): id: UUID; project_id: UUID; language: str; version: int = Field(ge=1); status: TaskStatus; segments: list[SubtitleSegmentContract]
+class WorkflowCheckpointContract(StrictModel): id: UUID; production_run_id: UUID; stage_key: str; checkpoint_key: str; content_hash: str; payload: dict[str,Any]
+class MotionComponentContract(StrictModel): component_key: str; version: str; category: str; props_schema: dict[str,Any]; enabled: bool
+class CompositionContract(StrictModel): composition_id: str; timeline_id: UUID; timeline_version: int = Field(ge=1); timeline_hash: str; fps: int = Field(ge=1,le=120); width: int = Field(gt=0); height: int = Field(gt=0); duration_frames: int = Field(gt=0)
+class RenderAttemptContract(StrictModel): id: UUID; render_job_id: UUID; attempt_number: int = Field(ge=1); worker_id: str | None; status: TaskStatus
+class VideoExportContract(StrictModel): id: UUID; project_id: UUID; render_artifact_id: UUID; format: str; aspect_ratio: str; created_at: datetime
+class AIProviderContract(StrictModel): provider_key: str; display_name: str; provider_type: str; enabled: bool
+class PromptTemplateContract(StrictModel): prompt_key: str; version: int = Field(ge=1); agent_key: str; output_schema: dict[str,Any]; status: str
+class UsageLedgerContract(StrictModel): id: UUID; workspace_id: UUID; reference_type: str; reference_id: UUID; entry_type: str; quantity: float; unit: str; amount_minor: int; currency: str = Field(min_length=3,max_length=3); idempotency_key: str

@@ -815,6 +815,15 @@ async def create_invitation(
         raise HTTPException(
             status_code=409, detail="This user is already an active workspace member"
         )
+    await db.execute(
+        text("""
+            update public.workspace_invitations
+            set cancelled_at=now()
+            where workspace_id=:workspace and lower(email)=:email
+              and accepted_at is null and cancelled_at is null and expires_at<=now()
+        """),
+        {"workspace": workspace_id, "email": email},
+    )
     pending = (
         await db.execute(
             text("""

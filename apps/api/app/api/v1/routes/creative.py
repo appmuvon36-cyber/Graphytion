@@ -502,6 +502,8 @@ class CreativeRunRequest(BaseModel):
     input_prompt: str | None = Field(default=None, min_length=1, max_length=20000)
     brief_id: UUID | None = None
     script_id: UUID | None = None
+    scene_id: UUID | None = None
+    revision_instruction: str | None = Field(default=None, min_length=3, max_length=2000)
     source_material: list[dict[str, Any]] = Field(default_factory=list)
     approved_component_candidates: list[str] = Field(default_factory=list, max_length=100)
 
@@ -589,7 +591,7 @@ async def _process_creative_run(
             artifact_id = artifact["id"]
             artifact_snapshot = dict(artifact)
 
-        else:
+        elif stage == "storyboard":
             if not payload.script_id:
                 raise HTTPException(status_code=422, detail="script_id is required for storyboard generation")
             script = (await db.execute(text("""
@@ -658,6 +660,87 @@ async def _process_creative_run(
             artifact_id = artifact["id"]
             artifact_snapshot = {"storyboard": dict(artifact), "scenes": scene_snapshots}
             provenance = {"story_director": arc_meta, "storyboard_director": provenance}
+
+        else:
+            if not payload.scene_id or not payload.revision_instruction:
+                raise HTTPException(status_code=422, detail="scene_id and revision_instruction are required")
+            scene_row = (await db.execute(text("""
+                select sc.*,sb.id as parent_storyboard_id,sb.script_id,
+                       vs.title as script_title,vs.hook as script_hook,vs.body as script_body,
+                       vs.cta as script_cta,vs.language as script_language,
+                       vs.estimated_duration_ms as script_duration,
+                       cb.normalized_brief
+                from public.storyboard_scenes sc
+                join public.storyboards sb on sb.id=sc.storyboard_id
+                join public.video_scripts vs on vs.id=sb.script_id
+                left join public.creative_briefs cb on cb.id=vs.brief_id
+                where sc.id=:scene and sc.project_id=:project and sc.workspace_id=:workspace
+                  and vs.status='approved'
+            """), {
+                "scene": payload.scene_id, "project": project_id, "workspace": workspace_id,
+            })).mappings().first()
+            if scene_row is None:
+                raise HTTPException(status_code=404, detail="Scene or approved source script not found")
+            current_scene = {
+                "scene_index": scene_row["scene_index"], "title": scene_row["title"],
+                "purpose": scene_row["purpose"], "narration_text": scene_row["narration_text"],
+                "duration_ms": scene_row["duration_ms"],
+                "visual_direction": dict(scene_row["visual_direction"] or {}),
+                "motion_plan": dict(scene_row["motion_plan"] or {}),
+                "asset_requirements": list(scene_row["asset_requirements"] or []),
+                "transition_in": scene_row["transition_in"], "transition_out": scene_row["transition_out"],
+            }
+            approved_script = {
+                "title": scene_row["script_title"], "hook": scene_row["script_hook"],
+                "body": dict(scene_row["script_body"] or {}), "cta": scene_row["script_cta"],
+                "language": scene_row["script_language"],
+                "estimated_duration_ms": scene_row["script_duration"],
+            }
+            output, provenance = await creative_pipeline.regenerate_scene(
+                approved_brief=dict(scene_row["normalized_brief"] or {}),
+                approved_script=approved_script,
+                current_scene=current_scene,
+                revision_instruction=payload.revision_instruction,
+                idempotency_key=str(run["id"]),
+            )
+            artifact = (await db.execute(text("""
+                update public.storyboard_scenes set
+                    title=:title,purpose=:purpose,duration_ms=:duration,
+                    visual_direction=cast(:visual as jsonb),
+                    motion_plan=cast(:motion as jsonb),
+                    asset_requirements=cast(:assets as jsonb),
+                    transition_in=:transition
+                where id=:scene and project_id=:project and workspace_id=:workspace
+                returning *
+            """), {
+                "title": output.title, "purpose": output.purpose,
+                "duration": output.duration_ms,
+                "visual": json.dumps({
+                    "description": output.visual_description, "layout": output.layout,
+                    "camera_angle": output.camera_angle, "shot_type": output.shot_type,
+                    "composition": output.composition, "movement": output.movement,
+                    "lighting": output.lighting, "on_screen_text": output.on_screen_text,
+                    "narration_segment_ids": output.narration_segment_ids,
+                }, ensure_ascii=False),
+                "motion": json.dumps({
+                    "transition": output.transition,
+                    "component_candidates": output.component_candidates,
+                }, ensure_ascii=False),
+                "assets": json.dumps(output.asset_requirements, ensure_ascii=False),
+                "transition": output.transition, "scene": payload.scene_id,
+                "project": project_id, "workspace": workspace_id,
+            })).mappings().one()
+            await db.execute(text("""
+                update public.storyboards set status='draft'
+                where id=:storyboard and status='approved'
+            """), {"storyboard": scene_row["parent_storyboard_id"]})
+            version = (await db.execute(text("""
+                select coalesce(max(version),0)+1 from public.artifact_versions
+                where project_id=:project and artifact_type='storyboard_scene' and artifact_id=:scene
+            """), {"project": project_id, "scene": payload.scene_id})).scalar_one()
+            artifact_type = "storyboard_scene"
+            artifact_id = payload.scene_id
+            artifact_snapshot = dict(artifact)
 
         safe_snapshot = _json_safe(artifact_snapshot)
         await _record_version(db, workspace_id=workspace_id, project_id=project_id,
@@ -751,7 +834,7 @@ async def _process_creative_run(
 @router.post("/projects/{project_id}/creative-runs/{stage}", status_code=202)
 async def execute_creative_stage(
     project_id: UUID,
-    stage: Literal["brief", "script", "storyboard"],
+    stage: Literal["brief", "script", "storyboard", "scene"],
     payload: CreativeRunRequest,
     request: Request,
     claims: AuthenticatedClaims,
@@ -766,7 +849,7 @@ async def execute_creative_stage(
     stage_status = "queued"
     input_snapshot = {
         "stage": stage, "input_prompt": payload.input_prompt, "brief_id": str(payload.brief_id) if payload.brief_id else None,
-        "script_id": str(payload.script_id) if payload.script_id else None,
+        "script_id": str(payload.script_id) if payload.script_id else None,\n        "scene_id": str(payload.scene_id) if payload.scene_id else None,\n        "revision_instruction": payload.revision_instruction,
         "source_material": payload.source_material,
         "approved_component_candidates": payload.approved_component_candidates,
     }
@@ -795,7 +878,7 @@ async def execute_creative_stage(
             production_run_id,agent_key,task_type,status,input_payload,max_attempts
         ) values (:run,:agent,:task,'queued',cast(:input as jsonb),3) returning id
     """), {
-        "run": run["id"], "agent": {"brief":"prompt_interpreter","script":"scriptwriter","storyboard":"story_director+storyboard_director"}[stage],
+        "run": run["id"], "agent": {"brief":"prompt_interpreter","script":"scriptwriter","storyboard":"story_director+storyboard_director","scene":"scene_regenerator"}[stage],
         "task": stage, "input": json.dumps(input_snapshot, ensure_ascii=False),
     })).scalar_one()
     await db.execute(text("""

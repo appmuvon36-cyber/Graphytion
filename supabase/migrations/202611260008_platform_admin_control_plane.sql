@@ -76,6 +76,28 @@ create policy video_projects_platform_admin_update on public.video_projects
   for update to graphytion_api using (private.graphytion_is_platform_admin())
   with check (private.graphytion_is_platform_admin());
 
+drop policy if exists production_runs_platform_admin_read on public.production_runs;
+create policy production_runs_platform_admin_read on public.production_runs
+  for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists agent_tasks_platform_admin_read on public.agent_tasks;
+create policy agent_tasks_platform_admin_read on public.agent_tasks
+  for select to graphytion_api using (exists (
+    select 1 from public.production_runs r
+    where r.id=production_run_id and private.graphytion_is_platform_admin()
+  ));
+drop policy if exists workflow_checkpoints_platform_admin_read on public.workflow_checkpoints;
+create policy workflow_checkpoints_platform_admin_read on public.workflow_checkpoints
+  for select to graphytion_api using (exists (
+    select 1 from public.production_runs r
+    where r.id=production_run_id and private.graphytion_is_platform_admin()
+  ));
+drop policy if exists workflow_events_platform_admin_read on public.workflow_events;
+create policy workflow_events_platform_admin_read on public.workflow_events
+  for select to graphytion_api using (exists (
+    select 1 from public.production_runs r
+    where r.id=production_run_id and private.graphytion_is_platform_admin()
+  ));
+
 drop policy if exists audit_logs_platform_admin_read on public.audit_logs;
 create policy audit_logs_platform_admin_read on public.audit_logs
   for select to graphytion_api using (private.graphytion_is_platform_admin());

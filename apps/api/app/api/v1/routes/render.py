@@ -245,13 +245,12 @@ async def update_render_progress(
     db: AsyncSession = DbSession,
 ):
     _require_worker(request)
-    row = (await db.execute(text("""
-        select requested_by from public.render_jobs
-        where id=:job and worker_id=:worker and status='rendering'
-    """), {"job": render_job_id, "worker": worker_id})).mappings().first()
-    if row is None:
+    owner_id = await db.scalar(text("""
+        select private.graphytion_render_job_owner(:job,:worker)
+    """), {"job": render_job_id, "worker": worker_id})
+    if owner_id is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
-    await set_rls_subject(db, str(row["requested_by"]))
+    await set_rls_subject(db, str(owner_id))
     await db.execute(text("""
         update public.render_jobs
         set progress_percent=:progress,lease_expires_at=now()+interval '5 minutes'
@@ -270,13 +269,18 @@ async def complete_render_artifact(
     db: AsyncSession = DbSession,
 ):
     _require_worker(request)
+    owner_id = await db.scalar(text("""
+        select private.graphytion_render_job_owner(:job,:worker)
+    """), {"job": render_job_id, "worker": worker_id})
+    if owner_id is None:
+        raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
+    await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
         select id,workspace_id,project_id,requested_by,worker_id,status
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
-    await set_rls_subject(db, str(row["requested_by"]))
     content = await file.read(MAX_RENDER_BYTES + 1)
     if len(content) < 12 or len(content) > MAX_RENDER_BYTES or content[4:8] != b"ftyp":
         raise HTTPException(status_code=415, detail="Render output must be a valid MP4 file under 1 GB")
@@ -313,13 +317,18 @@ async def fail_render_job(
     db: AsyncSession = DbSession,
 ):
     _require_worker(request)
+    owner_id = await db.scalar(text("""
+        select private.graphytion_render_job_owner(:job,:worker)
+    """), {"job": render_job_id, "worker": worker_id})
+    if owner_id is None:
+        raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
+    await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
         select requested_by,attempt_count,max_attempts from public.render_jobs
         where id=:job and worker_id=:worker
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
-    await set_rls_subject(db, str(row["requested_by"]))
     retry = payload.retryable and row["attempt_count"] < row["max_attempts"]
     await db.execute(text("""
         update public.render_jobs set status=:status,error_code=:code,error_message_safe=:message,

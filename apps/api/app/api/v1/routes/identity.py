@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import secrets
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -878,9 +879,13 @@ async def create_invitation(
                 await db.execute(
                     text("""
                         insert into public.workspace_invitations(
-                            workspace_id,email,role,token_hash,invited_by,expires_at,delivery_status
+                            workspace_id,email,role,token_hash,invited_by,expires_at,
+                            delivery_status,delivery_attempts,last_delivery_attempt_at
                         )
-                        values (:workspace,:email,:role,:digest,:actor,now()+interval '7 days','pending')
+                        values (
+                            :workspace,:email,:role,:digest,:actor,
+                            now()+interval '7 days','pending',1,now()
+                        )
                         returning id
                     """),
                     {
@@ -949,7 +954,7 @@ async def resend_invitation(
             await db.execute(
                 text("""
                     select i.email,i.role,i.delivery_status,i.expires_at,
-                           i.last_delivery_attempt_at,w.name as workspace_name
+                           w.name as workspace_name
                     from public.workspace_invitations i
                     join public.workspaces w on w.id=i.workspace_id
                     where i.id=:invitation and i.workspace_id=:workspace
@@ -969,17 +974,11 @@ async def resend_invitation(
             status_code=409,
             detail="Provider reported a recipient problem; correct the address before sending again",
         )
-    if row["delivery_status"] == "pending" and row["last_delivery_attempt_at"] is not None:
-        recent = (
-            await db.execute(
-                text("select :attempt_at > now() - interval '2 minutes'"),
-                {"attempt_at": row["last_delivery_attempt_at"]},
-            )
-        ).scalar_one()
-        if recent:
-            raise HTTPException(status_code=409, detail="Invitation email is already being processed")
-    if row["delivery_status"] not in ("failed", "pending") and row["expires_at"] > datetime.now(UTC):
-        raise HTTPException(status_code=409, detail="Invitation was already accepted by the email provider")
+    if row["delivery_status"] != "failed" and row["expires_at"] > datetime.now(UTC):
+        raise HTTPException(
+            status_code=409,
+            detail="Invitation is not eligible for resend until delivery fails or the invitation expires",
+        )
     if row["role"] == "admin":
         actor_role = await require_permission(db, actor, workspace_id, "member.manage")
         if actor_role != "owner":
@@ -1009,6 +1008,7 @@ async def resend_invitation(
         role=row["role"],
         raw_token=raw,
         digest=digest,
+        attempt_reserved=True,
     )
     await audit(
         db, actor, workspace_id, "workspace.invitation.resent", "invitation",

@@ -807,14 +807,7 @@ async def create_invitation(
     email = payload.email.strip().lower()
     already_member = (
         await db.execute(
-            text("""
-                select exists (
-                    select 1 from public.profiles p
-                    join public.workspace_members m on m.user_id=p.id
-                    where m.workspace_id=:workspace
-                      and lower(p.email)=:email and m.status='active'
-                )
-            """),
+            text("select private.graphytion_workspace_has_active_member_email(:workspace,:email)"),
             {"workspace": workspace_id, "email": email},
         )
     ).scalar_one()
@@ -1125,8 +1118,9 @@ async def accept_invitation(
                 await db.execute(
                     text("""
           select i.* from public.workspace_invitations i
-          join public.profiles p on lower(p.email)=lower(i.email)
-          where i.token_hash=:digest and p.id=:actor and i.accepted_at is null
+          where i.token_hash=:digest
+            and private.graphytion_invitation_matches_user(i.email,:actor)
+            and i.accepted_at is null
             and i.cancelled_at is null and i.expires_at>now()
           for update of i
         """),

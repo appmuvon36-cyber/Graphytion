@@ -182,3 +182,16 @@ Phase 03 remains OPEN. This is a configuration boundary blocker, not a database 
 - Super Admin now displays workers as online or stale using a 90-second heartbeat threshold. No credentials are included in heartbeat metadata.
 - Render capacity accounting now includes cancellation-in-flight jobs so a worker cannot be overcommitted while a cancellation lease remains active.
 - Worker presence remains INTEGRATED in source and DB. RUNNING/VERIFIED is pending API runtime activation; the API still rejects the existing `postgres` runtime identity until a dedicated `GRAPHYTION_RUNTIME_DATABASE_URL` is configured.
+
+
+## Production snapshot after latest source and runtime changes — 2026-11-27
+
+- Latest repository HEAD at this snapshot: `63fd97f7d29af7f458e00f63e44bb3166c5db41a` on `main`.
+- Supabase Graphytion is `ACTIVE_HEALTHY`. Migration history contains 22 applied migrations: the original 19 plus global render settings, render capacity function, and worker registry. The global render settings row and capacity function are present. Storage buckets `avatars`, `project-assets`, and `render-artifacts` are all private.
+- Runtime role state is unchanged: `graphytion_api` and `graphytion_runtime` are NOLOGIN and least-privilege. The current Railway API deployment log confirms the URL parses and targets `db.xtjwmezfzexvupbfsdqt.supabase.co:5432`, but its username is `postgres`; API startup rejects this administrative identity by design. The new `GRAPHYTION_RUNTIME_DATABASE_URL` variable is not yet present in Railway. The existing `DATABASE_URL` has not been changed.
+- Railway current services: Web online (1 replica), Media Worker online (1), Render Worker online (1), Remotion Studio latest deployment SUCCESS, API deployment FAILED during settings validation. API has no public domain; its private endpoint is `graphytionapi`. Worker logs show private DNS lookup failures for `graphytionapi.railway.internal` while the API has no healthy replica.
+- Customer Web latest deployment for worker status/admin retry UI is SUCCESS. Remotion Studio has now rebuilt from the current main source and latest deployment is SUCCESS.
+- Redis is not provisioned: Railway rejected service creation because the workspace Free Plan resource provision limit was reached. `REDIS_URL` was cleared on API and both workers to avoid dangling references. Workers use durable PostgreSQL polling and lease recovery until Redis capacity is available.
+- The Supabase project currently has zero Auth users, zero profiles, zero workspaces, and zero platform-admin rows. Authentication schema is ready, but no one can yet sign in or access the Admin control plane until the first user is created and promoted to `super_admin`.
+- The API service currently has no `RESEND_API_KEY` or `INVITATION_FROM_EMAIL`; invitation delivery is implemented but provider activation is blocked by those external credentials. Media Worker has a `GEMINI_API_KEY` variable name configured, but no real TTS was executed.
+- Per the project owner's instruction, no real TTS, render, or job-cycle test was run. Phase 03 remains OPEN; source integration is materially advanced but end-to-end runtime cannot be marked VERIFIED until the API runtime login and initial identity/provider setup are completed.

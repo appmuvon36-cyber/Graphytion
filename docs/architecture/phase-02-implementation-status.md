@@ -8,19 +8,19 @@
 
 ## Queue architecture decision
 
-Redis has been removed from the production architecture. Render, media and creative jobs are persisted in Supabase PostgreSQL and claimed directly by workers through FastAPI using transactional leases, heartbeats and expired-lease recovery. No Redis service or `REDIS_URL` is required.
+PostgreSQL remains the durable source of truth for render, media and creative jobs, including transactional claim, leases, heartbeats and expired-lease recovery. The owner's current Phase 03 directive reintroduces private Redis only as a transient worker wake-up/coordination channel (`LPUSH`/`BLPOP`); loss of Redis falls back to PostgreSQL polling and cannot lose job state.
 
 ## Railway service consolidation
 
 - Super Admin UI is now served by the existing Web service at `/admin` and `/admin/workspaces`; the standalone `apps/admin` workspace and Railway Admin service have been removed.
 - The Web BFF uses the private Railway API endpoint `http://graphytionapi.railway.internal:8000/api/v1`. Production BFF validation permits HTTP only for Railway's private `.railway.internal` hostname; public API endpoints remain HTTPS-only.
-- Dedicated `@graphytion/media-worker` Railway service has been created and its Docker deployment completed successfully. Runtime polling currently cannot resolve the API private hostname because the FastAPI service remains staged and not deployed. The TTS provider credential `OPENAI_API_KEY` is also not configured on the worker yet.
+- Dedicated `@graphytion/media-worker` Railway service has been created and its Docker deployment completed successfully. Runtime polling cannot resolve the API private hostname while FastAPI is not healthy. Gemini TTS adapter is implemented in code and `GEMINI_API_KEY` is present on the worker; real synthesis and word alignment remain runtime-unverified. Gemini TTS itself does not return word timestamps, so the adapter reports alignment unavailable rather than fabricating it.
 
 ## Implemented in the repository
 
 ### API runtime and database boundary
 
-- Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, PostgreSQL-backed worker queue, HTTPS CORS allowlist, BFF shared secret and Resend configuration.
+- Production Pydantic validation for required server secrets, project-specific Supabase URL/JWT issuer/JWKS, dedicated `graphytion_api` database login, PostgreSQL TLS, PostgreSQL durable job state, optional private Redis wake-up channel, HTTPS CORS allowlist and BFF shared secret. Resend credentials are validated at invitation-send time so an unconfigured mail provider does not prevent API startup.
 - Readiness checks PostgreSQL, Supabase Auth, JWT/JWKS signing-key availability and private Storage as separate dependencies.
 - Database connection uses a secret-safe URL accessor and a named SQLAlchemy application connection.
 - Per-request authenticated subject is set in PostgreSQL session claims and cleared before pooled connection release. This supports tenant RLS rather than using a superuser or RLS-bypass role.
@@ -30,7 +30,7 @@ Redis has been removed from the production architecture. Render, media and creat
 #### Authentication rate limiting
 
 - Authentication endpoints use a bounded 60-second process-local sliding window (10 requests per client IP and route) after validating the BFF-supplied client address.
-- Keep FastAPI at one replica with this brokerless implementation. A shared PostgreSQL-backed limiter is required before horizontal API scaling; do not reintroduce an external queue/cache dependency.
+- Keep FastAPI at one replica with this brokerless implementation. A shared PostgreSQL-backed limiter is required before horizontal API scaling; Redis is reserved for ephemeral worker wake-up notifications, not auth state or durable queue state.
 
 ## Invitation lifecycle
 

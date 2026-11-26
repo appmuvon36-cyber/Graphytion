@@ -78,15 +78,13 @@ class SupabaseAuth:
                 payload = response.json()
                 keys = payload.get("keys") if isinstance(payload, dict) else None
                 if isinstance(keys, list) and any(
-                    isinstance(key, dict) and key.get("kid") and key.get("kty")
-                    for key in keys
+                    isinstance(key, dict) and key.get("kid") and key.get("kty") for key in keys
                 ):
                     return True
         except (httpx.RequestError, ValueError):
             pass
         return bool(
-            settings.supabase_jwt_secret
-            and settings.supabase_jwt_secret.get_secret_value()
+            settings.supabase_jwt_secret and settings.supabase_jwt_secret.get_secret_value()
         )
 
     async def signup(self, email: str, password: str, display_name: str | None) -> dict[str, Any]:

@@ -27,7 +27,7 @@ Requirements: Node.js 22.14+, pnpm 10.12.1+, Python 3.12, Docker.
 1. Copy `.env.example` to `.env` and provide local credentials.
 2. Run `pnpm install` at repository root.
 3. Install API dependencies: `cd apps/api && pip install .`.
-4. Start local Redis: `docker compose up redis -d`.
+4. No external queue service is needed; asynchronous jobs are persisted in PostgreSQL and workers poll via FastAPI.
 5. Start API: `pnpm api:dev`; customer app: `pnpm --filter @graphytion/web dev`; admin: `pnpm --filter @graphytion/admin dev`.
 6. Remotion Studio: `pnpm --filter @graphytion/remotion-studio dev`.
 

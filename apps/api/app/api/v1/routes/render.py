@@ -405,3 +405,28 @@ async def render_approved_storyboard(
         idempotency_key=idempotency_key,
         db=db,
     )
+
+
+@router.get("/renders/{render_job_id}/download")
+async def download_render(
+    render_job_id: UUID,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    row = (await db.execute(text("""
+        select id,project_id,output_bucket,output_path,status
+        from public.render_jobs where id=:job
+    """), {"job": render_job_id})).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Render job not found")
+    await _project_workspace(db, row["project_id"], actor, "project.read")
+    if row["status"] != "completed" or not row["output_bucket"] or not row["output_path"]:
+        raise HTTPException(status_code=409, detail="Render output is not available")
+    try:
+        signed_url = await SupabaseStorage().create_signed_url(
+            bucket=row["output_bucket"], object_path=row["output_path"], expires_in=300
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Render download URL could not be created") from exc
+    return {"data": {"signed_url": signed_url, "expires_in": 300}}

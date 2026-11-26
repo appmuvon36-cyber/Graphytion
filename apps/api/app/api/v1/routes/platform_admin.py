@@ -214,3 +214,82 @@ async def platform_audit_logs(
         select count(*) from public.audit_logs where (:action is null or action=:action)
     """), {"action": action})
     return {"data": [dict(row) for row in rows], "page": {"number": page, "size": per_page, "total": total}}
+
+
+class PlatformMemberRoleUpdate(BaseModel):
+    role: str = Field(pattern=r"^(admin|editor|member|viewer|billing)$")
+
+
+@router.get("/workspaces/{workspace_id}/members")
+async def platform_workspace_members(
+    workspace_id: UUID,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select m.id,m.workspace_id,m.user_id,m.role,m.status,m.created_at,p.display_name
+        from public.workspace_members m
+        left join public.profiles p on p.id=m.user_id
+        where m.workspace_id=:workspace order by m.created_at
+    """), {"workspace": workspace_id})).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
+@router.patch("/workspaces/{workspace_id}/members/{member_id}")
+async def platform_update_member_role(
+    workspace_id: UUID,
+    member_id: UUID,
+    payload: PlatformMemberRoleUpdate,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    target = (await db.execute(text("""
+        select role,status from public.workspace_members
+        where id=:member and workspace_id=:workspace for update
+    """), {"member": member_id, "workspace": workspace_id})).mappings().first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Workspace membership not found")
+    if target["role"] == "owner":
+        raise HTTPException(status_code=409, detail="Platform role administration cannot transfer workspace ownership")
+    await db.execute(text("""
+        update public.workspace_members set role=:role
+        where id=:member and workspace_id=:workspace
+    """), {"role": payload.role, "member": member_id, "workspace": workspace_id})
+    await _audit(db, request, actor, "platform.workspace_member.role_changed",
+                 "workspace_member", member_id,
+                 {"workspace_id": str(workspace_id), "previous_role": target["role"], "role": payload.role})
+    await db.commit()
+    return {"data": {"member_id": str(member_id), "role": payload.role}}
+
+
+@router.delete("/workspaces/{workspace_id}/members/{member_id}", status_code=204)
+async def platform_remove_member(
+    workspace_id: UUID,
+    member_id: UUID,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    target = (await db.execute(text("""
+        select role,status from public.workspace_members
+        where id=:member and workspace_id=:workspace for update
+    """), {"member": member_id, "workspace": workspace_id})).mappings().first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Workspace membership not found")
+    if target["role"] == "owner":
+        raise HTTPException(status_code=409, detail="Workspace owner cannot be removed")
+    await db.execute(text("""
+        update public.workspace_members set status='left'
+        where id=:member and workspace_id=:workspace
+    """), {"member": member_id, "workspace": workspace_id})
+    await _audit(db, request, actor, "platform.workspace_member.removed",
+                 "workspace_member", member_id, {"workspace_id": str(workspace_id)})
+    await db.commit()
+    return None

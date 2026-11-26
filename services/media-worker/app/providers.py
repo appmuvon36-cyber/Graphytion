@@ -131,8 +131,8 @@ class GeminiTTSProvider:
                 input=pcm, capture_output=True, check=True, timeout=120,
             )
         else:
-            rate_match = re.search(r"rate=(\\d+)", mime)
-            channel_match = re.search(r"channels=(\\d+)", mime)
+            rate_match = re.search(r"rate=(\d+)", mime)
+            channel_match = re.search(r"channels=(\d+)", mime)
             sample_rate = int(rate_match.group(1)) if rate_match else 24000
             channels = int(channel_match.group(1)) if channel_match else 1
             if not pcm or sample_rate < 8000 or sample_rate > 96000 or channels not in (1, 2):

@@ -11,9 +11,10 @@ class Settings(BaseSettings):
     supabase_url: str = "https://xtjwmezfzexvupbfsdqt.supabase.co"
     supabase_jwt_issuer: str = "https://xtjwmezfzexvupbfsdqt.supabase.co/auth/v1"
     supabase_jwks_url: str = "https://xtjwmezfzexvupbfsdqt.supabase.co/auth/v1/.well-known/jwks.json"
+    supabase_anon_key: str | None = Field(default=None, repr=False)
     supabase_jwt_secret: str | None = Field(default=None, repr=False)
     supabase_service_role_key: str | None = Field(default=None, repr=False)
-    database_url: str = Field(default="postgresql+asyncpg://postgres:CHANGE_ME@localhost:5432/postgres")
+    database_url: str = Field(default="postgresql+asyncpg://postgres:CHANGE_ME@localhost:5432/postgres", repr=False)
     redis_url: str = "redis://localhost:6379/0"
     log_level: str = "INFO"
     internal_worker_token: str | None = Field(default=None, repr=False)

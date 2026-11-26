@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from typing import Annotated, Any
 from uuid import UUID
@@ -531,8 +532,14 @@ async def update_workspace(
     values = payload.model_dump(exclude_unset=True)
     if not values:
         raise HTTPException(status_code=400, detail="No workspace fields supplied")
+    if "name" in values and values["name"] is not None:
+        values["name"] = values["name"].strip()
+        if not values["name"]:
+            raise HTTPException(status_code=422, detail="Workspace name cannot be blank")
     if "settings" in values:
-        values["settings"] = __import__("json").dumps(values["settings"])
+        if len(json.dumps(values["settings"], default=str)) > 65536:
+            raise HTTPException(status_code=413, detail="Workspace settings exceed 64 KB")
+        values["settings"] = json.dumps(values["settings"])
     assignments = ", ".join(
         ("settings=cast(:settings as jsonb)" if key == "settings" else f"{key}=:{key}")
         for key in values
@@ -971,7 +978,7 @@ async def create_project(
     project_name = payload.name.strip()
     if not project_name:
         raise HTTPException(status_code=422, detail="Project name cannot be blank")
-    if len(__import__("json").dumps(payload.settings, default=str)) > 65536:
+    if len(json.dumps(payload.settings, default=str)) > 65536:
         raise HTTPException(status_code=413, detail="Project settings exceed 64 KB")
     try:
         reservation_id, cached = await reserve_idempotency(
@@ -1088,7 +1095,7 @@ async def update_project(
         values["name"] = values["name"].strip()
         if not values["name"]:
             raise HTTPException(status_code=422, detail="Project name cannot be blank")
-    if settings is not None and len(__import__("json").dumps(settings, default=str)) > 65536:
+    if settings is not None and len(json.dumps(settings, default=str)) > 65536:
         raise HTTPException(status_code=413, detail="Project settings exceed 64 KB")
     if not values and settings is None:
         raise HTTPException(status_code=400, detail="No project fields supplied")

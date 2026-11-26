@@ -132,22 +132,22 @@ returns boolean language sql stable security definer set search_path = public, a
     where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active')
 $$;
 create or replace function public.graphytion_workspace_role(target_workspace uuid)
-returns text language sql stable security definer set search_path = public, auth as $
+returns text language sql stable security definer set search_path = public, auth as $$
   select m.role from public.workspace_members m
   where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active'
   limit 1
-$;
+$$;
 create or replace function public.graphytion_workspace_owner(target_workspace uuid)
-returns uuid language sql stable security definer set search_path = public as $
+returns uuid language sql stable security definer set search_path = public as $$
   select w.owner_user_id from public.workspaces w where w.id=target_workspace
-$;
+$$;
 
 
 -- Tenant and identity keys are immutable after resource creation. All writes
 -- are mediated by FastAPI; these triggers also protect against accidental
 -- direct authenticated SQL updates that might otherwise cross tenant scope.
 create or replace function public.graphytion_protect_membership_identity()
-returns trigger language plpgsql set search_path = public as $
+returns trigger language plpgsql set search_path = public as $$
 begin
   if new.workspace_id <> old.workspace_id or new.user_id <> old.user_id then
     raise exception 'workspace membership identity is immutable' using errcode = '42501';
@@ -159,20 +159,20 @@ begin
     raise exception 'workspace ownership must be transferred explicitly' using errcode = '42501';
   end if;
   return new;
-end $;
+end $$;
 drop trigger if exists workspace_members_protect_identity on public.workspace_members;
 create trigger workspace_members_protect_identity
 before update on public.workspace_members
 for each row execute function public.graphytion_protect_membership_identity();
 
 create or replace function public.graphytion_protect_project_tenant()
-returns trigger language plpgsql set search_path = public as $
+returns trigger language plpgsql set search_path = public as $$
 begin
   if new.workspace_id <> old.workspace_id or new.created_by <> old.created_by then
     raise exception 'project tenant and creator are immutable' using errcode = '42501';
   end if;
   return new;
-end $;
+end $$;
 drop trigger if exists video_projects_protect_tenant on public.video_projects;
 create trigger video_projects_protect_tenant
 before update on public.video_projects

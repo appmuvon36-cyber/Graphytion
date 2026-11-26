@@ -55,7 +55,12 @@ class Settings(BaseSettings):
 
     @property
     def database_url_value(self) -> str:
-        return self.database_url.get_secret_value()
+        value = self.database_url.get_secret_value()
+        if value.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + value.removeprefix("postgresql://")
+        if value.startswith("postgres://"):
+            return "postgresql+asyncpg://" + value.removeprefix("postgres://")
+        return value
 
     @property
     def redis_url_value(self) -> str | None:
@@ -130,8 +135,9 @@ class Settings(BaseSettings):
             or "CHANGE_ME" in self.database_url_value
         ):
             raise ValueError(
-                "DATABASE_URL must use a dedicated non-administrative PostgreSQL "
-                "login and a real password"
+                "DATABASE_URL must use the graphytion_api login at "
+                "db.xtjwmezfzexvupbfsdqt.supabase.co with a real password; "
+                "do not use postgres or an administrative login"
             )
         database_query = parse_qs(db_url.query)
         if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != [

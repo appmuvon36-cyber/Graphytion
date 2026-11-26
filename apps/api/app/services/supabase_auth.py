@@ -129,7 +129,6 @@ class SupabaseAuth:
             "POST", "/verify", payload={"token_hash": token_hash, "type": verification_type}
         )
 
-
     async def admin_request(
         self, method: str, path: str, *, payload: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -150,9 +149,13 @@ class SupabaseAuth:
                     method, f"{self.base_url}{path}", headers=headers, json=payload
                 )
         except httpx.TimeoutException as exc:
-            raise HTTPException(status_code=504, detail="Supabase Auth Admin request timed out") from exc
+            raise HTTPException(
+                status_code=504, detail="Supabase Auth Admin request timed out"
+            ) from exc
         except httpx.RequestError as exc:
-            raise HTTPException(status_code=503, detail="Supabase Auth Admin API unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Supabase Auth Admin API unavailable"
+            ) from exc
         try:
             body = response.json()
         except ValueError:

@@ -1,11 +1,25 @@
 from fastapi import APIRouter
 
-from app.api.v1.routes import assets, creative, health, identity, platform_admin, render, system, webhooks, timeline, voiceover, subtitles
+from app.api.v1.routes import (
+    assets,
+    creative,
+    health,
+    identity,
+    platform_admin,
+    render,
+    subtitles,
+    system,
+    timeline,
+    voiceover,
+    webhooks,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(identity.router, tags=["identity", "workspace", "projects"])
-api_router.include_router(creative.router, tags=["creative production", "briefs", "scripts", "storyboards"])
+api_router.include_router(
+    creative.router, tags=["creative production", "briefs", "scripts", "storyboards"]
+)
 api_router.include_router(platform_admin.router, prefix="/admin", tags=["platform administration"])
 api_router.include_router(render.router, tags=["render jobs", "render workers"])
 api_router.include_router(assets.router, tags=["project assets"])

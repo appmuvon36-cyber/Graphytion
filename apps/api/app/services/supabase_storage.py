@@ -27,7 +27,12 @@ class SupabaseStorage:
             return False
 
     async def upload(
-        self, *, bucket: str, object_path: str, content: bytes, content_type: str,
+        self,
+        *,
+        bucket: str,
+        object_path: str,
+        content: bytes,
+        content_type: str,
         upsert: bool = False,
         timeout_seconds: int = 60,
     ) -> None:
@@ -35,10 +40,16 @@ class SupabaseStorage:
         bucket_segment = quote(bucket, safe="")
         object_segment = quote(object_path, safe="/")
         url = f"{base_url}/storage/v1/object/{bucket_segment}/{object_segment}"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(float(timeout_seconds), connect=15.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(float(timeout_seconds), connect=15.0)
+        ) as client:
             response = await client.post(
                 url,
-                headers={**self._headers(), "Content-Type": content_type, "x-upsert": "true" if upsert else "false"},
+                headers={
+                    **self._headers(),
+                    "Content-Type": content_type,
+                    "x-upsert": "true" if upsert else "false",
+                },
                 content=content,
             )
             response.raise_for_status()
@@ -66,7 +77,6 @@ class SupabaseStorage:
             if signed.startswith("http")
             else f"{settings.supabase_url.rstrip('/')}/storage/v1{signed}"
         )
-
 
     async def remove(self, *, bucket: str, object_path: str) -> None:
         base_url = settings.supabase_url.rstrip("/")

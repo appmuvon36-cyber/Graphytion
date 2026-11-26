@@ -73,12 +73,17 @@ grant execute on function private.graphytion_is_workspace_member(uuid) to graphy
 grant execute on function private.graphytion_workspace_role(uuid) to graphytion_runtime;
 grant execute on function private.graphytion_workspace_owner(uuid) to graphytion_runtime;
 
--- Email is private profile data: runtime can only read the public profile columns.
-revoke select on table public.profiles from authenticated, graphytion_runtime;
+-- Email and immutable profile identity are trigger-managed; runtime receives only required profile columns.
+revoke select,insert,update,delete on table public.profiles
+  from authenticated,graphytion_runtime;
 grant select (id,display_name,avatar_path,bio,locale,timezone,created_at,updated_at)
   on table public.profiles to authenticated,graphytion_runtime;
-grant update (display_name,bio,locale,timezone)
+grant insert (id,display_name)
   on table public.profiles to graphytion_runtime;
+grant update (display_name,bio,locale,timezone,avatar_path,updated_at)
+  on table public.profiles to graphytion_runtime;
+grant update (display_name,bio,locale,timezone)
+  on table public.profiles to authenticated;
 
 create or replace function private.graphytion_is_workspace_owner(target_workspace uuid)
 returns boolean

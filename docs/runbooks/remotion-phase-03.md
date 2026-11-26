@@ -32,8 +32,8 @@ PostgreSQL render/audio job rows are both the durable queue and source of truth.
 ## Deployment-only configuration
 
 The following values are intentionally not configured in this phase:
-- FastAPI INTERNAL_WORKER_TOKEN and Supabase service credentials.
-- Render worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, optional REMOTION_BROWSER_EXECUTABLE.
-- Media worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, OPENAI_API_KEY, optional OPENAI_TTS_MODEL.
+- FastAPI INTERNAL_WORKER_TOKEN, Supabase server credentials, and optional private REDIS_URL for transient worker wake-up signals.
+- Render worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, private REDIS_URL, optional REMOTION_BROWSER_EXECUTABLE.
+- Media worker GRAPHYTION_API_BASE_URL, INTERNAL_WORKER_TOKEN, GEMINI_API_KEY and optional GEMINI_TTS_MODEL (default `gemini-3.8-flash-tts`); OPENAI_API_KEY remains optional for Whisper word alignment and OpenAI fallback TTS.
 
 Apply the new migration only during the separately authorized deployment/database rollout. No migration, secret update, Railway change or deployment was performed as part of this implementation.

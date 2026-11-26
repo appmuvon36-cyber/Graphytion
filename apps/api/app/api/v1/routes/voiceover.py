@@ -9,13 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims,DbSession
 from app.core.config import settings
 from app.core.database import set_rls_subject
-from app.core.redis import redis_client
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.tts_gateway import OpenAITTSProvider
 
 router=APIRouter();permissions=WorkspacePermissionResolver()
-STREAM="graphytion:media:tts";BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
+BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
 provider=OpenAITTSProvider(settings.openai_api_key_value or "")
 class VoiceoverCreate(BaseModel):
  text:str=Field(min_length=1,max_length=20000)
@@ -61,9 +60,7 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
   return {"data":{"voiceover_id":str(old["id"]),"status":old["status"],"replayed":True}}
  await db.execute(text("insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata) values(:actor,:workspace,'voiceover.requested','audio_generation',:id,:request,cast(:metadata as jsonb))"),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"status":status})})
  await db.commit()
- if status=="queued":
-  try:await redis_client.xadd(STREAM,{"generation_id":str(row["id"])},maxlen=10000,approximate=True)
-  except Exception:pass
+ # The committed audio_generations row is polled directly by the media worker.
  return {"data":{"voiceover_id":str(row["id"]),"status":status,"provider_configured":provider.configured()}}
 @router.get("/projects/{project_id}/voiceovers")
 async def list_voiceovers(project_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
@@ -91,8 +88,7 @@ async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncS
  if row["status"] not in {"provider_unavailable","failed"}:raise HTTPException(409,"Only unavailable or failed voiceover jobs can be retried")
  await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null where id=:id"),{"id":voiceover_id})
  await db.commit()
- try:await redis_client.xadd(STREAM,{"generation_id":str(voiceover_id)},maxlen=10000,approximate=True)
- except Exception:pass
+ # The media worker discovers this queued row through PostgreSQL polling.
  return {"data":{"voiceover_id":str(voiceover_id),"status":"queued"}}
 
 

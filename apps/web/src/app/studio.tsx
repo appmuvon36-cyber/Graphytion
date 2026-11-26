@@ -29,6 +29,7 @@ export default function Studio() {
   const [busy,setBusy] = useState(false);
   const [profileName,setProfileName] = useState('');
   const [profileBio,setProfileBio] = useState('');
+  const [avatarFile,setAvatarFile] = useState<File|null>(null);
 
   const api = useMemo(()=>createApiClient({baseUrl:apiBase,getAccessToken:async()=>access || (typeof window !== 'undefined' ? sessionStorage.getItem('graphytion.access') : null)}),[access]);
   const call = useCallback(async <T,>(path:string,init:RequestInit={})=>{
@@ -114,6 +115,11 @@ export default function Studio() {
     try{const result=await call<{data:Profile}>('/me',{method:'PATCH',body:JSON.stringify({display_name:profileName,bio:profileBio})});setProfile(result.data);setNotice('Profil diperbarui.');}
     catch(e){setError(e instanceof Error?e.message:'Gagal memperbarui profil');}finally{setBusy(false);}
   }
+  async function uploadAvatar(event:React.FormEvent<HTMLFormElement>){
+    event.preventDefault(); if(!avatarFile)return; setBusy(true);setError('');
+    try{const form=new FormData();form.append('file',avatarFile);const result=await call<{data:Profile}>('/me/avatar',{method:'POST',body:form});setProfile(result.data);setAvatarFile(null);setNotice('Avatar tersimpan secara private.');}
+    catch(e){setError(e instanceof Error?e.message:'Upload avatar gagal');}finally{setBusy(false);}
+  }
   async function changeStatus(project:Project,action:'archive'|'restore'|'delete'){
     if(action==='delete'&&!window.confirm('Hapus project ini? Project akan ditandai deleted.'))return;
     setBusy(true);setError('');
@@ -149,7 +155,7 @@ export default function Studio() {
     {error&&<p role="alert" style={{padding:12,background:'#fff1f0',color:'#b42318',borderRadius:10}}>{error}</p>}{notice&&<p role="status" style={{padding:12,background:'#ecfdf3',color:'#176b45',borderRadius:10}}>{notice}</p>}
     <section style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:16,marginBottom:20}}>
       <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Workspace</h2><select aria-label="Pilih workspace" value={workspaceId} onChange={e=>{setWorkspaceId(e.target.value);loadWorkspaceData(e.target.value).catch(x=>setError(String(x)));}} style={field}><option value="">Pilih workspace</option>{workspaces.map(w=><option key={w.id} value={w.id}>{w.name} · {w.role}</option>)}</select><p style={{color:'#68788e',fontSize:13}}>{workspaces.length} workspace tersedia</p><form onSubmit={createWorkspace} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Nama workspace" placeholder="Nama workspace baru" value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} required style={field}/><input aria-label="Slug workspace" placeholder="slug-workspace" value={workspaceSlug} onChange={e=>setWorkspaceSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))} required style={field}/><button disabled={busy} style={button}>Buat workspace</button></form></div>
-      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Profil akun</h2><form onSubmit={saveProfile} style={{display:'grid',gap:8}}><input aria-label="Nama tampilan" placeholder="Nama tampilan" value={profileName} onChange={e=>setProfileName(e.target.value)} style={field}/><textarea aria-label="Bio" placeholder="Bio singkat" value={profileBio} onChange={e=>setProfileBio(e.target.value)} rows={3} style={field}/><button disabled={busy} style={button}>Simpan profil</button></form></div>
+      <div style={card}><h2 style={{marginTop:0,fontSize:18}}>Profil akun</h2><form onSubmit={saveProfile} style={{display:'grid',gap:8}}><input aria-label="Nama tampilan" placeholder="Nama tampilan" value={profileName} onChange={e=>setProfileName(e.target.value)} style={field}/><textarea aria-label="Bio" placeholder="Bio singkat" value={profileBio} onChange={e=>setProfileBio(e.target.value)} rows={3} style={field}/><button disabled={busy} style={button}>Simpan profil</button></form><form onSubmit={uploadAvatar} style={{display:'grid',gap:8,marginTop:14}}><input aria-label="Avatar PNG JPEG WebP" type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>setAvatarFile(e.target.files?.[0]||null)}/><button disabled={busy||!avatarFile} style={{...button,background:'#edf3f9',color:'#173f72'}}>Upload avatar private</button></form>{profile?.avatar_path&&<p style={{fontSize:12,color:'#68788e'}}>Avatar: {profile.avatar_path}</p>}</div>
     </section>
     <section style={card}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}><div><h2 style={{margin:'0 0 4px',fontSize:21}}>Projects</h2><p style={{margin:0,color:'#68788e',fontSize:13}}>Data project berasal dari FastAPI dan Supabase.</p></div><input aria-label="Cari project" placeholder="Cari project…" value={search} onChange={e=>setSearch(e.target.value)} style={{...field,maxWidth:260}}/></div>

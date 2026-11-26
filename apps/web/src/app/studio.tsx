@@ -52,15 +52,22 @@ export default function Studio() {
       if (e instanceof ApiClientError && e.status===401 && typeof window!=='undefined') {
         const refreshToken=sessionStorage.getItem('graphytion.refresh');
         if (refreshToken) {
-          const tokens=await publicApi.request<AuthResult>('/auth/refresh',{method:'POST',body:JSON.stringify({refresh_token:refreshToken})});
-          {
+          try {
+            const tokens=await publicApi.request<AuthResult>('/auth/refresh',{method:'POST',body:JSON.stringify({refresh_token:refreshToken})});
             sessionStorage.setItem('graphytion.access',tokens.access_token);
             sessionStorage.setItem('graphytion.refresh',tokens.refresh_token);
             setAccess(tokens.access_token);
             return await api.request<T>(path,init);
+          } catch {
+            sessionStorage.removeItem('graphytion.access');
+            sessionStorage.removeItem('graphytion.refresh');
+            setAccess('');
           }
+        } else {
+          sessionStorage.removeItem('graphytion.access');
+          sessionStorage.removeItem('graphytion.refresh');
+          setAccess('');
         }
-        sessionStorage.removeItem('graphytion.access'); sessionStorage.removeItem('graphytion.refresh'); setAccess('');
       }
       throw e;
     }

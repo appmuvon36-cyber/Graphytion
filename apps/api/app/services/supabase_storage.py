@@ -65,3 +65,13 @@ class SupabaseStorage:
             if signed.startswith("http")
             else f"{settings.supabase_url.rstrip('/')}/storage/v1{signed}"
         )
+
+
+    async def remove(self, *, bucket: str, object_path: str) -> None:
+        base_url = settings.supabase_url.rstrip("/")
+        bucket_segment = quote(bucket, safe="")
+        object_segment = quote(object_path, safe="/")
+        url = f"{base_url}/storage/v1/object/{bucket_segment}/{object_segment}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.delete(url, headers=self._headers())
+            response.raise_for_status()

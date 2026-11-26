@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.creative_pipeline import creative_pipeline
-from app.services.creative_queue import enqueue_creative_run
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
@@ -952,12 +951,7 @@ async def execute_creative_stage(
     """), {"run": run["id"], "payload": json.dumps({"stage": stage})})
     await db.commit()
 
-    try:
-        await enqueue_creative_run(str(run["id"]))
-    except Exception:
-        # PostgreSQL is the durable source of truth; the worker's recovery scan
-        # will re-publish queued runs if Redis is temporarily unavailable.
-        pass
+    # The creative worker polls the committed production_runs row directly.
     return {"data": {"run_id": str(run["id"]), "status": "queued"}}
 
 

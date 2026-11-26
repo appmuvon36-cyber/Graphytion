@@ -2,10 +2,9 @@ from email.utils import parseaddr
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from sqlalchemy.engine import make_url
-
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
@@ -156,9 +155,7 @@ class Settings(BaseSettings):
             )
         if not db_url.password or "CHANGE_ME" in self.database_url_value:
             raise ValueError("DATABASE_URL is missing a real password")
-        if not any(
-            db_url.query.get(key) == "require" for key in ("ssl", "sslmode")
-        ):
+        if not any(db_url.query.get(key) == "require" for key in ("ssl", "sslmode")):
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
         if (
             self.supabase_service_role_key_value == self.supabase_anon_key_value

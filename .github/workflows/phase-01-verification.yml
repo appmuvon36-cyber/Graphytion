@@ -69,11 +69,8 @@ jobs:
       - name: TypeScript workspace typecheck
         run: pnpm typecheck
 
-      - name: Next.js customer build
+      - name: Next.js Web and consolidated Admin build
         run: pnpm --filter @graphytion/web build
-
-      - name: Next.js admin build
-        run: pnpm --filter @graphytion/admin build
 
       - name: Remotion Studio typecheck and bundle
         run: |

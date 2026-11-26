@@ -1,6 +1,8 @@
 import {createClient} from 'redis';
 import {makeCancelSignal, selectComposition, renderMedia} from '@remotion/renderer';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
+import {execFile as execFileCallback} from 'node:child_process';
+import {promisify} from 'node:util';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -8,11 +10,17 @@ import {randomUUID} from 'node:crypto';
 const redisUrl = process.env.REDIS_URL;
 const apiBaseUrl = process.env.GRAPHYTION_API_BASE_URL;
 const workerToken = process.env.INTERNAL_WORKER_TOKEN;
-const serveUrl = process.env.REMOTION_SERVE_URL;
+const serveUrl = process.env.REMOTION_SERVE_URL ?? '/workspace/apps/remotion-studio/build';
 if (!redisUrl) throw new Error('REDIS_URL is required');
 if (!apiBaseUrl) throw new Error('GRAPHYTION_API_BASE_URL is required');
 if (!workerToken) throw new Error('INTERNAL_WORKER_TOKEN is required');
-if (!serveUrl) throw new Error('REMOTION_SERVE_URL is required');
+const execFile = promisify(execFileCallback);
+const renderConcurrency = Number(process.env.REMOTION_RENDER_CONCURRENCY ?? 2);
+const renderCrf = Number(process.env.REMOTION_RENDER_CRF ?? 18);
+const x264Preset = process.env.REMOTION_X264_PRESET ?? 'medium';
+if (!Number.isInteger(renderConcurrency) || renderConcurrency < 1 || renderConcurrency > 8) throw new Error('REMOTION_RENDER_CONCURRENCY must be between 1 and 8');
+if (!Number.isInteger(renderCrf) || renderCrf < 0 || renderCrf > 51) throw new Error('REMOTION_RENDER_CRF must be between 0 and 51');
+if (!['ultrafast','superfast','veryfast','faster','fast','medium','slow','slower','veryslow'].includes(x264Preset)) throw new Error('REMOTION_X264_PRESET is invalid');
 const renderTimeoutMs = Number(process.env.RENDER_TIMEOUT_MS ?? 7200000);
 if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeoutMs > 86400000) {
   throw new Error('RENDER_TIMEOUT_MS must be between 60000 and 86400000');
@@ -84,6 +92,8 @@ async function processJob(jobId?: string): Promise<boolean> {
       serveUrl,
       id: claimed.composition_id,
       inputProps,
+      browserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE,
+      timeoutInMilliseconds: 60000,
     });
     await renderMedia({
       composition,
@@ -92,6 +102,12 @@ async function processJob(jobId?: string): Promise<boolean> {
       outputLocation: outputPath,
       inputProps,
       cancelSignal,
+      concurrency: renderConcurrency,
+      crf: renderCrf,
+      x264Preset,
+      pixelFormat: 'yuv420p',
+      browserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE,
+      timeoutInMilliseconds: 60000,
       onProgress: ({progress}) => {
         currentProgress = Math.min(99.9, Math.max(0, progress * 100));
         const now = Date.now();
@@ -109,6 +125,14 @@ async function processJob(jobId?: string): Promise<boolean> {
         }
       },
     });
+    const probe = await execFile('ffprobe', ['-v','error','-show_entries','format=format_name,duration:stream=codec_type,codec_name,width,height','-of','json',outputPath], {timeout:30000, maxBuffer:1024*1024});
+    const metadata = JSON.parse(probe.stdout) as {format?:{format_name?:string;duration?:string};streams?:Array<{codec_type?:string;codec_name?:string;width?:number;height?:number}>};
+    const video = metadata.streams?.find(stream => stream.codec_type === 'video');
+    const duration = Number(metadata.format?.duration);
+    const expectedDuration = claimed.timeline_snapshot.durationFrames / claimed.timeline_snapshot.fps;
+    if (!metadata.format?.format_name?.split(',').includes('mp4') || video?.codec_name !== 'h264' || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05) throw new Error('Rendered MP4 metadata does not match the persisted timeline snapshot');
+    const outputStat = await stat(outputPath);
+    if (outputStat.size < 12 || outputStat.size > 512 * 1024 * 1024) throw new Error('Rendered MP4 output size is outside the supported range');
     const bytes = await readFile(outputPath);
     const form = new FormData();
     form.set('file', new Blob([Uint8Array.from(bytes)], {type: 'video/mp4'}), 'output.mp4');
@@ -116,7 +140,7 @@ async function processJob(jobId?: string): Promise<boolean> {
       method: 'POST',
       body: form,
     });
-    console.info('render_completed', {render_job_id: claimed.id, bytes: bytes.byteLength});
+    console.info('render_completed', {render_job_id: claimed.id, bytes: bytes.byteLength, duration_seconds: duration, width: video.width, height: video.height, codec: video.codec_name});
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown render worker error';

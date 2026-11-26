@@ -55,3 +55,7 @@ export function getMotionComponent(key:string) {
 export function listMotionComponents() {
   return Object.values(registry).map(({key,version})=>({key,version}));
 }
+
+export {TimelineComposition} from './timeline';
+export type {TimelineCompositionProps} from './timeline';
+export {GraphytionTimelinePlayer} from './player';

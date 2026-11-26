@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
+import { GraphytionTimelinePlayer } from '@graphytion/motion-components';
 import type {
   CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
 } from '@graphytion/contracts';
@@ -11,6 +12,7 @@ const field: React.CSSProperties = { width: '100%', padding: '11px 13px', border
 const button: React.CSSProperties = { border: 0, borderRadius: 9, padding: '10px 14px', background: '#173f72', color: '#fff', fontWeight: 700, cursor: 'pointer' };
 type CreativeRunItem = ProductionRunApi;
 type RenderItem = RenderJobApi;
+type CompositionSnapshot = {version:number;fps:number;width:number;height:number;durationFrames:number;clips:Array<{id:string;trackId:string;startFrame:number;durationFrames:number;componentKey?:string|null;props:Record<string,unknown>}>;contentHash:string};
 const panel: React.CSSProperties = { background: '#fff', border: '1px solid #e5eaf1', borderRadius: 14, padding: 18, marginBottom: 14 };
 
 export default function CreativeStudio({ projectId }: { projectId: string }) {
@@ -21,6 +23,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [boards, setBoards] = useState<StoryboardApi[]>([]);
   const [runs, setRuns] = useState<CreativeRunItem[]>([]);
   const [renders, setRenders] = useState<RenderItem[]>([]);
+  const [previewSnapshot, setPreviewSnapshot] = useState<CompositionSnapshot | null>(null);
+  const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
   const [assetFile, setAssetFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -176,6 +180,17 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     finally { setBusy(false); }
   }
 
+  async function previewStoryboard(id: string) {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await call<{data:{snapshot:CompositionSnapshot}}>('/projects/' + projectId + '/storyboards/' + id + '/preview');
+      setPreviewSnapshot(result.data.snapshot);
+      setPreviewStoryboardId(id);
+      setNotice('Preview memakai timeline snapshot yang sama dengan renderer Remotion.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Remotion preview failed'); }
+    finally { setBusy(false); }
+  }
+
   async function renderStoryboard(id: string) {
     setBusy(true); setError(''); setNotice('');
     try {
@@ -270,8 +285,15 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <textarea aria-label="Storyboard scenes JSON" value={sceneJson} onChange={e=>setSceneJson(e.target.value)} rows={10} style={{...field,fontFamily:'monospace',fontSize:12}}/>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} style={button}>Simpan storyboard</button><button type="button" disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} onClick={()=>void generateStage("storyboard")} style={{...button,background:"#0d6b54"}}>Generate storyboard dengan AI</button></div>
       </form>
-      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><div style={{display:'flex',gap:7}}>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveStoryboard(b.id)} style={button}>Approve</button>}{b.status==='approved'&&<button type="button" disabled={busy} onClick={()=>void renderStoryboard(b.id)} style={{...button,background:'#0d6b54'}}>Render MP4</button>}</div></div><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}><div><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div><button type="button" disabled={busy||b.status==='superseded'} onClick={()=>void regenerateScene(sc.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Regenerate scene</button></div>)}</article>)}</div>
+      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><div style={{display:'flex',gap:7}}>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveStoryboard(b.id)} style={button}>Approve</button>}{b.status==='approved'&&<><button type="button" disabled={busy} onClick={()=>void previewStoryboard(b.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Preview Remotion</button><button type="button" disabled={busy} onClick={()=>void renderStoryboard(b.id)} style={{...button,background:'#0d6b54'}}>Render MP4</button></>}</div></div><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}><div><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div><button type="button" disabled={busy||b.status==='superseded'} onClick={()=>void regenerateScene(sc.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Regenerate scene</button></div>)}</article>)}</div>
     </section>
+    {previewSnapshot && <section style={panel}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:12}}>
+        <div><h2 style={{margin:'0 0 4px'}}>Remotion Player Preview</h2><p style={{fontSize:12,color:'#68788e',margin:0}}>Storyboard {previewStoryboardId} · {previewSnapshot.width}×{previewSnapshot.height} · {previewSnapshot.fps} FPS · {Math.ceil(previewSnapshot.durationFrames/previewSnapshot.fps)}s · {previewSnapshot.contentHash.slice(0,12)}</p></div>
+        <button type="button" onClick={()=>{setPreviewSnapshot(null);setPreviewStoryboardId('');}} style={{...button,background:'#edf3f9',color:'#173f72'}}>Close preview</button>
+      </div>
+      <GraphytionTimelinePlayer snapshot={previewSnapshot}/>
+    </section>}
     <section style={panel}>
       <h2 style={{marginTop:0}}>04 · Creative runs</h2>
       {runs.map(run=><div key={run.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{run.current_stage || 'Creative pipeline'} · {run.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {run.progress_percent ?? 0}% · {run.error_code || run.id}</p></div>{['queued','planning','scripting','storyboarding'].includes(run.status)&&<button type="button" disabled={busy} onClick={()=>void cancelRun(run.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div>)}

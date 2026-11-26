@@ -1,1 +1,24 @@
-{"name":"@graphytion/motion-components","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.tsx"},"dependencies":{"remotion":"4.0.409","react":"19.1.1"},"scripts":{"lint":"tsc --noEmit","typecheck":"tsc --noEmit","build":"tsc --noEmit"},"devDependencies":{"@types/react":"19.1.16","typescript":"5.9.3"}}
+{
+  "name": "@graphytion/motion-components",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.tsx"
+  },
+  "dependencies": {
+    "@graphytion/composition-runtime": "workspace:*",
+    "@remotion/player": "4.0.409",
+    "remotion": "4.0.409",
+    "react": "19.1.1"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.16",
+    "typescript": "5.9.3"
+  }
+}

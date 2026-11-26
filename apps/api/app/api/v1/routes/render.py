@@ -499,3 +499,54 @@ async def cancel_queued_render(
            "request_id": request.state.request_id})
     await db.commit()
     return {"data": {"render_job_id": str(render_job_id), "status": next_status}}
+
+
+@router.get("/projects/{project_id}/storyboards/{storyboard_id}/preview")
+async def preview_approved_storyboard(
+    project_id: UUID,
+    storyboard_id: UUID,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    workspace_id = await _project_workspace(db, project_id, actor, "project.read")
+    source = (await db.execute(text("""
+        select sb.id,p.width,p.height,p.fps
+        from public.storyboards sb
+        join public.video_projects p on p.id=sb.project_id
+        join public.video_scripts vs on vs.id=sb.script_id
+        where sb.id=:storyboard and sb.project_id=:project
+          and sb.workspace_id=:workspace and sb.status='approved' and vs.status='approved'
+    """), {"storyboard": storyboard_id, "project": project_id, "workspace": workspace_id})).mappings().first()
+    if source is None:
+        raise HTTPException(status_code=409, detail="Only an approved storyboard based on an approved script can be previewed")
+    scenes = (await db.execute(text("""
+        select id,title,duration_ms,visual_direction
+        from public.storyboard_scenes
+        where storyboard_id=:storyboard and project_id=:project
+        order by scene_index
+    """), {"storyboard": storyboard_id, "project": project_id})).mappings().all()
+    if not scenes:
+        raise HTTPException(status_code=409, detail="Storyboard has no scenes to preview")
+    fps = int(source["fps"] or 30)
+    clips = []
+    cursor = 0
+    for scene in scenes:
+        duration_frames = max(1, round(int(scene["duration_ms"]) * fps / 1000))
+        visual = dict(scene["visual_direction"] or {})
+        background = visual.get("background", "#102F60")
+        if not isinstance(background, str) or not background.startswith("#") or len(background) not in (4, 7):
+            background = "#102F60"
+        clips.append({
+            "id": str(scene["id"]), "trackId": "main", "startFrame": cursor,
+            "durationFrames": duration_frames, "componentKey": "core.title-card.v1",
+            "props": {"title": str(scene["title"]), "subtitle": str(visual.get("description") or "")[:500], "background": background},
+        })
+        cursor += duration_frames
+    snapshot = {
+        "version": 1, "fps": fps, "width": int(source["width"]), "height": int(source["height"]),
+        "durationFrames": cursor, "clips": clips,
+    }
+    timeline_hash = _validate_snapshot(snapshot)
+    snapshot["contentHash"] = timeline_hash
+    return {"data": {"storyboard_id": str(storyboard_id), "snapshot": snapshot, "timeline_hash": timeline_hash}}

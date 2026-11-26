@@ -27,6 +27,9 @@ create policy ai_usage_events_api_tenant on public.ai_usage_events
   for all to graphytion_api
   using (private.graphytion_is_workspace_member(workspace_id))
   with check (private.graphytion_is_workspace_member(workspace_id));
+drop policy if exists ai_usage_events_platform_admin_read on public.ai_usage_events;
+create policy ai_usage_events_platform_admin_read on public.ai_usage_events
+  for select to graphytion_api using (private.graphytion_is_platform_admin());
 
 revoke all on public.ai_usage_events from public, anon, authenticated, service_role;
 grant select,insert,update,delete on public.ai_usage_events to graphytion_api;

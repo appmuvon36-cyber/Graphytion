@@ -138,7 +138,10 @@ class Settings(BaseSettings):
 
         direct_database = (
             db_url.host == "db.xtjwmezfzexvupbfsdqt.supabase.co"
-            and db_url.username == "graphytion_api"
+            and db_url.username in {
+                "graphytion_api",
+                "graphytion_api.xtjwmezfzexvupbfsdqt",
+            }
             and db_url.port in (None, 5432)
         )
         pooler_database = (
@@ -154,8 +157,10 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must use the postgresql+asyncpg driver")
         if not (direct_database or pooler_database):
             raise ValueError(
-                "DATABASE_URL target/login is not the Graphytion dedicated database endpoint "
-                "(expected graphytion_api on the direct host or project-scoped Supavisor)"
+                "DATABASE_URL target/login is not an allowed Graphytion runtime endpoint "
+                f"(host={db_url.host!r}, username={db_url.username!r}, port={db_url.port!r}, "
+                f"driver={db_url.drivername!r}); expected the dedicated graphytion_api role "
+                "on the Graphytion direct host or Supavisor pooler"
             )
         if not db_url.password or "CHANGE_ME" in self.database_url_value:
             raise ValueError("DATABASE_URL is missing a real password")

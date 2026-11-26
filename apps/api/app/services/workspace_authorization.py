@@ -1,7 +1,8 @@
 from enum import StrEnum
+
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
 
 class WorkspaceRole(StrEnum):
     OWNER = "owner"

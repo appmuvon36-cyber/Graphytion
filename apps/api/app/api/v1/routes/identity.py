@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims
 from app.core.database import get_db_session
+from app.core.redis import redis_client
 from app.services.supabase_auth import supabase_auth
 from app.services.workspace_authorization import WorkspacePermissionResolver
-from app.core.redis import redis_client
 
 router = APIRouter()
 Db = Depends(get_db_session)

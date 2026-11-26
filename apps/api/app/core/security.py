@@ -1,8 +1,8 @@
 from functools import lru_cache
 from typing import Any
 import jwt
-from jwt import PyJWKClient
 from fastapi import HTTPException, status
+from jwt import PyJWKClient
 from app.core.config import settings
 
 @lru_cache

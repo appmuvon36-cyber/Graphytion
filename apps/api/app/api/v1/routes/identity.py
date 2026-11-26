@@ -245,7 +245,7 @@ async def logout(
     await supabase_auth.logout(authorization.removeprefix("Bearer ").strip())
     await db.execute(
         text("""
-            insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
+            insert into public.audit_logs(\n                    actor_user_id, action, resource_type, resource_id, request_id\n                )
             values (:actor,'auth.logout','user',:resource,:request_id)
         """),
         {
@@ -440,7 +440,7 @@ async def create_workspace(
             .mappings()
             .one()
         )
-        await db.execute(
+        membership_result = await db.execute(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:user,'owner','active')
@@ -758,7 +758,7 @@ async def accept_invitation(
         )
         if not row:
             raise HTTPException(status_code=404, detail="Invitation is invalid or expired")
-        membership_result = await db.execute(
+        await db.execute(
             text("""
           insert into public.workspace_members(workspace_id,user_id,role,status)
           values (:workspace,:actor,:role,'active')

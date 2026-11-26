@@ -34,6 +34,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers,
     cache: 'no-store',
+    signal: init.signal ?? AbortSignal.timeout(30000),
   });
   const body = await response.json().catch(() => null) as {detail?: string; data?: T} | null;
   if (!response.ok) throw new Error(body?.detail ?? `Graphytion API returned HTTP ${response.status}`);

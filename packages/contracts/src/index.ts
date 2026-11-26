@@ -100,7 +100,7 @@ export const MotionKeyframeSchema = z.object({
  frame:z.number().int().nonnegative(),value:z.union([z.number(),z.string()]),
  easing:z.enum(['linear','ease-in','ease-out','ease-in-out']).optional(),
 }).strict();
-export const CompositionClipSchema = z.object({
+export const CropGeometrySchema=z.object({\n fitMode:z.enum(['cover','contain','fill','custom']),focalX:z.number().min(0).max(1),focalY:z.number().min(0).max(1),scale:z.number().positive().max(10),\n region:z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),width:z.number().positive().max(1),height:z.number().positive().max(1)}).strict().optional(),\n}).strict().superRefine((v,ctx)=>{if(v.region&&(v.region.x+v.region.width>1||v.region.y+v.region.height>1))ctx.addIssue({code:'custom',message:'Crop region must remain inside normalized source bounds'});});\nexport const CompositionClipSchema = z.object({
  id:z.string().min(1),trackId:UUID,startFrame:z.number().int().nonnegative(),durationFrames:z.number().int().positive(),
  trimStartFrames:z.number().int().nonnegative(),playbackRate:z.number().min(.1).max(4),
  componentKey:z.string().min(1),componentVersion:z.string().min(1),

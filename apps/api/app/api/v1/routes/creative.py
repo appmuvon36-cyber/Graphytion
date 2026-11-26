@@ -799,16 +799,16 @@ async def _process_creative_run(
         await db.execute(text("""
             update public.agent_tasks set status='succeeded',output_artifact_id=:artifact,
                 output_payload=cast(:output as jsonb),completed_at=now(),lease_expires_at=null,worker_id=null
-            where id=:task
+            where id=:task and worker_id=:worker
         """), {
             "artifact": artifact_id, "output": json.dumps({"provenance": provenance, "artifact_id": str(artifact_id)}),
-            "task": task,
+            "task": task, "worker": run["worker_id"],
         })
         await db.execute(text("""
             update public.production_runs set status='ready_for_review',current_stage=:stage,
                 progress_percent=100,completed_at=now(),worker_id=null,lease_expires_at=null
-            where id=:run
-        """), {"stage": stage, "run": run["id"]})
+            where id=:run and worker_id=:worker
+        """), {"stage": stage, "run": run["id"], "worker": run["worker_id"]})
         await db.execute(text("""
             insert into public.workflow_checkpoints(production_run_id,stage_key,checkpoint_key,payload,content_hash)
             values (:run,:stage,:key,cast(:payload as jsonb),:hash)
@@ -846,13 +846,13 @@ async def _process_creative_run(
             await db.execute(text("""
                 update public.agent_tasks set status='retry_wait',error_code=:code,
                     error_detail_internal=:detail,lease_expires_at=null,worker_id=null
-                where id=:task
-            """), {"code": safe_code, "detail": str(exc)[:1000], "task": task})
+                where id=:task and worker_id=:worker
+            """), {"code": safe_code, "detail": str(exc)[:1000], "task": task, "worker": run["worker_id"]})
             await db.execute(text("""
                 update public.production_runs set status='queued',error_code=:code,
                     error_message_safe=:message,worker_id=null,lease_expires_at=null
-                where id=:run
-            """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"]})
+                where id=:run and worker_id=:worker
+            """), {"code": safe_code, "message": str(safe_message)[:500], "run": run["id"], "worker": run["worker_id"]})
             await db.execute(text("""
                 insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
                 values (:run,'stage.retry_scheduled',cast(:payload as jsonb),

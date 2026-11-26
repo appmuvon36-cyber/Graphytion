@@ -11,7 +11,7 @@ from app.core.config import settings
 class SupabaseAuth:
     def __init__(self) -> None:
         self.base_url = settings.supabase_url.rstrip("/") + "/auth/v1"
-        self.api_key = settings.supabase_anon_key
+        self.api_key = settings.supabase_anon_key_value
 
     async def _request(
         self,

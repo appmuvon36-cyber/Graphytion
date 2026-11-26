@@ -27,7 +27,8 @@ class SupabaseStorage:
             return False
 
     async def upload(
-        self, *, bucket: str, object_path: str, content: bytes, content_type: str
+        self, *, bucket: str, object_path: str, content: bytes, content_type: str,
+        upsert: bool = False,
     ) -> None:
         base_url = settings.supabase_url.rstrip("/")
         bucket_segment = quote(bucket, safe="")
@@ -36,7 +37,7 @@ class SupabaseStorage:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
                 url,
-                headers={**self._headers(), "Content-Type": content_type, "x-upsert": "false"},
+                headers={**self._headers(), "Content-Type": content_type, "x-upsert": "true" if upsert else "false"},
                 content=content,
             )
             response.raise_for_status()

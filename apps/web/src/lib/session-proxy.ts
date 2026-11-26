@@ -23,8 +23,13 @@ function config() {
   }
   const apiUrl = new URL(apiBase);
   const origin = new URL(appUrl).origin;
-  if (production && (!origin.startsWith('https://') || !apiUrl.origin.startsWith('https://'))) {
-    throw new Error('APP_PUBLIC_URL and GRAPHYTION_API_URL must use HTTPS in production');
+  const privateRailwayApi =
+    apiUrl.protocol === 'http:' && apiUrl.hostname.endsWith('.railway.internal');
+  if (
+    production &&
+    (!origin.startsWith('https://') || (!apiUrl.origin.startsWith('https://') && !privateRailwayApi))
+  ) {
+    throw new Error('APP_PUBLIC_URL must use HTTPS; GRAPHYTION_API_URL must use HTTPS or Railway private networking');
   }
   if (bffSecret.length < 32) {
     throw new Error('GRAPHYTION_BFF_SHARED_SECRET must contain at least 32 characters');

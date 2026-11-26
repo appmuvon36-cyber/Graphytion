@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import AuthenticatedClaims, DbSession
+from app.core.database import set_rls_subject
+from app.services.supabase_auth import supabase_auth
+
+router = APIRouter()
+
+
+def _actor(claims: dict[str, Any]) -> UUID:
+    try:
+        return UUID(str(claims["sub"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid authenticated subject") from exc
+
+
+async def _require_platform_admin(db: AsyncSession, actor: UUID) -> None:
+    await set_rls_subject(db, str(actor))
+    allowed = await db.scalar(text("select private.graphytion_is_platform_admin()"))
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Platform administrator access required")
+
+
+async def _audit(
+    db: AsyncSession, request: Request, actor: UUID, action: str,
+    resource_type: str, resource_id: UUID, metadata: dict[str, Any] | None = None,
+) -> None:
+    await db.execute(text("""
+        insert into public.audit_logs(
+            actor_user_id, action, resource_type, resource_id, metadata, request_id
+        ) values (:actor,:action,:resource_type,:resource_id,cast(:metadata as jsonb),:request_id)
+    """), {
+        "actor": actor, "action": action, "resource_type": resource_type,
+        "resource_id": resource_id, "metadata": __import__("json").dumps(metadata or {}),
+        "request_id": getattr(request.state, "request_id", None),
+    })
+
+
+@router.get("/overview")
+async def platform_overview(
+    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    result = (await db.execute(text("""
+        select
+          (select count(*) from public.profiles) as users,
+          (select count(*) from public.workspaces) as workspaces,
+          (select count(*) from public.workspace_members where status='active') as active_memberships,
+          (select count(*) from public.video_projects where status <> 'deleted') as projects,
+          (select count(*) from public.audit_logs where created_at >= now()-interval '24 hours') as audit_events_24h,
+          (select count(*) from public.production_runs where status in ('planning','scripting','storyboarding','queued','running')) as active_creative_runs
+    """))).mappings().one()
+    return {"data": dict(result)}
+
+
+@router.get("/users")
+async def platform_users(
+    claims: AuthenticatedClaims,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=25, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=160),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    auth_page = await supabase_auth.list_users(page=page, per_page=per_page)
+    auth_users = auth_page.get("users", [])
+    ids = [str(item.get("id")) for item in auth_users if item.get("id")]
+    profiles: dict[str, Any] = {}
+    if ids:
+        rows = (await db.execute(text("""
+            select id,display_name,avatar_path,bio,locale,timezone,created_at,updated_at
+            from public.profiles where id = any(cast(:ids as uuid[]))
+        """), {"ids": ids})).mappings().all()
+        profiles = {str(row["id"]): dict(row) for row in rows}
+    data = []
+    for user in auth_users:
+        user_id = str(user.get("id", ""))
+        profile = profiles.get(user_id, {})
+        item = {
+            "id": user_id, "email": user.get("email"),
+            "email_confirmed_at": user.get("email_confirmed_at"),
+            "last_sign_in_at": user.get("last_sign_in_at"),
+            "created_at": user.get("created_at"),
+            "banned_until": user.get("banned_until"),
+            "profile": profile,
+        }
+        if q and q.casefold() not in " ".join([
+            str(item.get("email") or ""), str(profile.get("display_name") or ""), user_id
+        ]).casefold():
+            continue
+        data.append(item)
+    return {"data": data, "page": {"number": page, "size": per_page, "has_more": len(auth_users) == per_page}}
+
+
+class AccountStatusUpdate(BaseModel):
+    banned: bool
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.patch("/users/{user_id}/status")
+async def update_platform_user_status(
+    user_id: UUID,
+    payload: AccountStatusUpdate,
+    request: Request,
+    claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    if user_id == actor:
+        raise HTTPException(status_code=409, detail="Administrators cannot change their own account status")
+    result = await supabase_auth.set_user_ban(str(user_id), banned=payload.banned)
+    await _audit(
+        db, request, actor, "platform.user.banned" if payload.banned else "platform.user.unbanned",
+        "user", user_id, {"reason": payload.reason},
+    )
+    await db.commit()
+    user = result.get("user", result)
+    return {"data": {
+        "id": str(user_id), "banned_until": user.get("banned_until"),
+        "status": "banned" if payload.banned else "active",
+    }}
+
+
+@router.get("/workspaces")
+async def platform_workspaces(
+    claims: AuthenticatedClaims,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=25, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=160),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select w.id,w.name,w.slug,w.owner_user_id,w.created_at,w.updated_at,
+          (select count(*) from public.workspace_members m where m.workspace_id=w.id and m.status='active') as active_members,
+          (select count(*) from public.video_projects p where p.workspace_id=w.id and p.status <> 'deleted') as projects
+        from public.workspaces w
+        where (:q is null or w.name ilike :pattern or w.slug ilike :pattern)
+        order by w.updated_at desc
+        limit :limit offset :offset
+    """), {
+        "q": q, "pattern": f"%{q}%" if q else None,
+        "limit": per_page, "offset": (page - 1) * per_page,
+    })).mappings().all()
+    total = await db.scalar(text("""
+        select count(*) from public.workspaces
+        where (:q is null or name ilike :pattern or slug ilike :pattern)
+    """), {"q": q, "pattern": f"%{q}%" if q else None})
+    return {"data": [dict(row) for row in rows], "page": {"number": page, "size": per_page, "total": total}}
+
+
+@router.get("/projects")
+async def platform_projects(
+    claims: AuthenticatedClaims,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=25, ge=1, le=100),
+    q: str | None = Query(default=None, max_length=160),
+    status: str | None = Query(default=None, max_length=32),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select p.id,p.workspace_id,p.name,p.description,p.production_mode,p.status,
+               p.default_language,p.created_at,p.updated_at,w.name as workspace_name
+        from public.video_projects p join public.workspaces w on w.id=p.workspace_id
+        where (:q is null or p.name ilike :pattern)
+          and (:status is null or p.status=:status)
+        order by p.updated_at desc limit :limit offset :offset
+    """), {
+        "q": q, "pattern": f"%{q}%" if q else None, "status": status,
+        "limit": per_page, "offset": (page - 1) * per_page,
+    })).mappings().all()
+    total = await db.scalar(text("""
+        select count(*) from public.video_projects
+        where (:q is null or name ilike :pattern) and (:status is null or status=:status)
+    """), {"q": q, "pattern": f"%{q}%" if q else None, "status": status})
+    return {"data": [dict(row) for row in rows], "page": {"number": page, "size": per_page, "total": total}}
+
+
+@router.get("/audit-logs")
+async def platform_audit_logs(
+    claims: AuthenticatedClaims,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=1, le=100),
+    action: str | None = Query(default=None, max_length=120),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select id,actor_user_id,workspace_id,action,resource_type,resource_id,
+               metadata,request_id,created_at
+        from public.audit_logs
+        where (:action is null or action=:action)
+        order by created_at desc limit :limit offset :offset
+    """), {
+        "action": action, "limit": per_page, "offset": (page - 1) * per_page,
+    })).mappings().all()
+    total = await db.scalar(text("""
+        select count(*) from public.audit_logs where (:action is null or action=:action)
+    """), {"action": action})
+    return {"data": [dict(row) for row in rows], "page": {"number": page, "size": per_page, "total": total}}

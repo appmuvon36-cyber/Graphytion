@@ -1099,12 +1099,11 @@ async def _set_project_status(
         (
             await db.execute(
                 text("""
-      select p.workspace_id, m.role
-        from public.video_projects p
-        join public.workspace_members m on m.workspace_id=p.workspace_id
-      where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
-    """),
-                {"project": project_id, "actor": actor},
+                    select workspace_id,status from public.video_projects
+                    where id=:project and status<>'deleted'
+                    for update
+                """),
+                {"project": project_id},
             )
         )
         .mappings()
@@ -1112,16 +1111,19 @@ async def _set_project_status(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
-    if row["role"] not in ("owner", "admin", "editor"):
-        raise HTTPException(status_code=403, detail="Project lifecycle permission required")
+    await require_permission(db, actor, row["workspace_id"], "project.update")
+    if new_status == "archived" and row["status"] not in ("draft", "active"):
+        raise HTTPException(status_code=409, detail="Only draft or active projects can be archived")
+    if new_status == "draft" and row["status"] != "archived":
+        raise HTTPException(status_code=409, detail="Only archived projects can be restored")
     result = (
         (
             await db.execute(
                 text("""
-            update public.video_projects set status=:status, updated_at=now()
-            where id=:id returning *
-        """),
-                {"status": new_status, "id": project_id},
+                    update public.video_projects set status=:status, updated_at=now()
+                    where id=:id and status=:current_status returning *
+                """),
+                {"status": new_status, "id": project_id, "current_status": row["status"]},
             )
         )
         .mappings()
@@ -1145,25 +1147,15 @@ async def delete_project(
     project_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
 ):
     actor = uid(claims)
-    row = (
-        (
-            await db.execute(
-                text("""
-      select p.workspace_id, m.role
-        from public.video_projects p
-        join public.workspace_members m on m.workspace_id=p.workspace_id
-      where p.id=:project and m.user_id=:actor and m.status='active' and p.status<>'deleted'
-    """),
-                {"project": project_id, "actor": actor},
-            )
+    workspace_id = (
+        await db.execute(
+            text("select workspace_id from public.video_projects where id=:project and status<>'deleted'"),
+            {"project": project_id},
         )
-        .mappings()
-        .first()
-    )
-    if not row:
+    ).scalar_one_or_none()
+    if workspace_id is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if row["role"] not in ("owner", "admin"):
-        raise HTTPException(status_code=403, detail="Project delete permission required")
+    await require_permission(db, actor, workspace_id, "project.delete")
     await db.execute(
         text("""
             update public.video_projects set status='deleted', updated_at=now()
@@ -1172,7 +1164,7 @@ async def delete_project(
         {"id": project_id},
     )
     await audit(
-        db, actor, row["workspace_id"], "project.deleted", "video_project", project_id, request
+        db, actor, workspace_id, "project.deleted", "video_project", project_id, request
     )
     await db.commit()
     return None

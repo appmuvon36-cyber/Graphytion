@@ -23,7 +23,7 @@ class RenderSettingsInput(BaseModel):
     max_concurrent_jobs: int = Field(ge=1, le=8)
     lease_seconds: int = Field(ge=60, le=3600)
     max_attempts: int = Field(ge=1, le=10)
-    max_output_bytes: int = Field(ge=1048576, le=2147483648)
+    max_output_bytes: int = Field(ge=1048576, le=536870912)
 
 
 def _actor(claims: dict[str, Any]) -> UUID:

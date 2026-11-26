@@ -174,3 +174,23 @@ export type VideoScriptApi = z.infer<typeof VideoScriptApiSchema>;
 export type StoryboardApi = z.infer<typeof StoryboardApiSchema>;
 export type StoryboardSceneApi = z.infer<typeof StoryboardSceneApiSchema>;
 export type ArtifactVersionApi = z.infer<typeof ArtifactVersionApiSchema>;
+
+export const ProductionRunApiSchema = z.object({
+  id: UUID, project_id: UUID, workspace_id: UUID, requested_by: UUID,
+  status: z.enum(['queued','planning','scripting','storyboarding','ready_for_review','failed','cancel_requested','cancelled','completed']),
+  current_stage: z.string().nullable(), progress_percent: z.number(),
+  error_code: z.string().nullable(), error_message_safe: z.string().nullable(),
+  started_at: Timestamp.nullable(), completed_at: Timestamp.nullable(),
+  created_at: Timestamp, updated_at: Timestamp,
+}).strict();
+export const RenderJobApiSchema = z.object({
+  id: UUID, project_id: UUID, workspace_id: UUID, requested_by: UUID,
+  status: z.enum(['queued','rendering','completed','failed','cancel_requested','cancelled']),
+  composition_id: z.string(), composition_version: z.string(), timeline_hash: z.string().length(64),
+  progress_percent: z.number(), output_bucket: z.string().nullable(), output_path: z.string().nullable(),
+  output_size_bytes: z.number().int().nullable(), output_sha256: z.string().nullable(),
+  error_code: z.string().nullable(), error_message_safe: z.string().nullable(),
+  started_at: Timestamp.nullable(), completed_at: Timestamp.nullable(), created_at: Timestamp,
+}).strict();
+export type ProductionRunApi = z.infer<typeof ProductionRunApiSchema>;
+export type RenderJobApi = z.infer<typeof RenderJobApiSchema>;

@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -512,7 +512,7 @@ async def execute_creative_stage(
     payload: CreativeRunRequest,
     request: Request,
     claims: AuthenticatedClaims,
-    idempotency_key: str | None = None,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
@@ -531,11 +531,11 @@ async def execute_creative_stage(
         insert into public.production_runs(
             project_id,workspace_id,requested_by,status,current_stage,input_snapshot,
             config_snapshot,idempotency_key
-        ) values (:project,:workspace,:actor,'queued',:stage,cast(:input as jsonb),'{}'::jsonb,:key)
+        ) values (:project,:workspace,:actor,:status,:stage,cast(:input as jsonb),'{}'::jsonb,:key)
         on conflict (workspace_id,idempotency_key) do nothing returning *
     """), {
         "project": project_id, "workspace": workspace_id, "actor": actor,
-        "stage": stage, "input": json.dumps(input_snapshot, ensure_ascii=False),
+        "stage": stage, "status": stage_status, "input": json.dumps(input_snapshot, ensure_ascii=False),
         "key": idempotency_key,
     })).mappings().first()
     if run is None:
@@ -623,7 +623,7 @@ async def execute_creative_stage(
                     cast(:body as jsonb),:cta,:duration,:words,'scriptwriter',:actor) returning *
             """), {
                 "workspace": workspace_id, "project": project_id, "brief": payload.brief_id,
-                "version": version, "language": output.model_dump()["title"] and brief["normalized_brief"].get("language","id-ID"),
+                "version": version, "language": brief["normalized_brief"].get("language", "id-ID"),
                 "title": output.title, "hook": output.hook,
                 "body": json.dumps({"narration_segments":[x.model_dump() for x in output.narration_segments]}, ensure_ascii=False),
                 "cta": output.cta, "duration": output.estimated_duration_ms,

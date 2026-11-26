@@ -1,1 +1,25 @@
-{"name":"@graphytion/remotion-studio","private":true,"version":"0.1.0","scripts":{"dev":"remotion studio src/index.ts","build":"remotion bundle src/index.ts","lint":"tsc --noEmit","typecheck":"tsc --noEmit"},"dependencies":{"@graphytion/contracts":"workspace:*","@graphytion/motion-components":"workspace:*","@graphytion/composition-runtime":"workspace:*","@remotion/player":"4.0.409","remotion":"4.0.409","react":"19.1.1","react-dom":"19.1.1"},"devDependencies":{"@types/react":"19.1.16","typescript":"5.9.3"}}
+{
+  "name": "@graphytion/remotion-studio",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "build": "remotion bundle src/index.ts",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@graphytion/contracts": "workspace:*",
+    "@graphytion/motion-components": "workspace:*",
+    "@graphytion/composition-runtime": "workspace:*",
+    "@remotion/player": "4.0.409",
+    "remotion": "4.0.409",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.409",
+    "@types/react": "19.1.16",
+    "typescript": "5.9.3"
+  }
+}

@@ -719,7 +719,6 @@ async def update_member_role(
         )
     if payload.role == "owner":
         raise HTTPException(status_code=400, detail="Use the ownership transfer workflow")
-    actor_role = await require_workspace(db, actor, workspace_id)
     if (target["role"] == "admin" or payload.role == "admin") and actor_role != "owner":
         raise HTTPException(
             status_code=403, detail="Only the owner can grant or change administrator access"
@@ -750,7 +749,7 @@ async def remove_workspace_member(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    actor_role = await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    actor_role = await require_permission(db, actor, workspace_id, "member.manage")
     target = (
         (
             await db.execute(
@@ -791,7 +790,7 @@ async def cancel_invitation(
     db: AsyncSession = Db,
 ):
     actor = uid(claims)
-    await require_workspace(db, actor, workspace_id, {"owner", "admin"})
+    await require_permission(db, actor, workspace_id, "member.manage")
     result = await db.execute(
         text("""
       update public.workspace_invitations set cancelled_at=now()
@@ -886,7 +885,7 @@ async def leave_workspace(
     workspace_id: UUID, request: Request, claims: AuthenticatedClaims, db: AsyncSession = Db
 ):
     actor = uid(claims)
-    role = await require_workspace(db, actor, workspace_id)
+    role = await require_permission(db, actor, workspace_id, "workspace.read")
     if role == "owner":
         raise HTTPException(status_code=409, detail="Transfer ownership before leaving")
     await db.execute(

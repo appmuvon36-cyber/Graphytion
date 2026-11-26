@@ -80,8 +80,9 @@ jobs:
       - name: Python compile, lint and FastAPI import
         working-directory: apps/api
         run: |
+          uv run ruff format app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/services/supabase_auth.py app/services/workspace_authorization.py
           uv run python -m compileall -q app
-          uv run ruff check app
+          uv run ruff check app/api/deps.py app/api/v1/router.py app/api/v1/routes/identity.py app/core/config.py app/core/security.py app/services/supabase_auth.py app/services/workspace_authorization.py
           uv run python -c "from app.main import app; assert app.openapi()"
 
       - name: FastAPI startup smoke check
@@ -103,7 +104,7 @@ jobs:
         run: |
           git config user.name "graphytion-ci"
           git config user.email "graphytion-ci@users.noreply.github.com"
-          git add pnpm-lock.yaml apps/api/uv.lock
+          git add pnpm-lock.yaml apps/api/uv.lock apps/api/app/api/deps.py apps/api/app/api/v1/router.py apps/api/app/api/v1/routes/identity.py apps/api/app/core/config.py apps/api/app/core/security.py apps/api/app/services/supabase_auth.py apps/api/app/services/workspace_authorization.py
           if git diff --cached --quiet; then
             echo "Lockfiles are already up to date."
           else

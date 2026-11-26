@@ -91,6 +91,8 @@ jobs:
 
       - name: Python compile, lint and FastAPI import
         working-directory: apps/api
+        env:
+          APP_ENV: local
         run: |
           uv run ruff format app/api/deps.py app/api/v1/router.py app/api/v1/routes/health.py app/api/v1/routes/identity.py app/core/config.py app/core/database.py app/core/redis.py app/core/security.py app/core/errors.py app/main.py app/services/supabase_auth.py app/services/supabase_storage.py app/services/workspace_authorization.py app/services/idempotency.py app/services/invitation_email.py app/api/v1/routes/webhooks.py
           uv run python -m compileall -q app
@@ -110,6 +112,8 @@ jobs:
       - name: FastAPI startup smoke check
         working-directory: apps/api
         shell: bash
+        env:
+          APP_ENV: local
         run: |
           set +e
           timeout 12s uv run uvicorn app.main:app --host 127.0.0.1 --port 8765

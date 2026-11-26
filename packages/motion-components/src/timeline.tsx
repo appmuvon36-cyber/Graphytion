@@ -46,9 +46,11 @@ export const TimelineComposition:React.FC<TimelineCompositionProps>=({snapshot,r
  const tracks=[...snapshot.tracks].filter(t=>t.visible).sort((a,b)=>a.zIndex-b.zIndex);
  return <AbsoluteFill style={{background:snapshot.background??'#101828'}}>{tracks.map(track=><React.Fragment key={track.id}>{snapshot.clips.filter(c=>c.trackId===track.id).sort((a,b)=>a.startFrame-b.startFrame).map(clip=>{
   const assetId=clip.assetId??(typeof clip.props.assetId==='string'?clip.props.assetId:undefined);const assetUrl=assetId?resolvedAssets[assetId]:undefined;
-  if(assetId&&!assetUrl)throw new Error(`Composition asset ${assetId} was not resolved`);
   const fontAssetId=typeof clip.props.fontAssetId==='string'?clip.props.fontAssetId:undefined;const fontUrl=fontAssetId?resolvedAssets[fontAssetId]:undefined;
-  if(fontAssetId&&!fontUrl)throw new Error(`Font asset ${fontAssetId} was not resolved`);
+  if((assetId&&!assetUrl)||(fontAssetId&&!fontUrl)){
+   const missing=assetId&&!assetUrl?assetId:fontAssetId!;
+   return <Sequence key={clip.id} from={clip.startFrame} durationInFrames={clip.durationFrames}><AbsoluteFill style={{background:'#fff4e5',border:'2px dashed #d97706',color:'#92400e',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'Arial,sans-serif',fontSize:24,padding:24,textAlign:'center'}}><div><strong>Media asset unavailable</strong><div style={{fontSize:14,marginTop:8,overflowWrap:'anywhere'}}>{missing}</div></div></AbsoluteFill></Sequence>;
+  }
   return <Sequence key={clip.id} from={clip.startFrame} durationInFrames={clip.durationFrames}><ClipFrame clip={clip} track={track} assetUrl={assetUrl} fontUrl={fontUrl}/></Sequence>;
  })}</React.Fragment>)}</AbsoluteFill>;
 };

@@ -11,7 +11,10 @@ class SupabaseStorage:
         return {"Authorization": f"Bearer {key}", "apikey": key}
 
     async def upload(self, *, bucket: str, object_path: str, content: bytes, content_type: str) -> None:
-        url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}/{quote(object_path, safe='/')}"
+        base_url = settings.supabase_url.rstrip("/")
+        bucket_segment = quote(bucket, safe="")
+        object_segment = quote(object_path, safe="/")
+        url = f"{base_url}/storage/v1/object/{bucket_segment}/{object_segment}"
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(url, headers={**self._headers(), "Content-Type": content_type, "x-upsert": "false"}, content=content)
             response.raise_for_status()
@@ -19,7 +22,10 @@ class SupabaseStorage:
     async def create_signed_url(self, *, bucket: str, object_path: str, expires_in: int = 300) -> str:
         if not 30 <= expires_in <= 3600:
             raise ValueError("Signed URL expiry must be between 30 and 3600 seconds")
-        url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/sign/{quote(bucket, safe='')}/{quote(object_path, safe='/')}"
+        base_url = settings.supabase_url.rstrip("/")
+        bucket_segment = quote(bucket, safe="")
+        object_segment = quote(object_path, safe="/")
+        url = f"{base_url}/storage/v1/object/sign/{bucket_segment}/{object_segment}"
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(url, headers=self._headers(), json={"expiresIn": expires_in})
             response.raise_for_status()

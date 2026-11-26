@@ -798,7 +798,7 @@ async def _process_creative_run(
             })
         await db.execute(text("""
             update public.agent_tasks set status='succeeded',output_artifact_id=:artifact,
-                output_payload=cast(:output as jsonb),completed_at=now(),lease_expires_at=null
+                output_payload=cast(:output as jsonb),completed_at=now(),lease_expires_at=null,worker_id=null
             where id=:task
         """), {
             "artifact": artifact_id, "output": json.dumps({"provenance": provenance, "artifact_id": str(artifact_id)}),
@@ -845,7 +845,7 @@ async def _process_creative_run(
         if retryable:
             await db.execute(text("""
                 update public.agent_tasks set status='retry_wait',error_code=:code,
-                    error_detail_internal=:detail,lease_expires_at=null
+                    error_detail_internal=:detail,lease_expires_at=null,worker_id=null
                 where id=:task
             """), {"code": safe_code, "detail": str(exc)[:1000], "task": task})
             await db.execute(text("""
@@ -862,7 +862,7 @@ async def _process_creative_run(
             raise
         await db.execute(text("""
             update public.agent_tasks set status='failed',error_code=:code,
-                error_detail_internal=:detail,completed_at=now(),lease_expires_at=null
+                error_detail_internal=:detail,completed_at=now(),lease_expires_at=null,worker_id=null
             where id=:task
         """), {"code": safe_code, "detail": str(exc)[:1000], "task": task})
         await db.execute(text("""

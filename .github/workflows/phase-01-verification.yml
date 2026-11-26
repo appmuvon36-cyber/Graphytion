@@ -1,0 +1,112 @@
+name: Phase 01 and Phase 02 Verification
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: graphytion-main-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+
+      - name: Activate pnpm 10.12.1
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.12.1 --activate
+          pnpm --version
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.8"
+          enable-cache: true
+          cache-dependency-glob: apps/api/pyproject.toml
+
+      - name: Resolve and generate real lockfiles
+        run: |
+          pnpm install --lockfile-only --ignore-scripts
+          cd apps/api
+          uv lock --python 3.12
+
+      - name: Frozen dependency installation
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          cd apps/api
+          uv sync --locked --extra dev
+
+      - name: TypeScript workspace typecheck
+        run: pnpm typecheck
+
+      - name: Next.js customer build
+        run: pnpm --filter @graphytion/web build
+
+      - name: Next.js admin build
+        run: pnpm --filter @graphytion/admin build
+
+      - name: Remotion Studio typecheck and bundle
+        run: |
+          pnpm --filter @graphytion/remotion-studio typecheck
+          pnpm --filter @graphytion/remotion-studio build
+
+      - name: Shared contracts and API client checks
+        run: |
+          pnpm --filter @graphytion/contracts typecheck
+          pnpm --filter @graphytion/api-client typecheck
+
+      - name: Python compile, lint and FastAPI import
+        working-directory: apps/api
+        run: |
+          uv run python -m compileall -q app
+          uv run ruff check app
+          uv run python -c "from app.main import app; assert app.openapi()"
+
+      - name: FastAPI startup smoke check
+        working-directory: apps/api
+        shell: bash
+        run: |
+          set +e
+          timeout 12s uv run uvicorn app.main:app --host 127.0.0.1 --port 8765
+          result=$?
+          if [ "$result" -ne 124 ]; then
+            echo "FastAPI exited before the startup smoke-check timeout (exit=$result)"
+            exit 1
+          fi
+
+      - name: Commit resolved lockfiles
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "graphytion-ci"
+          git config user.email "graphytion-ci@users.noreply.github.com"
+          git add pnpm-lock.yaml apps/api/uv.lock
+          if git diff --cached --quiet; then
+            echo "Lockfiles are already up to date."
+          else
+            git commit -m "chore(deps): generate reproducible workspace lockfiles"
+            git push origin HEAD:main
+          fi

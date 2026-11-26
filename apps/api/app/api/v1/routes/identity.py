@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
 import hmac
 import json
 import secrets
+import time
+from collections import OrderedDict, deque
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID
@@ -19,7 +22,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims
 from app.core.config import settings
 from app.core.database import get_db_session, set_rls_subject
-from app.core.redis import redis_client
+_AUTH_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_AUTH_RATE_LIMIT_MAX_REQUESTS = 10
+_AUTH_RATE_LIMIT_MAX_BUCKETS = 10_000
+_AUTH_RATE_LIMIT_LOCK = asyncio.Lock()
+_AUTH_RATE_LIMIT_BUCKETS: OrderedDict[str, deque[float]] = OrderedDict()
+
+
 from app.services.idempotency import (
     complete_idempotency,
     reserve_idempotency,
@@ -65,22 +74,25 @@ async def auth_rate_limit(request: Request) -> None:
         if request.client
         else "unknown"
     )
-    key = f"graphytion:ratelimit:auth:{client_ip}:{request.url.path}"
-    try:
-        count = await redis_client.incr(key)
-        if count == 1:
-            await redis_client.expire(key, 60)
-        if count > 10:
+    key = f"auth:{client_ip}:{request.url.path}"
+    now = time.monotonic()
+
+    # A bounded process-local sliding window avoids a mandatory queue/cache
+    # service. Keep the API at one replica until shared DB-backed limiting is
+    # introduced; worker queues themselves remain PostgreSQL-backed.
+    async with _AUTH_RATE_LIMIT_LOCK:
+        bucket = _AUTH_RATE_LIMIT_BUCKETS.setdefault(key, deque())
+        _AUTH_RATE_LIMIT_BUCKETS.move_to_end(key)
+        while bucket and now - bucket[0] >= _AUTH_RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        if len(bucket) >= _AUTH_RATE_LIMIT_MAX_REQUESTS:
             raise HTTPException(
                 status_code=429,
                 detail="Too many authentication requests; retry later",
             )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503, detail="Authentication rate limiter unavailable"
-        ) from exc
+        bucket.append(now)
+        while len(_AUTH_RATE_LIMIT_BUCKETS) > _AUTH_RATE_LIMIT_MAX_BUCKETS:
+            _AUTH_RATE_LIMIT_BUCKETS.popitem(last=False)
 
 
 class AuthSignup(BaseModel):

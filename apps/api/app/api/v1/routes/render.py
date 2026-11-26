@@ -288,7 +288,7 @@ async def complete_render_artifact(
     object_path = f"{row['workspace_id']}/{row['project_id']}/{render_job_id}/output.mp4"
     try:
         await SupabaseStorage().upload(
-            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type="video/mp4"
+            bucket=RENDER_BUCKET, object_path=object_path, content=content, content_type="video/mp4", upsert=True
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Render artifact storage upload failed") from exc

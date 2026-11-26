@@ -249,7 +249,7 @@ do $
 begin
   if exists (
     select 1 from storage.buckets
-    where id='avatars' and (public or file_size_limit > 5242880
+    where id='avatars' and (public or file_size_limit is distinct from 5242880
       or allowed_mime_types is distinct from array['image/png','image/jpeg','image/webp'])
   ) then
     raise exception 'Existing avatars bucket configuration is incompatible; reconcile it before migration';

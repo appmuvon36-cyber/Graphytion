@@ -127,17 +127,27 @@ class Settings(BaseSettings):
             raise ValueError("APP_PUBLIC_URL origin must be included in CORS_ORIGINS")
 
         db_url = urlparse(self.database_url_value)
+        direct_database = (
+            db_url.hostname == "db.xtjwmezfzexvupbfsdqt.supabase.co"
+            and db_url.username == "graphytion_api"
+            and db_url.port in (None, 5432)
+        )
+        pooler_database = (
+            bool(db_url.hostname)
+            and db_url.hostname.endswith(".pooler.supabase.com")
+            and db_url.username == "graphytion_api.xtjwmezfzexvupbfsdqt"
+            and db_url.port in (5432, 6543)
+        )
         if (
             db_url.scheme != "postgresql+asyncpg"
-            or db_url.hostname != "db.xtjwmezfzexvupbfsdqt.supabase.co"
-            or db_url.username != "graphytion_api"
+            or not (direct_database or pooler_database)
             or not db_url.password
             or "CHANGE_ME" in self.database_url_value
         ):
             raise ValueError(
-                "DATABASE_URL must use the graphytion_api login at "
-                "db.xtjwmezfzexvupbfsdqt.supabase.co with a real password; "
-                "do not use postgres or an administrative login"
+                "DATABASE_URL must use the dedicated graphytion_api login "
+                "(direct Supabase host or the project-scoped Supavisor pooler) "
+                "with a real password; administrative logins are forbidden"
             )
         database_query = parse_qs(db_url.query)
         if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != [

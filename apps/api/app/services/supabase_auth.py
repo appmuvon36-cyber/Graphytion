@@ -26,10 +26,15 @@ class SupabaseAuth:
         headers = {"apikey": self.api_key, "Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
-            response = await client.request(
-                method, f"{self.base_url}{path}", headers=headers, json=payload
-            )
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(12.0)) as client:
+                response = await client.request(
+                    method, f"{self.base_url}{path}", headers=headers, json=payload
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Supabase Auth request timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=503, detail="Supabase Auth is temporarily unavailable") from exc
         try:
             body = response.json()
         except ValueError:

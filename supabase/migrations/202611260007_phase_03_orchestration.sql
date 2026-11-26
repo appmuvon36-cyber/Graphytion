@@ -88,19 +88,19 @@ alter table public.workflow_events enable row level security;
 drop policy if exists production_runs_api_tenant on public.production_runs;
 create policy production_runs_api_tenant on public.production_runs
   for all to graphytion_api
-  using (public.graphytion_is_workspace_member(workspace_id))
-  with check (public.graphytion_is_workspace_member(workspace_id));
+  using (private.graphytion_is_workspace_member(workspace_id))
+  with check (private.graphytion_is_workspace_member(workspace_id));
 
 drop policy if exists agent_tasks_api_tenant on public.agent_tasks;
 create policy agent_tasks_api_tenant on public.agent_tasks
   for all to graphytion_api
   using (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ))
   with check (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ));
 
 drop policy if exists workflow_checkpoints_api_tenant on public.workflow_checkpoints;
@@ -108,11 +108,11 @@ create policy workflow_checkpoints_api_tenant on public.workflow_checkpoints
   for all to graphytion_api
   using (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ))
   with check (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ));
 
 drop policy if exists workflow_events_api_tenant on public.workflow_events;
@@ -120,11 +120,11 @@ create policy workflow_events_api_tenant on public.workflow_events
   for all to graphytion_api
   using (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ))
   with check (exists (
     select 1 from public.production_runs r
-    where r.id=production_run_id and public.graphytion_is_workspace_member(r.workspace_id)
+    where r.id=production_run_id and private.graphytion_is_workspace_member(r.workspace_id)
   ));
 
 revoke all on public.production_runs, public.agent_tasks,

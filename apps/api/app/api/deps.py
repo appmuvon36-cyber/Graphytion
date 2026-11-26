@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
@@ -12,7 +13,7 @@ async def current_claims(authorization: Annotated[str | None, Header()] = None) 
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
         )
     token = authorization.removeprefix("Bearer ").strip()
-    claims = verify_access_token(token)
+    claims = await asyncio.to_thread(verify_access_token, token)
     # Check the live Supabase session as well as JWT claims.
     # This also rejects sessions revoked after token issuance.
     user = await supabase_auth.verify_user(token)

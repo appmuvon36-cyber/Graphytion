@@ -126,8 +126,11 @@ async function refreshTokens(request: NextRequest): Promise<TokenPayload | null>
 }
 
 function safeAuthResponse(tokens: TokenPayload, statusCode: number) {
+  const user = tokens.user?.id
+    ? { id: tokens.user.id, ...(tokens.user.email ? { email: tokens.user.email } : {}) }
+    : null;
   return NextResponse.json(
-    { authenticated: Boolean(tokens.access_token && tokens.refresh_token), user: tokens.user ?? null },
+    { authenticated: Boolean(tokens.access_token && tokens.refresh_token), user },
     { status: statusCode, headers: { 'Cache-Control': 'no-store' } },
   );
 }
@@ -265,7 +268,10 @@ export async function handleAuthCallback(request: NextRequest): Promise<NextResp
   const type = request.nextUrl.searchParams.get('type') ?? 'signup';
   const recovery = type === 'recovery';
   if (!tokenHash) {
-    return NextResponse.redirect(new URL('/?auth_error=missing_token', request.nextUrl.origin));
+    const result = NextResponse.redirect(new URL('/?auth_error=missing_token', request.nextUrl.origin));
+    result.headers.set('Cache-Control', 'no-store');
+    result.headers.set('Referrer-Policy', 'no-referrer');
+    return result;
   }
   const response = await upstream(
     '/auth/verify',
@@ -278,12 +284,17 @@ export async function handleAuthCallback(request: NextRequest): Promise<NextResp
     true,
   );
   if (!response.ok) {
-    return NextResponse.redirect(new URL('/?auth_error=verification_failed', request.nextUrl.origin));
+    const result = NextResponse.redirect(new URL('/?auth_error=verification_failed', request.nextUrl.origin));
+    result.headers.set('Cache-Control', 'no-store');
+    result.headers.set('Referrer-Policy', 'no-referrer');
+    return result;
   }
   const tokens = (await response.json()) as TokenPayload;
   const target = new URL('/', request.nextUrl.origin);
   if (recovery) target.searchParams.set('recovery', '1');
   const result = NextResponse.redirect(target);
+  result.headers.set('Cache-Control', 'no-store');
+  result.headers.set('Referrer-Policy', 'no-referrer');
   if (tokens.access_token && tokens.refresh_token) setSessionCookies(result, tokens);
   ensureCsrf(result, request);
   return result;

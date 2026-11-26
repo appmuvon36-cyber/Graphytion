@@ -16,7 +16,7 @@ begin
   where status in ('planning','scripting','storyboarding')
     and lease_expires_at < now()
     and attempt_count >= max_attempts
-  for update;
+  ;
 
   if coalesce(cardinality(v_failed),0) > 0 then
     update public.production_runs set status='failed',
@@ -32,7 +32,7 @@ begin
   select array_agg(id) into v_cancelled
   from public.production_runs
   where status='cancel_requested' and lease_expires_at < now()
-  for update;
+  ;
 
   if coalesce(cardinality(v_cancelled),0) > 0 then
     update public.production_runs set status='cancelled',cancelled_at=now(),
@@ -60,7 +60,7 @@ begin
   from public.render_jobs
   where status='rendering' and lease_expires_at < now()
     and attempt_count >= max_attempts
-  for update;
+  ;
   if coalesce(cardinality(v_failed),0) > 0 then
     update public.render_jobs set status='failed',error_code='MAX_ATTEMPTS_EXCEEDED',
       error_message_safe='Render worker stopped before completing the job',
@@ -71,7 +71,7 @@ begin
   select array_agg(id) into v_cancelled
   from public.render_jobs
   where status='cancel_requested' and lease_expires_at < now()
-  for update;
+  ;
   if coalesce(cardinality(v_cancelled),0) > 0 then
     update public.render_jobs set status='cancelled',completed_at=now(),
       worker_id=null,lease_expires_at=null

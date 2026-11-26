@@ -30,6 +30,11 @@ export const WorkspaceApiSchema = z.object({
   created_at: Timestamp,
   updated_at: Timestamp,
 }).strict();
+export const WorkspacePermissionsApiSchema = z.object({
+  workspace_id: UUID,
+  role: UserRole,
+  permissions: z.array(z.string()),
+}).strict();
 export const WorkspaceMemberApiSchema = z.object({
   id: UUID,
   workspace_id: UUID,
@@ -92,6 +97,7 @@ export const ApiResponseSchema = <T extends z.ZodType>(data:T) => z.object({data
 export const PaginationSchema = z.object({limit:z.number().int().min(1).max(100),cursor:z.string().nullable()}).strict();
 export type ProfileApi = z.infer<typeof ProfileApiSchema>;
 export type WorkspaceApi = z.infer<typeof WorkspaceApiSchema>;
+export type WorkspacePermissionsApi = z.infer<typeof WorkspacePermissionsApiSchema>;
 export type WorkspaceMemberApi = z.infer<typeof WorkspaceMemberApiSchema>;
 export type WorkspaceInvitationApi = z.infer<typeof WorkspaceInvitationApiSchema>;
 export type VideoProjectApi = z.infer<typeof VideoProjectApiSchema>;

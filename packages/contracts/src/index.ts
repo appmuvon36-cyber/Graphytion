@@ -24,6 +24,7 @@ export const WorkspaceApiSchema = z.object({
   name: z.string().min(1).max(120),
   slug: z.string().min(2).max(64),
   owner_user_id: UUID,
+  plan_id: UUID.nullable().optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
   role: UserRole.optional(),
   created_at: Timestamp,
@@ -63,6 +64,8 @@ export const VideoProjectApiSchema = z.object({
   fps: z.number().int().min(1).max(120),
   settings: z.record(z.string(), z.unknown()).optional(),
   settings_version: z.number().int().positive().optional(),
+  brand_kit_id: UUID.nullable().optional(),
+  active_run_id: UUID.nullable().optional(),
   created_at: Timestamp,
   updated_at: Timestamp,
 }).strict();

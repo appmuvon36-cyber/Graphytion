@@ -9,7 +9,7 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  if(clip.componentVersion!==definition.version)throw new Error(`Unsupported schema version for ${clip.componentKey}`);
  if(!definition.validate(clip.props))throw new Error(`Invalid props for allowlisted component ${clip.componentKey}`);
  let opacity=1,transform='none',clipPath='inset(0 0 0 0)';
- const enter=clip.transitionIn;
+ const easingFor=(value?:string)=>value==='linear'?Easing.linear:value==='ease-in'?Easing.in(Easing.ease):value==='ease-out'?Easing.out(Easing.ease):Easing.inOut(Easing.ease);\n const enter=clip.transitionIn;
  if(enter&&enter.durationFrames>0&&frame<enter.durationFrames){
   const p=interpolate(frame,[0,enter.durationFrames],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
   if(enter.type==='fade'||enter.type==='dissolve')opacity*=p;
@@ -36,7 +36,7 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  const scale=keyValue('scale',1),translateX=keyValue('translateX',0),translateY=keyValue('translateY',0),rotate=keyValue('rotate',0);
  transform=`translate(${translateX}px,${translateY}px) rotate(${rotate}deg) scale(${scale}) ${transform}`;
  const clipVolume=Math.max(0,Math.min(1,Number(clip.props.volume??1)*track.volume*keyValue('volume',1)));
- const props={...clip.props,durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
+ const props={...clip.props,...(clip.crop?{crop:clip.crop}:{}),durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
  const Component=definition.component;
  return <AbsoluteFill style={{opacity,transform,clipPath}}><Component {...props}/></AbsoluteFill>;
 };

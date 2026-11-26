@@ -10,9 +10,25 @@ const TitleCard:React.FC<Props>=({title,subtitle,background='#102F60'})=>{
  const f=useCurrentFrame();const opacity=interpolate(f,[0,16],[0,1],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});const y=interpolate(f,[0,18],[28,0],{extrapolateLeft:'clamp',extrapolateRight:'clamp'});
  return <AbsoluteFill style={{background,color:'#fff',alignItems:'center',justifyContent:'center',padding:96,fontFamily:'Arial,sans-serif',textAlign:'center'}}><div style={{opacity,transform:`translateY(${y}px)`,maxWidth:1500}}><div style={{fontSize:72,fontWeight:750,lineHeight:1.08}}>{title}</div>{subtitle&&<div style={{fontSize:30,lineHeight:1.4,opacity:.84,marginTop:28}}>{subtitle}</div>}</div></AbsoluteFill>;
 };
-const ImageLayer:React.FC<Props>=({assetUrl,fit='contain',position='center',opacity=1,mask='none'})=><AbsoluteFill style={{opacity,overflow:'hidden',borderRadius:mask==='circle'?'50%':mask==='rounded'?24:0}}><Img src={assetUrl} style={{width:'100%',height:'100%',objectFit:fit,objectPosition:position}}/></AbsoluteFill>;
-const VideoLayer:React.FC<Props>=({assetUrl,fit='cover',position='center',volume=1,playbackRate=1,trimStartFrames=0,muted=false})=>{
- const f=useCurrentFrame();return <AbsoluteFill><OffthreadVideo src={assetUrl} startFrom={trimStartFrames} playbackRate={playbackRate} muted={muted} volume={muted?0:Math.max(0,Math.min(1,volume))} style={{width:'100%',height:'100%',objectFit:fit,objectPosition:position}}/></AbsoluteFill>;
+type CropProps={fitMode?:'cover'|'contain'|'fill'|'custom';focalX?:number;focalY?:number;scale?:number;region?:{x:number;y:number;width:number;height:number}};
+function cropPresentation(crop:CropProps|undefined,fit:'cover'|'contain'|'fill',position:string){
+ if(!crop)return {objectFit:fit as any,objectPosition:position,transform:'none'};
+ const region=crop.region;
+ const focalX=region?region.x+crop.focalX!*region.width:crop.focalX??.5;
+ const focalY=region?region.y+crop.focalY!*region.height:crop.focalY??.5;
+ const regionScale=region?Math.max(1/region.width,1/region.height):1;
+ return {objectFit:(crop.fitMode==='custom'?'cover':crop.fitMode??fit) as any,
+  objectPosition:`${Math.max(0,Math.min(1,focalX))*100}% ${Math.max(0,Math.min(1,focalY))*100}%`,
+  transform:`scale(${Math.max(.01,Math.min(10,(crop.scale??1)*regionScale))})`,
+  transformOrigin:`${focalX*100}% ${focalY*100}%`};
+}
+const ImageLayer:React.FC<Props>=({assetUrl,fit='contain',position='center',opacity=1,mask='none',crop})=>{
+ const geometry=cropPresentation(crop,fit,position);
+ return <AbsoluteFill style={{opacity,overflow:'hidden',borderRadius:mask==='circle'?'50%':mask==='rounded'?24:0}}><Img src={assetUrl} style={{width:'100%',height:'100%',...geometry}}/></AbsoluteFill>;
+};
+const VideoLayer:React.FC<Props>=({assetUrl,fit='cover',position='center',volume=1,playbackRate=1,trimStartFrames=0,muted=false,crop})=>{
+ const geometry=cropPresentation(crop,fit,position);
+ return <AbsoluteFill><OffthreadVideo src={assetUrl} startFrom={trimStartFrames} playbackRate={playbackRate} muted={muted} volume={muted?0:Math.max(0,Math.min(1,volume))} style={{width:'100%',height:'100%',...geometry}}/></AbsoluteFill>;
 };
 const ShapeLayer:React.FC<Props>=({shape='rectangle',fill='#1769C2',stroke='none',strokeWidth=0,radius=0,shadow=false,points=[]})=>{
  const style:React.CSSProperties={width:'100%',height:'100%',background:shape==='rectangle'||shape==='circle'?fill:'transparent',border:strokeWidth? `${strokeWidth}px solid ${stroke}`:'none',borderRadius:shape==='circle'?'50%':radius,boxShadow:shadow?'0 18px 48px rgba(0,0,0,.22)':'none'};

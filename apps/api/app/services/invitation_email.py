@@ -30,7 +30,8 @@ class ResendInvitationEmail:
             and settings.app_public_url.startswith("https://")
         ):
             raise InvitationEmailConfigurationError(
-                "Invitation email requires RESEND_API_KEY, INVITATION_FROM_EMAIL and HTTPS APP_PUBLIC_URL"
+                "Invitation email requires RESEND_API_KEY, INVITATION_FROM_EMAIL "
+                "and HTTPS APP_PUBLIC_URL"
             )
 
     async def send(

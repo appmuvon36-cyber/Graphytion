@@ -34,7 +34,7 @@ The API rejects production startup configuration when a critical setting is abse
 
 Each frontend requires server-only variables:
 
-- `GRAPHYTION_API_URL=https://<api-domain>/api/v1`
+- `GRAPHYTION_API_URL=http://graphytionapi.railway.internal:8000/api/v1` when Web and API share the Railway private network. The BFF accepts HTTP only for the `.railway.internal` host; public API integrations and webhooks must use the HTTPS API domain.
 - `GRAPHYTION_BFF_SHARED_SECRET` — exactly the same secret as FastAPI `BFF_SHARED_SECRET`.
 - `APP_PUBLIC_URL` — the exact origin of that frontend (customer domain for Web, admin domain for Admin).
 

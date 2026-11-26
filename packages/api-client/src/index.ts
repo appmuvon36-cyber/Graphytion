@@ -1,6 +1,5 @@
 export type ApiClientOptions = {
   baseUrl: string;
-  getAccessToken?: () => Promise<string | null>;
   fetcher?: typeof fetch;
 };
 
@@ -45,8 +44,9 @@ export function createApiClient(options: ApiClientOptions) {
       const csrf = await ensureCsrf(options.baseUrl, fetcher);
       if (csrf) headers.set('X-CSRF-Token', csrf);
     }
-    const token = await options.getAccessToken?.();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    // Browser clients authenticate only through the same-origin HttpOnly-cookie BFF.
+    // Never accept or forward a JavaScript-readable bearer token.
+    headers.delete('Authorization');
     if (!headers.has('X-Request-ID')) headers.set('X-Request-ID', crypto.randomUUID());
     const url = new URL(
       path.replace(/^\//, ''),

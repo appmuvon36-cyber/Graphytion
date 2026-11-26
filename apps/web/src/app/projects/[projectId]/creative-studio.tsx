@@ -214,7 +214,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       setPreviewSnapshot(result.data.snapshot); setPreviewResolvedAssets(result.data.resolved_assets||{});
       setTimelineHistory(history.data);setTimelineVersion(history.data[0]?.version??null);setTimelineDirty(true);
       setPreviewStoryboardId(id);
-      setNotice('Preview memakai timeline snapshot yang sama dengan renderer Remotion.');
+      setNotice('Preview menggunakan snapshot editor. Simpan versi untuk menerbitkan asset URL; render dilakukan dari snapshot editor yang sama.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Remotion preview failed'); }
     finally { setBusy(false); }
   }
@@ -355,10 +355,11 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     const snapshotToSave=previewSnapshot;
     setTimelineSaving(true);setError('');
     try{
-      const result=await call<{data:{timeline_id:string;version:number;compiled_hash:string}}>('/projects/'+projectId+'/timeline',{
+      const result=await call<{data:{timeline_id:string;version:number;compiled_hash:string;resolved_assets:ResolvedCompositionAssets}}>('/projects/'+projectId+'/timeline',{
         method:'PUT',body:JSON.stringify({snapshot:snapshotToSave,expected_version:timelineVersion}),
       });
       setTimelineVersion(result.data.version);
+      setPreviewResolvedAssets(result.data.resolved_assets||{});
       if(JSON.stringify(snapshotToSave)===JSON.stringify(previewSnapshot))setTimelineDirty(false);
       setNotice('Timeline version v'+result.data.version+' tersimpan · '+result.data.compiled_hash.slice(0,12)); await loadTimelineHistory();
     }catch(e){setError(e instanceof Error?e.message:'Timeline save failed');}
@@ -385,17 +386,6 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     return ()=>window.clearTimeout(handle);
   },[previewSnapshot,timelineDirty,timelineSaving,timelineVersion]);
 
-  async function renderStoryboard(id: string) {
-    setBusy(true); setError(''); setNotice('');
-    try {
-      const result = await call<{data:{render_job_id:string;status:string}}>('/projects/' + projectId + '/storyboards/' + id + '/render', {
-        method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() },
-      });
-      setNotice('Render job queued · ' + result.data.render_job_id);
-      await load();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Render submission failed'); }
-    finally { setBusy(false); }
-  }
 
   async function cancelRun(id: string) {
     setBusy(true); setError('');
@@ -479,7 +469,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <textarea aria-label="Storyboard scenes JSON" value={sceneJson} onChange={e=>setSceneJson(e.target.value)} rows={10} style={{...field,fontFamily:'monospace',fontSize:12}}/>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} style={button}>Simpan storyboard</button><button type="button" disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} onClick={()=>void generateStage("storyboard")} style={{...button,background:"#0d6b54"}}>Generate storyboard dengan AI</button></div>
       </form>
-      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><div style={{display:'flex',gap:7}}>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveStoryboard(b.id)} style={button}>Approve</button>}{b.status==='approved'&&<><button type="button" disabled={busy} onClick={()=>void previewStoryboard(b.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Preview Remotion</button><button type="button" disabled={busy} onClick={()=>void renderStoryboard(b.id)} style={{...button,background:'#0d6b54'}}>Render MP4</button></>}</div></div><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}><div><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div><button type="button" disabled={busy||b.status==='superseded'} onClick={()=>void regenerateScene(sc.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Regenerate scene</button></div>)}</article>)}</div>
+      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><div style={{display:'flex',gap:7}}>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveStoryboard(b.id)} style={button}>Approve</button>}{b.status==='approved'&&<><button type="button" disabled={busy} onClick={()=>void previewStoryboard(b.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Preview Remotion</button></>}</div></div><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}><div><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div><button type="button" disabled={busy||b.status==='superseded'} onClick={()=>void regenerateScene(sc.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Regenerate scene</button></div>)}</article>)}</div>
     </section>
     {previewSnapshot && <section style={panel}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:12}}>

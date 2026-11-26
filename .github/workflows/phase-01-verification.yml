@@ -107,7 +107,7 @@ jobs:
           uv run --locked python -c "import redis, pydantic, pydantic_settings; from app.main import run; assert callable(run)"
           cd ../media-worker
           uv run --locked python -m compileall -q app
-          uv run --locked python -c "import redis, pydantic, pydantic_settings; from app.main import run; assert callable(run)"
+          uv run --locked python -c "import redis, httpx; from app.main import main; assert callable(main)"
 
       - name: FastAPI startup smoke check
         working-directory: apps/api

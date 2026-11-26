@@ -1054,7 +1054,11 @@ async def list_projects(
             text("""
                 select count(*) from public.video_projects
                 where workspace_id=:workspace and status<>'deleted'
-                  and (:q is null or name ilike '%'||:q||'%' or coalesce(description,'') ilike '%'||:q||'%')
+                  and (
+                    :q is null
+                    or name ilike '%'||:q||'%'
+                    or coalesce(description,'') ilike '%'||:q||'%'
+                  )
                   and (:status is null or status=:status)
             """),
             {"workspace": workspace_id, "q": q, "status": status_filter},

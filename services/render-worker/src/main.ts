@@ -59,7 +59,13 @@ async function processJob(jobId?: string): Promise<boolean> {
   let currentProgress = 0;
   const {cancelSignal, cancel} = makeCancelSignal();
   let cancelInvoked = false;
+  let timedOut = false;
   const cancelRender = () => { if (!cancelInvoked) { cancelInvoked = true; cancel(); } };
+  const renderTimeoutMs = Number(process.env.RENDER_TIMEOUT_MS ?? 7200000);
+  if (!Number.isFinite(renderTimeoutMs) || renderTimeoutMs < 60000 || renderTimeoutMs > 86400000) {
+    throw new Error('RENDER_TIMEOUT_MS must be between 60000 and 86400000');
+  }
+  const timeoutTimer = setTimeout(() => { timedOut = true; cancelRender(); }, renderTimeoutMs);
   const leaseHeartbeat = setInterval(async () => {
     try {
       const update = await api<{cancel_requested?: boolean}>(`internal/render-jobs/${claimed.id}/progress?worker_id=${encodeURIComponent(workerId)}`, {
@@ -113,9 +119,9 @@ async function processJob(jobId?: string): Promise<boolean> {
       await api(`internal/render-jobs/${claimed.id}/failed?worker_id=${encodeURIComponent(workerId)}`, {
         method: 'POST',
         body: JSON.stringify({
-          error_code: 'REMOTION_RENDER_FAILED',
+          error_code: timedOut ? 'REMOTION_RENDER_TIMEOUT' : 'REMOTION_RENDER_FAILED',
           error_message: message.slice(0, 500),
-          retryable: claimed.attempt_count < 3,
+          retryable: !timedOut && claimed.attempt_count < 3,
         }),
       });
     } catch (callbackError) {
@@ -126,6 +132,7 @@ async function processJob(jobId?: string): Promise<boolean> {
     return true;
   } finally {
     clearInterval(leaseHeartbeat);
+    clearTimeout(timeoutTimer);
     await rm(directory, {recursive: true, force: true});
   }
 }

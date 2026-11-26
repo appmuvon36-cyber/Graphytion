@@ -332,6 +332,12 @@ async def update_profile(
     values = payload.model_dump(exclude_unset=True)
     if not values:
         raise HTTPException(status_code=400, detail="No profile fields supplied")
+    if "display_name" in values and values["display_name"] is not None:
+        values["display_name"] = values["display_name"].strip()
+        if not values["display_name"]:
+            raise HTTPException(status_code=422, detail="Display name cannot be blank")
+    if "bio" in values and values["bio"] is not None:
+        values["bio"] = values["bio"].strip() or None
     assignments = ", ".join(f"{key}=:{key}" for key in values)
     row = (
         (
@@ -461,6 +467,9 @@ async def create_workspace(
         if cached is not None:
             await db.rollback()
             return cached
+        workspace_name = payload.name.strip()
+        if not workspace_name:
+            raise HTTPException(status_code=422, detail="Workspace name cannot be blank")
         row = (
             (
                 await db.execute(
@@ -468,7 +477,7 @@ async def create_workspace(
           insert into public.workspaces(name,slug,owner_user_id)
           values (:name,:slug,:owner) returning *
         """),
-                    {"name": payload.name.strip(), "slug": payload.slug, "owner": user_id},
+                    {"name": workspace_name, "slug": payload.slug, "owner": user_id},
                 )
             )
             .mappings()
@@ -938,6 +947,11 @@ async def create_project(
 ):
     actor = uid(claims)
     await require_permission(db, actor, workspace_id, "project.create")
+    project_name = payload.name.strip()
+    if not project_name:
+        raise HTTPException(status_code=422, detail="Project name cannot be blank")
+    if len(__import__("json").dumps(payload.settings, default=str)) > 65536:
+        raise HTTPException(status_code=413, detail="Project settings exceed 64 KB")
     try:
         reservation_id, cached = await reserve_idempotency(
             db,
@@ -965,7 +979,7 @@ async def create_project(
                     {
                         "workspace": workspace_id,
                         "actor": actor,
-                        "name": payload.name.strip(),
+                        "name": project_name,
                         "description": payload.description,
                         "mode": payload.production_mode,
                         "language": payload.default_language,
@@ -1049,6 +1063,12 @@ async def update_project(
     await require_permission(db, actor, workspace_id, "project.update")
     values = payload.model_dump(exclude_unset=True)
     settings = values.pop("settings", None)
+    if "name" in values:
+        values["name"] = values["name"].strip()
+        if not values["name"]:
+            raise HTTPException(status_code=422, detail="Project name cannot be blank")
+    if settings is not None and len(__import__("json").dumps(settings, default=str)) > 65536:
+        raise HTTPException(status_code=413, detail="Project settings exceed 64 KB")
     if not values and settings is None:
         raise HTTPException(status_code=400, detail="No project fields supplied")
     try:

@@ -1,6 +1,8 @@
 from email.utils import parseaddr
 from functools import lru_cache
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
+
+from sqlalchemy.engine import make_url
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -126,33 +128,37 @@ class Settings(BaseSettings):
         if f"{app_url.scheme}://{app_url.netloc}" not in origins:
             raise ValueError("APP_PUBLIC_URL origin must be included in CORS_ORIGINS")
 
-        db_url = urlparse(self.database_url_value)
+        # Parse with SQLAlchemy's URL parser so percent-encoded credentials (including
+        # reserved characters in the password) are interpreted consistently with the
+        # engine that will open the connection. urllib.parse.urlparse does not decode
+        # userinfo and can reject an otherwise valid SQLAlchemy connection URL.
+        try:
+            db_url = make_url(self.database_url_value)
+        except Exception as exc:
+            raise ValueError("DATABASE_URL is not a valid SQLAlchemy database URL") from exc
+
         direct_database = (
-            db_url.hostname == "db.xtjwmezfzexvupbfsdqt.supabase.co"
+            db_url.host == "db.xtjwmezfzexvupbfsdqt.supabase.co"
             and db_url.username == "graphytion_api"
             and db_url.port in (None, 5432)
         )
         pooler_database = (
-            bool(db_url.hostname)
-            and db_url.hostname.endswith(".pooler.supabase.com")
+            db_url.host == "aws-0-ap-northeast-1.pooler.supabase.com"
             and db_url.username == "graphytion_api.xtjwmezfzexvupbfsdqt"
             and db_url.port in (5432, 6543)
         )
-        if (
-            db_url.scheme != "postgresql+asyncpg"
-            or not (direct_database or pooler_database)
-            or not db_url.password
-            or "CHANGE_ME" in self.database_url_value
-        ):
+        if db_url.drivername != "postgresql+asyncpg":
+            raise ValueError("DATABASE_URL must use the postgresql+asyncpg driver")
+        if not (direct_database or pooler_database):
             raise ValueError(
-                "DATABASE_URL must use the dedicated graphytion_api login "
-                "(direct Supabase host or the project-scoped Supavisor pooler) "
-                "with a real password; administrative logins are forbidden"
+                "DATABASE_URL target/login is not the Graphytion dedicated database endpoint "
+                "(expected graphytion_api on the direct host or project-scoped Supavisor)"
             )
-        database_query = parse_qs(db_url.query)
-        if database_query.get("ssl") != ["require"] and database_query.get("sslmode") != [
-            "require"
-        ]:
+        if not db_url.password or "CHANGE_ME" in self.database_url_value:
+            raise ValueError("DATABASE_URL is missing a real password")
+        if not any(
+            db_url.query.get(key) == "require" for key in ("ssl", "sslmode")
+        ):
             raise ValueError("DATABASE_URL must require TLS with ssl=require")
         if (
             self.supabase_service_role_key_value == self.supabase_anon_key_value

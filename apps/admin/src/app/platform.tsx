@@ -11,7 +11,7 @@ type Audit = { id: string; action: string; actor_user_id: string; resource_type:
 type Member = { id: string; user_id: string; display_name?: string | null; role: string; status: string };
 type Invitation = { id: string; workspace_name: string; email: string; role: string; delivery_status: string; expires_at: string; accepted_at?: string | null; cancelled_at?: string | null };
 type PlatformAdminRecord = { user_id: string; role: string; status: string; granted_at: string; reason?: string | null };
-type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number };
+type Overview = { users: number; workspaces: number; active_memberships: number; projects: number; audit_events_24h: number; active_creative_runs: number; active_render_jobs: number; input_tokens_24h: number; output_tokens_24h: number };
 type LlmStatus = { available_providers: string[]; configured_model: string; openai_credential_configured: boolean; generation_ready: boolean };
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -214,7 +214,7 @@ export default function PlatformAdmin() {
     {overview && <>
       <section style={panel}><h2 style={{marginTop:0}}>AI provider configuration</h2>{llmStatus&&<div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}><div><strong>{llmStatus.generation_ready?'Generation provider ready':'Provider configuration required'}</strong><p style={{fontSize:12,color:'#68788e',margin:'4px 0'}}>Model: {llmStatus.configured_model} · Available providers: {llmStatus.available_providers.join(', ')||'none'}</p></div><span style={{fontSize:12,color:llmStatus.generation_ready?'#176b45':'#a15b00'}}>{llmStatus.openai_credential_configured?'OPENAI_API_KEY configured':'OPENAI_API_KEY missing'}</span></div>}</section>
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(145px,1fr))', gap: 10, margin: '18px 0' }}>
-        {Object.entries({ Users: overview.users, Workspaces: overview.workspaces, 'Active members': overview.active_memberships, Projects: overview.projects, 'Audit 24h': overview.audit_events_24h, 'Active AI runs': overview.active_creative_runs }).map(([label, value]) =>
+        {Object.entries({ Users: overview.users, Workspaces: overview.workspaces, 'Active members': overview.active_memberships, Projects: overview.projects, 'Audit 24h': overview.audit_events_24h, 'Active AI runs': overview.active_creative_runs, 'Active renders': overview.active_render_jobs, 'Input tokens 24h': overview.input_tokens_24h, 'Output tokens 24h': overview.output_tokens_24h }).map(([label, value]) =>
           <article key={label} style={panel}><div style={{ fontSize: 12, color: '#68788e' }}>{label}</div><strong style={{ fontSize: 25 }}>{value}</strong></article>)}
       </section>
       <section style={panel}>

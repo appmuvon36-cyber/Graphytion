@@ -26,6 +26,8 @@ create table if not exists public.workspaces (
   updated_at timestamptz not null default now()
 );
 
+create index if not exists workspaces_owner_user_idx on public.workspaces(owner_user_id);
+
 create table if not exists public.workspace_members (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -54,6 +56,8 @@ create unique index if not exists workspace_invitations_pending_email_uq
   where accepted_at is null and cancelled_at is null;
 create index if not exists workspace_invitations_workspace_expiry_idx
   on public.workspace_invitations(workspace_id,expires_at);
+create index if not exists workspace_invitations_invited_by_idx
+  on public.workspace_invitations(invited_by);
 
 create table if not exists public.video_projects (
   id uuid primary key default gen_random_uuid(),
@@ -79,6 +83,12 @@ create table if not exists public.video_projects (
 );
 create index if not exists video_projects_workspace_updated_idx
   on public.video_projects(workspace_id,updated_at desc) where status <> 'deleted';
+create index if not exists video_projects_workspace_created_idx
+  on public.video_projects(workspace_id,created_at desc) where status <> 'deleted';
+create index if not exists video_projects_workspace_name_idx
+  on public.video_projects(workspace_id,name) where status <> 'deleted';
+create index if not exists video_projects_created_by_idx
+  on public.video_projects(created_by);
 create index if not exists workspace_members_user_status_idx
   on public.workspace_members(user_id,status,workspace_id);
 
@@ -117,6 +127,8 @@ create table if not exists public.audit_logs (
 );
 create index if not exists audit_logs_workspace_created_idx
   on public.audit_logs(workspace_id,created_at desc);
+create index if not exists audit_logs_actor_created_idx
+  on public.audit_logs(actor_user_id,created_at desc);
 
 create or replace function public.graphytion_touch_updated_at()
 returns trigger language plpgsql set search_path = public as $$

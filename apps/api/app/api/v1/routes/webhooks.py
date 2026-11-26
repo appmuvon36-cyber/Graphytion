@@ -89,8 +89,18 @@ async def resend_webhook(request: Request, db: AsyncSession = Db) -> dict[str, A
         return {"received": True, "processed": False}
 
     next_status, error_code = transition
-    terminal = {"delivered", "bounced", "complained"}
-    if row["delivery_status"] not in terminal:
+    terminal = {"delivered", "bounced", "complained", "failed"}
+    current_status = row["delivery_status"]
+    can_advance = (
+        current_status not in terminal
+        and current_status != next_status
+        and not (next_status == "sent" and current_status != "pending")
+        and not (
+            next_status == "delivery_delayed"
+            and current_status not in {"pending", "sent"}
+        )
+    )
+    if can_advance:
         await db.execute(
             text("""
                 update public.workspace_invitations

@@ -20,16 +20,29 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
 LEASE_SECONDS = 180
 
 
+class CreativeCancellationRequested(Exception):
+    pass
+
+
 async def _heartbeat(run_id: str, actor_id: str, task_id: str) -> None:
     while True:
         await asyncio.sleep(30)
         async with SessionLocal() as heartbeat_db:
             await set_rls_subject(heartbeat_db, actor_id)
-            await heartbeat_db.execute(text("""
+            renewed = await heartbeat_db.scalar(text("""
                 update public.production_runs
                 set lease_expires_at=now()+make_interval(secs => :lease)
-                where id=:run and worker_id=:worker
+                where id=:run and worker_id=:worker and cancel_requested_at is null
+                returning id
             """), {"run": run_id, "worker": WORKER_ID, "lease": LEASE_SECONDS})
+            if renewed is None:
+                state = await heartbeat_db.scalar(text("""
+                    select status from public.production_runs where id=:run
+                """), {"run": run_id})
+                await heartbeat_db.rollback()
+                if state == "cancel_requested":
+                    raise CreativeCancellationRequested()
+                raise RuntimeError("Creative run worker lease was lost")
             await heartbeat_db.execute(text("""
                 update public.agent_tasks
                 set lease_expires_at=now()+make_interval(secs => :lease)

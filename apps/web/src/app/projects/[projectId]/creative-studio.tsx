@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
 import type {
-  CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi,
+  CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
 } from '@graphytion/contracts';
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
@@ -21,6 +21,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [boards, setBoards] = useState<StoryboardApi[]>([]);
   const [runs, setRuns] = useState<CreativeRunItem[]>([]);
   const [renders, setRenders] = useState<RenderItem[]>([]);
+  const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
+  const [assetFile, setAssetFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState('');
   const [briefJson, setBriefJson] = useState('{"objective":"","audience":"","key_message":"","tone":"","language":"id-ID","duration_target_ms":60000,"production_mode":"motion_graphic","visual_style":"","cta":"","constraints":[],"missing_information":[]}');
   const [scriptTitle, setScriptTitle] = useState('');
@@ -44,16 +46,17 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, b, s, sb, runResult, renderResult] = await Promise.all([
+      const [p, b, s, sb, runResult, renderResult, assetResult] = await Promise.all([
         call<{data: VideoProjectApi}>('/projects/' + projectId),
         call<{data: CreativeBriefApi[]}>('/projects/' + projectId + '/briefs'),
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
         call<{data: StoryboardApi[]}>('/projects/' + projectId + '/storyboards'),
         call<{data: CreativeRunItem[]}>('/projects/' + projectId + '/creative-runs'),
         call<{data: RenderItem[]}>('/projects/' + projectId + '/renders'),
+        call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets'),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
-      setRuns(runResult.data); setRenders(renderResult.data);
+      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data);
       if (!selectedBrief && b.data[0]) setSelectedBrief(b.data[0].id);
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }
@@ -116,6 +119,37 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     setBusy(true); setError('');
     try { await call('/projects/' + projectId + '/scripts/' + id + '/approve', { method: 'POST' }); setNotice('Script disetujui. Storyboard dapat dibuat dari script ini.'); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Gagal menyetujui script'); }
+    finally { setBusy(false); }
+  }
+
+  async function uploadAsset(event: React.FormEvent) {
+    event.preventDefault();
+    if (!assetFile) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const form = new FormData();
+      form.set('file', assetFile);
+      await call('/projects/' + projectId + '/assets', { method: 'POST', body: form });
+      setAssetFile(null); setNotice('Project asset uploaded and registered.'); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Asset upload failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function downloadAsset(asset: ProjectAssetApi) {
+    setError('');
+    try {
+      const result = await call<{data:{signed_url:string}}>('/assets/' + asset.id + '/download');
+      window.location.assign(result.data.signed_url);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Asset download unavailable'); }
+  }
+
+  async function deleteAsset(asset: ProjectAssetApi) {
+    if (!window.confirm('Delete asset ' + asset.file_name + '?')) return;
+    setBusy(true); setError('');
+    try {
+      await call('/assets/' + asset.id, { method: 'DELETE' });
+      setNotice('Project asset deleted from private storage.'); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Asset deletion failed'); }
     finally { setBusy(false); }
   }
 
@@ -247,6 +281,16 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       <h2 style={{marginTop:0}}>05 · Render jobs</h2>
       {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div><div style={{display:'flex',gap:7}}>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download MP4</button>}{render.status==='queued'&&<button type="button" disabled={busy} onClick={()=>void cancelRender(render.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div></div>)}
       {renders.length===0&&<p style={{color:'#68788e'}}>Belum ada render job.</p>}
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>06 · Project assets</h2>
+      <form onSubmit={uploadAsset} style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap',marginBottom:12}}>
+        <input type="file" aria-label="Upload project asset" accept="image/png,image/jpeg,image/webp,video/mp4,audio/mpeg,audio/wav,application/pdf" onChange={event=>setAssetFile(event.target.files?.[0]||null)} style={{...field,maxWidth:380}}/>
+        <button disabled={busy||!assetFile} style={button}>Upload asset</button>
+      </form>
+      <p style={{fontSize:12,color:'#68788e'}}>Private Supabase Storage · PNG, JPEG, WebP, MP4, MP3, WAV, PDF · max 50 MB</p>
+      {assets.map(asset=><div key={asset.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{asset.file_name}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{asset.content_type} · {(asset.size_bytes/1024/1024).toFixed(2)} MB · {asset.sha256.slice(0,12)}</p></div><div style={{display:'flex',gap:7}}><button type="button" onClick={()=>void downloadAsset(asset)} style={button}>Download</button><button type="button" disabled={busy} onClick={()=>void deleteAsset(asset)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Delete</button></div></div>)}
+      {assets.length===0&&<p style={{color:'#68788e'}}>No project assets uploaded.</p>}
     </section>
     <p style={{fontSize:12,color:'#68788e'}}>AI generation berjalan melalui FastAPI Model Router dengan structured output, prompt version, dan persisted run lifecycle. Jika provider adapter belum diregistrasikan pada runtime, API mengembalikan status unavailable dan tidak membuat hasil AI palsu.</p>
   </main>;

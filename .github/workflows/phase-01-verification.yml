@@ -87,7 +87,7 @@ jobs:
 
       - name: Parse Phase 02 migration SQL
         run: |
-          uv run --no-project --with pglast==7.10 python -c "from pathlib import Path; from pglast import parse_sql; parse_sql(Path('supabase/migrations/202611260001_phase_02_identity_workspace_projects.sql').read_text()); print('Phase 02 migration SQL parsed successfully')"
+          uv run --no-project --with pglast==8.9 python -c "from pathlib import Path; from pglast import parse_sql; parse_sql(Path('supabase/migrations/202611260001_phase_02_identity_workspace_projects.sql').read_text()); print('Phase 02 migration SQL parsed successfully')"
 
       - name: Python compile, lint and FastAPI import
         working-directory: apps/api

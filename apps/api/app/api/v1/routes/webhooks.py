@@ -68,6 +68,7 @@ async def resend_webhook(request: Request, db: AsyncSession = Db) -> dict[str, A
     if not transition or not isinstance(message_id, str):
         return {"received": True, "processed": False}
 
+    await db.execute(text("select set_config('app.graphytion.internal','resend_webhook',true)"))
     row = (
         (
             await db.execute(
@@ -90,7 +91,6 @@ async def resend_webhook(request: Request, db: AsyncSession = Db) -> dict[str, A
     next_status, error_code = transition
     terminal = {"delivered", "bounced", "complained"}
     if row["delivery_status"] not in terminal:
-        await set_rls_subject(db, str(row["invited_by"]))
         await db.execute(
             text("""
                 update public.workspace_invitations
@@ -105,12 +105,11 @@ async def resend_webhook(request: Request, db: AsyncSession = Db) -> dict[str, A
                     actor_user_id,workspace_id,action,resource_type,resource_id,metadata,request_id
                 )
                 values (
-                    :actor,:workspace,:action,'invitation',:invitation,
+                    null,:workspace,:action,'invitation',:invitation,
                     cast(:metadata as jsonb),:request_id
                 )
             """),
             {
-                "actor": row["invited_by"],
                 "workspace": row["workspace_id"],
                 "action": f"workspace.invitation.email_{next_status}",
                 "invitation": row["id"],

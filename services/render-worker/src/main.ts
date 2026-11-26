@@ -45,6 +45,20 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (body && typeof body === 'object' && 'data' in body ? body.data : body) as T;
 }
 
+async function sendWorkerHeartbeat() {
+  await api('internal/workers/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({
+      worker_id: workerId,
+      worker_type: 'render',
+      hostname: process.env.HOSTNAME ?? 'worker',
+      version: process.env.RAILWAY_DEPLOYMENT_ID ?? 'unknown',
+      metadata: {concurrency: renderConcurrency},
+    }),
+  });
+}
+let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+
 type RenderJob = {
   id: string;
   composition_id: string;
@@ -223,6 +237,10 @@ async function waitForWork() {
 
 async function main() {
   console.info('graphytion_render_worker_started', {worker_id: workerId, queue: 'postgresql+redis-wakeup'});
+  await sendWorkerHeartbeat().catch(error => console.warn('render_worker_heartbeat_unavailable', error));
+  heartbeatTimer = setInterval(() => {
+    void sendWorkerHeartbeat().catch(error => console.warn('render_worker_heartbeat_unavailable', error));
+  }, 30000);
   let lastRecoveryScan = 0;
   while (true) {
     try {
@@ -241,6 +259,7 @@ async function main() {
 
 async function shutdown() {
   console.info('graphytion_render_worker_stopping', {worker_id: workerId});
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (redis) await redis.quit().catch(() => redis.disconnect());
   process.exit(0);
 }

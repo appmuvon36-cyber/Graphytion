@@ -9,6 +9,8 @@ import type {
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
 const field: React.CSSProperties = { width: '100%', padding: '11px 13px', border: '1px solid #dce3ed', borderRadius: 9, fontSize: 14, background: '#fff', color: '#142033' };
 const button: React.CSSProperties = { border: 0, borderRadius: 9, padding: '10px 14px', background: '#173f72', color: '#fff', fontWeight: 700, cursor: 'pointer' };
+type CreativeRunItem = { id: string; status: string; current_stage?: string | null; progress_percent?: number; error_code?: string | null; created_at: string };
+type RenderItem = { id: string; status: string; progress_percent: number; output_path?: string | null; error_code?: string | null; created_at: string };
 const panel: React.CSSProperties = { background: '#fff', border: '1px solid #e5eaf1', borderRadius: 14, padding: 18, marginBottom: 14 };
 
 export default function CreativeStudio({ projectId }: { projectId: string }) {
@@ -16,7 +18,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<VideoProjectApi | null>(null);
   const [briefs, setBriefs] = useState<CreativeBriefApi[]>([]);
   const [scripts, setScripts] = useState<VideoScriptApi[]>([]);
-  const [boards, setBoards] = useState<StoryboardApi[]>([]);
+  const [boards, setBoards] = useState<StoryboardApi[]>([]);\n  const [runs, setRuns] = useState<CreativeRunItem[]>([]);\n  const [renders, setRenders] = useState<RenderItem[]>([]);
   const [prompt, setPrompt] = useState('');
   const [briefJson, setBriefJson] = useState('{"objective":"","audience":"","key_message":"","tone":"","language":"id-ID","duration_target_ms":60000,"production_mode":"motion_graphic","visual_style":"","cta":"","constraints":[],"missing_information":[]}');
   const [scriptTitle, setScriptTitle] = useState('');
@@ -40,13 +42,16 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, b, s, sb] = await Promise.all([
+      const [p, b, s, sb, runResult, renderResult] = await Promise.all([
         call<{data: VideoProjectApi}>('/projects/' + projectId),
         call<{data: CreativeBriefApi[]}>('/projects/' + projectId + '/briefs'),
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
         call<{data: StoryboardApi[]}>('/projects/' + projectId + '/storyboards'),
+        call<{data: CreativeRunItem[]}>('/projects/' + projectId + '/creative-runs'),
+        call<{data: RenderItem[]}>('/projects/' + projectId + '/renders'),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
+      setRuns(runResult.data); setRenders(renderResult.data);
       if (!selectedBrief && b.data[0]) setSelectedBrief(b.data[0].id);
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }
@@ -64,7 +69,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const result = await call<{data:{run_id:string;status:string;artifact_type?:string}}>('/projects/' + projectId + '/creative-runs/' + stage, {
         method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
       });
-      setNotice('Creative run ' + result.data.run_id + ' selesai pada status ' + result.data.status + '.');
+      setNotice('Creative run ' + result.data.run_id + ' diterima dengan status ' + result.data.status + '.');
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Creative generation tidak dapat dijalankan.');
@@ -110,6 +115,49 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     try { await call('/projects/' + projectId + '/scripts/' + id + '/approve', { method: 'POST' }); setNotice('Script disetujui. Storyboard dapat dibuat dari script ini.'); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Gagal menyetujui script'); }
     finally { setBusy(false); }
+  }
+
+  async function regenerateScene(sceneId: string) {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await call<{data:{run_id:string;status:string}}>('/projects/' + projectId + '/creative-runs/scene', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ scene_id: sceneId, revision_instruction: 'Improve visual storytelling, shot composition, lighting, and motion while preserving the approved narration and scene purpose.' }),
+      });
+      setNotice('Scene regeneration queued · ' + result.data.run_id);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Scene regeneration failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function approveStoryboard(id: string) {
+    setBusy(true); setError('');
+    try {
+      await call('/projects/' + projectId + '/storyboards/' + id + '/approve', { method: 'POST' });
+      setNotice('Storyboard approved.'); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Storyboard approval failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function renderStoryboard(id: string) {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await call<{data:{render_job_id:string;status:string}}>('/projects/' + projectId + '/storyboards/' + id + '/render', {
+        method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() },
+      });
+      setNotice('Render job queued · ' + result.data.render_job_id);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Render submission failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function downloadRender(id: string) {
+    setError('');
+    try {
+      const result = await call<{data:{signed_url:string}}>('/renders/' + id + '/download');
+      window.location.assign(result.data.signed_url);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Render download unavailable'); }
   }
 
   async function createStoryboard(e: React.FormEvent) {
@@ -172,7 +220,17 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <textarea aria-label="Storyboard scenes JSON" value={sceneJson} onChange={e=>setSceneJson(e.target.value)} rows={10} style={{...field,fontFamily:'monospace',fontSize:12}}/>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} style={button}>Simpan storyboard</button><button type="button" disabled={busy||!scripts.some(s=>s.id===selectedScript&&s.status==='approved')} onClick={()=>void generateStage("storyboard")} style={{...button,background:"#0d6b54"}}>Generate storyboard dengan AI</button></div>
       </form>
-      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5'}}><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div>)}</article>)}</div>
+      <div style={{marginTop:16,display:'grid',gap:8}}>{boards.map(b=><article key={b.id} style={{padding:12,border:'1px solid #edf0f5',borderRadius:10}}><div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center',flexWrap:'wrap'}}><strong>Storyboard v{b.version} · {b.scenes.length} scene</strong><div style={{display:'flex',gap:7}}>{b.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void approveStoryboard(b.id)} style={button}>Approve</button>}{b.status==='approved'&&<button type="button" disabled={busy} onClick={()=>void renderStoryboard(b.id)} style={{...button,background:'#0d6b54'}}>Render MP4</button>}</div></div><p style={{fontSize:13,color:'#68788e',margin:'4px 0'}}>Script: {scripts.find(s=>s.id===b.script_id)?.title||b.script_id} · {b.status}</p>{b.scenes.map(sc=><div key={sc.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}><div><strong>{sc.scene_index+1}. {sc.title}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{sc.purpose||sc.narration_text||'No scene description'} · {Math.round(sc.duration_ms/1000)}s</p></div><button type="button" disabled={busy||b.status==='superseded'} onClick={()=>void regenerateScene(sc.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Regenerate scene</button></div>)}</article>)}</div>
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>04 · Creative runs</h2>
+      {runs.map(run=><div key={run.id} style={{padding:'8px 0',borderTop:'1px solid #edf0f5'}}><strong>{run.current_stage || 'Creative pipeline'} · {run.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {run.progress_percent ?? 0}% · {run.error_code || run.id}</p></div>)}
+      {runs.length===0&&<p style={{color:'#68788e'}}>Belum ada creative run.</p>}
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>05 · Render jobs</h2>
+      {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download MP4</button>}</div>)}
+      {renders.length===0&&<p style={{color:'#68788e'}}>Belum ada render job.</p>}
     </section>
     <p style={{fontSize:12,color:'#68788e'}}>AI generation berjalan melalui FastAPI Model Router dengan structured output, prompt version, dan persisted run lifecycle. Jika provider adapter belum diregistrasikan pada runtime, API mengembalikan status unavailable dan tidak membuat hasil AI palsu.</p>
   </main>;

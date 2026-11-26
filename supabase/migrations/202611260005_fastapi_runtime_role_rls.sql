@@ -60,8 +60,16 @@ grant usage on schema public, private, auth to graphytion_runtime;
 grant execute on function auth.uid() to graphytion_runtime;
 -- Grant only the SQL operations and columns used by FastAPI.
 -- No runtime DELETE on memberships, invitations, projects, project settings or audit history.
-grant select,insert,update,delete on table public.workspaces to graphytion_runtime;
-grant select,insert,update on table public.workspace_members to graphytion_runtime;
+grant select on table public.workspaces to graphytion_runtime;
+grant insert (name,slug,owner_user_id) on table public.workspaces to graphytion_runtime;
+grant update (name,settings,updated_at) on table public.workspaces to graphytion_runtime;
+grant delete on table public.workspaces to graphytion_runtime;
+
+grant select on table public.workspace_members to graphytion_runtime;
+grant insert (workspace_id,user_id,role,status)
+  on table public.workspace_members to graphytion_runtime;
+grant update (role,status) on table public.workspace_members to graphytion_runtime;
+
 grant select on table public.workspace_invitations to graphytion_runtime;
 grant insert (workspace_id,email,role,token_hash,invited_by,expires_at,
               delivery_status,delivery_attempts,last_delivery_attempt_at)
@@ -70,9 +78,24 @@ grant update (token_hash,expires_at,accepted_at,cancelled_at,delivery_status,
               delivery_attempts,last_delivery_attempt_at,last_delivery_error,
               provider_message_id,sent_at)
   on table public.workspace_invitations to graphytion_runtime;
-grant select,insert,update on table public.video_projects to graphytion_runtime;
-grant select,insert,update on table public.project_settings to graphytion_runtime;
-grant select,insert,update,delete on table public.api_idempotency_keys to graphytion_runtime;
+
+grant select on table public.video_projects to graphytion_runtime;
+grant insert (workspace_id,created_by,name,description,production_mode,
+              default_language,target_duration_ms,aspect_ratio,width,height,fps)
+  on table public.video_projects to graphytion_runtime;
+grant update (name,description,production_mode,default_language,target_duration_ms,
+              aspect_ratio,width,height,fps,status,updated_at)
+  on table public.video_projects to graphytion_runtime;
+
+grant select on table public.project_settings to graphytion_runtime;
+grant insert (project_id,settings) on table public.project_settings to graphytion_runtime;
+grant update (settings,version,updated_at) on table public.project_settings to graphytion_runtime;
+
+grant select,delete on table public.api_idempotency_keys to graphytion_runtime;
+grant insert (actor_user_id,operation,idempotency_key,request_hash)
+  on table public.api_idempotency_keys to graphytion_runtime;
+grant update (response_body,completed_at) on table public.api_idempotency_keys to graphytion_runtime;
+
 grant select,insert on table public.audit_logs to graphytion_runtime;
 grant usage,select on all sequences in schema public to graphytion_runtime;
 

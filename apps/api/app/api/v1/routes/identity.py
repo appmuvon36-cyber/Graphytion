@@ -113,7 +113,10 @@ class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
-    production_mode: str = Field(default="motion_graphic", pattern=r"^(motion_graphic|explainer|presentation|social_short|documentary_lite)$")
+    production_mode: str = Field(
+        default="motion_graphic",
+        pattern=r"^(motion_graphic|explainer|presentation|social_short|documentary_lite)$",
+    )
     default_language: str = Field(default="id-ID", max_length=16)
     target_duration_ms: int | None = Field(default=None, gt=0)
     aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:5|4:3)$")
@@ -127,7 +130,10 @@ class ProjectUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=4000)
-    production_mode: str | None = Field(default=None, pattern=r"^(motion_graphic|explainer|presentation|social_short|documentary_lite)$")
+    production_mode: str | None = Field(
+        default=None,
+        pattern=r"^(motion_graphic|explainer|presentation|social_short|documentary_lite)$",
+    )
     default_language: str | None = Field(default=None, max_length=16)
     target_duration_ms: int | None = Field(default=None, gt=0)
     aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5|4:3)$")
@@ -191,7 +197,11 @@ async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
                 )
                 values (:actor,'auth.signup','user',:resource,:request_id)
             """),
-            {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
+            {
+                "actor": auth_user["id"],
+                "resource": auth_user["id"],
+                "request_id": getattr(request.state, "request_id", None),
+            },
         )
         await db.commit()
     return result
@@ -209,7 +219,11 @@ async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
                 )
                 values (:actor,'auth.login','user',:resource,:request_id)
             """),
-            {"actor": auth_user["id"], "resource": auth_user["id"], "request_id": getattr(request.state, "request_id", None)},
+            {
+                "actor": auth_user["id"],
+                "resource": auth_user["id"],
+                "request_id": getattr(request.state, "request_id", None),
+            },
         )
         await db.commit()
     return result
@@ -234,7 +248,11 @@ async def logout(
             insert into public.audit_logs(actor_user_id,action,resource_type,resource_id,request_id)
             values (:actor,'auth.logout','user',:resource,:request_id)
         """),
-        {"actor": actor, "resource": actor, "request_id": getattr(request.state, "request_id", None)},
+        {
+            "actor": actor,
+            "resource": actor,
+            "request_id": getattr(request.state, "request_id", None),
+        },
     )
     await db.commit()
     return None
@@ -331,7 +349,9 @@ async def upload_avatar(
     }
     content_type = file.content_type or ""
     if content_type not in mime_signatures or not mime_signatures[content_type]:
-        raise HTTPException(status_code=415, detail="Only valid PNG, JPEG, and WebP images are accepted")
+        raise HTTPException(
+            status_code=415, detail="Only valid PNG, JPEG, and WebP images are accepted"
+        )
     extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[content_type]
     object_path = f"{user_id}/{secrets.token_hex(16)}.{extension}"
     try:
@@ -341,14 +361,18 @@ async def upload_avatar(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Avatar storage upload failed") from exc
     row = (
-        (await db.execute(
-            text("""
+        (
+            await db.execute(
+                text("""
                 update public.profiles set avatar_path=:path,updated_at=now()
                 where id=:user_id
                 returning id,display_name,avatar_path,bio,locale,timezone,updated_at
             """),
-            {"path": object_path, "user_id": user_id},
-        )).mappings().first()
+                {"path": object_path, "user_id": user_id},
+            )
+        )
+        .mappings()
+        .first()
     )
     if not row:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -359,10 +383,12 @@ async def upload_avatar(
 @router.get("/me/avatar-url")
 async def get_avatar_url(claims: AuthenticatedClaims, db: AsyncSession = Db):
     user_id = uid(claims)
-    path = (await db.execute(
-        text("select avatar_path from public.profiles where id=:user_id"),
-        {"user_id": user_id},
-    )).scalar_one_or_none()
+    path = (
+        await db.execute(
+            text("select avatar_path from public.profiles where id=:user_id"),
+            {"user_id": user_id},
+        )
+    ).scalar_one_or_none()
     if not path:
         raise HTTPException(status_code=404, detail="Avatar not found")
     if not path.startswith(f"{user_id}/"):
@@ -613,7 +639,9 @@ async def update_member_role(
         raise HTTPException(status_code=400, detail="Use the ownership transfer workflow")
     actor_role = await require_workspace(db, actor, workspace_id)
     if (target["role"] == "admin" or payload.role == "admin") and actor_role != "owner":
-        raise HTTPException(status_code=403, detail="Only the owner can grant or change administrator access")
+        raise HTTPException(
+            status_code=403, detail="Only the owner can grant or change administrator access"
+        )
     await db.execute(
         text("update public.workspace_members set role=:role where id=:member"),
         {"role": payload.role, "member": member_id},
@@ -742,13 +770,21 @@ async def accept_invitation(
             {"workspace": row["workspace_id"], "actor": actor, "role": row["role"]},
         )
         if membership_result.rowcount == 0:
-            raise HTTPException(status_code=409, detail="User is already an active workspace member")
+            raise HTTPException(
+                status_code=409, detail="User is already an active workspace member"
+            )
         await db.execute(
             text("update public.workspace_invitations set accepted_at=now() where id=:id"),
             {"id": row["id"]},
         )
         await audit(
-            db, actor, row["workspace_id"], "workspace.invitation.accepted", "invitation", row["id"], request
+            db,
+            actor,
+            row["workspace_id"],
+            "workspace.invitation.accepted",
+            "invitation",
+            row["id"],
+            request,
         )
         await db.commit()
         return {
@@ -795,7 +831,9 @@ async def list_projects(
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    await require_workspace(db, uid(claims), workspace_id, {"owner", "admin", "editor", "member", "viewer"})
+    await require_workspace(
+        db, uid(claims), workspace_id, {"owner", "admin", "editor", "member", "viewer"}
+    )
     rows = (
         (
             await db.execute(

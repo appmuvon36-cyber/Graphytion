@@ -20,6 +20,9 @@ importers:
 
   apps/admin:
     dependencies:
+      '@graphytion/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
       '@graphytion/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims
 from app.core.config import settings
-from app.core.database import get_db_session
+from app.core.database import get_db_session, set_rls_subject
 from app.core.redis import redis_client
 from app.services.idempotency import (
     complete_idempotency,
@@ -198,6 +198,8 @@ async def audit_auth_event(
     actor: UUID | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    if actor is not None:
+        await set_rls_subject(db, str(actor))
     await db.execute(
         text("""
             insert into public.audit_logs(
@@ -247,6 +249,7 @@ async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
     result = await supabase_auth.signup(payload.email, payload.password, payload.display_name)
     auth_user = result.get("user") or {}
     if auth_user.get("id"):
+        await set_rls_subject(db, str(auth_user["id"]))
         await db.execute(
             text("""
                 insert into public.audit_logs(
@@ -806,10 +809,10 @@ async def create_invitation(
         await db.execute(
             text("""
                 select exists (
-                    select 1 from auth.users u
-                    join public.workspace_members m on m.user_id=u.id
+                    select 1 from public.profiles p
+                    join public.workspace_members m on m.user_id=p.id
                     where m.workspace_id=:workspace
-                      and lower(u.email)=:email and m.status='active'
+                      and lower(p.email)=:email and m.status='active'
                 )
             """),
             {"workspace": workspace_id, "email": email},
@@ -1122,8 +1125,8 @@ async def accept_invitation(
                 await db.execute(
                     text("""
           select i.* from public.workspace_invitations i
-          join auth.users u on lower(u.email)=lower(i.email)
-          where i.token_hash=:digest and u.id=:actor and i.accepted_at is null
+          join public.profiles p on lower(p.email)=lower(i.email)
+          where i.token_hash=:digest and p.id=:actor and i.accepted_at is null
             and i.cancelled_at is null and i.expires_at>now()
           for update of i
         """),

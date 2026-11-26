@@ -709,7 +709,7 @@ async def admin_retry_render_job(
             worker_id=null,
             lease_expires_at=null,
             completed_at=null
-        where id=:job and status='failed'
+        where id=:job and status='failed' and attempt_count < 10
         returning id, attempt_count, max_attempts
     """), {"job": render_job_id})).mappings().first()
     if row is None:
@@ -742,7 +742,7 @@ async def admin_retry_media_job(
             worker_id=null,
             lease_expires_at=null,
             completed_at=null
-        where id=:job and status in ('failed','provider_unavailable')
+        where id=:job and status in ('failed','provider_unavailable') and attempt_count < 10
         returning id, attempt_count, max_attempts
     """), {"job": generation_id})).mappings().first()
     if row is None:

@@ -27,7 +27,7 @@ The PRD and the repository's existing implementation are the controlling enginee
 - Supabase PostgreSQL is the primary persistent database.
 - Supabase Auth is the identity provider; enforce workspace membership and role authorization.
 - Supabase Storage stores private user assets, generated media, subtitles, and rendered outputs.
-- Redis is queue/coordination infrastructure only, never the source of truth.
+- PostgreSQL is the durable job queue and coordination source; workers claim jobs with transactional leases, heartbeat and recovery. Do not introduce an external queue broker for the current production architecture.
 - AI model calls go through a server-side LLM Gateway / Model Router.
 - TTS, image generation, alignment, and other external services use provider adapters.
 - AI output is structured, schema-validated data. Never execute model-generated JavaScript, JSX, shell commands, SQL, or arbitrary code.

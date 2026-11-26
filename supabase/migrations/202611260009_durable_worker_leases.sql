@@ -10,6 +10,11 @@ alter table public.production_runs
   add column if not exists cancel_requested_at timestamptz,
   add column if not exists cancelled_at timestamptz;
 
+alter table public.agent_tasks add column if not exists worker_id text;
+create index if not exists agent_tasks_worker_lease_idx
+  on public.agent_tasks(status,lease_expires_at)
+  where status in ('queued','running','retry_wait');
+
 alter table public.production_runs
   drop constraint if exists production_runs_attempt_count_check;
 alter table public.production_runs

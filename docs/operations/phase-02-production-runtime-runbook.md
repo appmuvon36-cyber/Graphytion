@@ -85,7 +85,9 @@ No message is considered delivered merely because the API request succeeded.
 
 - Access and refresh tokens are stored only in host-only HttpOnly cookies.
 - Production cookies use Secure, SameSite=Lax and Path=/; no Domain attribute is set.
-- CSRF token is a separate non-HttpOnly random cookie, sent in `X-CSRF-Token`; unsafe requests also require an exact Origin match.
+- CSRF token is a separate non-HttpOnly random cookie, sent in `X-CSRF-Token`; unsafe requests require an exact Origin match, with an exact Referer-origin fallback only when Origin is absent.
+- BFF forwards the client address to FastAPI only alongside the server-only shared secret; rate limiting trusts that address only after validating the BFF secret, preventing all browser users from sharing the API gateway IP bucket.
+- `APP_ENV` defaults to `production`; local development and CI must explicitly set `APP_ENV=local` so missing deployment configuration cannot silently bypass production validation.
 - Browser API client cannot attach bearer tokens; the BFF alone reads HttpOnly cookies and injects Authorization for the FastAPI upstream. Auth callback responses are `no-store` and `no-referrer`.
 - Refresh is server-side and uses the HttpOnly refresh cookie. Logout attempts to revoke the current session before clearing cookies.
 - The shared BFF secret protects signup, login, refresh and verification token-exchange endpoints from direct browser calls.

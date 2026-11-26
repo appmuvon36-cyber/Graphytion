@@ -2,8 +2,8 @@
 
 ## Runtime topology
 - Customer Studio preview uses the shared `GraphytionTimelinePlayer` component.
-- FastAPI authorizes workspace access, compiles/validates and hashes immutable timeline snapshots, persists render jobs, and emits Redis Stream notifications.
-- Supabase PostgreSQL is the durable job source of truth; Redis is transport/coordination only.
+- FastAPI authorizes workspace access, compiles/validates and hashes immutable timeline snapshots, then persists render jobs in Supabase PostgreSQL.
+- Supabase PostgreSQL is both the durable job queue and source of truth. Workers poll the claim endpoint; transactional leases, heartbeats and expired-lease recovery protect concurrent execution without an external broker.
 - The dedicated Node.js worker claims jobs through authenticated FastAPI endpoints, renders the same `GraphytionTimeline` composition, validates MP4 metadata with ffprobe, and uploads through FastAPI to private Supabase Storage.
 - Admin operations remain in the platform control plane. Worker credentials and Supabase service credentials never enter browser code.
 
@@ -13,7 +13,7 @@ The workspace pins `remotion`, `@remotion/player`, `@remotion/renderer`, and `@r
 ## Build and runtime
 Build the render-worker image from repository root using `services/render-worker/Dockerfile`. It installs the render-worker and Remotion Studio dependency graphs with the committed lockfile, then bundles `apps/remotion-studio/src/index.ts` at image build time. The worker uses the immutable local bundle at `/workspace/apps/remotion-studio/build`; a separately deployed Remotion Studio URL is not required.
 
-Required runtime environment: `GRAPHYTION_API_BASE_URL` (FastAPI base including `/api/v1`), `INTERNAL_WORKER_TOKEN` (high-entropy secret shared with FastAPI), `REDIS_URL` (TLS `rediss://` in production), and `REMOTION_SERVE_URL` (normally `/workspace/apps/remotion-studio/build`). Optional `REMOTION_RENDER_CONCURRENCY` (1–8, default 2), `REMOTION_RENDER_CRF` (0–51, default 18), `REMOTION_X264_PRESET` (ultrafast through veryslow, default medium), `REMOTION_BROWSER_EXECUTABLE`, and `RENDER_TIMEOUT_MS` (60 seconds–24 hours, default 2 hours).
+Required runtime environment: `GRAPHYTION_API_BASE_URL` (FastAPI base including `/api/v1`), `INTERNAL_WORKER_TOKEN` (high-entropy secret shared with FastAPI), and `REMOTION_SERVE_URL` (normally `/workspace/apps/remotion-studio/build`). Optional `REMOTION_RENDER_CONCURRENCY` (1–8, default 2), `REMOTION_RENDER_CRF` (0–51, default 18), `REMOTION_X264_PRESET` (ultrafast through veryslow, default medium), `REMOTION_BROWSER_EXECUTABLE`, and `RENDER_TIMEOUT_MS` (60 seconds–24 hours, default 2 hours).
 
 Keep credentials in the worker runtime secret manager, not this file or the image. Scale concurrency and worker replicas only after memory/CPU and Remotion licensing have been assessed.
 

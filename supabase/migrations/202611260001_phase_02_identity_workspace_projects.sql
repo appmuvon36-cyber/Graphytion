@@ -246,7 +246,6 @@ revoke all on function public.graphytion_sync_auth_profile() from public, anon, 
 revoke all on function public.graphytion_touch_updated_at() from public, anon, authenticated;
 revoke all on function public.graphytion_protect_workspace_owner() from public, anon, authenticated;
 revoke all on function public.graphytion_protect_membership_identity() from public, anon, authenticated;
-revoke all on function public.graphytion_protect_project_tenant() from public, anon, authenticated;
 revoke all on function public.graphytion_is_workspace_member(uuid) from public, anon, authenticated;
 revoke all on function public.graphytion_workspace_role(uuid) from public, anon, authenticated;
 revoke all on function public.graphytion_workspace_owner(uuid) from public, anon, authenticated;
@@ -262,7 +261,8 @@ begin
   end if;
   return new;
 end
-$$;
+$;
+revoke all on function public.graphytion_protect_project_tenant() from public, anon, authenticated;
 drop trigger if exists video_projects_protect_tenant on public.video_projects;
 create trigger video_projects_protect_tenant before update on public.video_projects
 for each row execute function public.graphytion_protect_project_tenant();

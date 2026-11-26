@@ -101,18 +101,49 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
         )
         run_context = dict(claimed)
         run_context["id"] = claimed["run_id"]
+        processing_task = asyncio.create_task(_process_creative_run(
+            db=db,
+            request=request,
+            actor=claimed["requested_by"],
+            workspace_id=claimed["workspace_id"],
+            project_id=claimed["project_id"],
+            stage=stage,
+            payload=payload,
+            run=run_context,
+            task=task_id,
+        ))
         try:
-            await _process_creative_run(
-                db=db,
-                request=request,
-                actor=claimed["requested_by"],
-                workspace_id=claimed["workspace_id"],
-                project_id=claimed["project_id"],
-                stage=stage,
-                payload=payload,
-                run=run_context,
-                task=task_id,
+            done, _ = await asyncio.wait(
+                {processing_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if heartbeat_task in done:
+                try:
+                    heartbeat_task.result()
+                except CreativeCancellationRequested:
+                    processing_task.cancel()
+                    await asyncio.gather(processing_task, return_exceptions=True)
+                    await db.rollback()
+                    await db.execute(text("""
+                        update public.production_runs
+                        set status='cancelled',cancelled_at=now(),completed_at=now(),
+                            worker_id=null,lease_expires_at=null
+                        where id=:run and worker_id=:worker
+                    """), {"run": claimed["run_id"], "worker": WORKER_ID})
+                    await db.execute(text("""
+                        update public.agent_tasks set status='cancelled',completed_at=now(),
+                            lease_expires_at=null
+                        where id=:task
+                    """), {"task": task_id})
+                    await db.execute(text("""
+                        insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
+                        values (:run,'stage.cancelled','{}'::jsonb,
+                          (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
+                    """), {"run": claimed["run_id"]})
+                    await db.commit()
+                    return True
+                raise RuntimeError("Creative run heartbeat stopped unexpectedly")
+            await processing_task
             return True
         except HTTPException as exc:
             logger.warning(

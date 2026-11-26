@@ -108,7 +108,13 @@ async def upload_project_asset(
         """), {"actor": actor, "workspace": workspace_id, "asset": asset_id,
                "request_id": request.state.request_id})
         await db.commit()
-        return {"data": dict(row)}
+        return {"data": {
+            "id": str(row["id"]), "project_id": str(row["project_id"]),
+            "workspace_id": str(row["workspace_id"]), "uploaded_by": str(row["uploaded_by"]),
+            "file_name": row["file_name"], "content_type": row["content_type"],
+            "size_bytes": row["size_bytes"], "sha256": row["sha256"],
+            "status": row["status"], "created_at": row["created_at"],
+        }}
     except Exception as exc:
         await db.rollback()
         try:

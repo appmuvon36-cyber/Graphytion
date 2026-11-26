@@ -209,6 +209,17 @@ async def get_render(
     return {"data": dict(row)}
 
 
+@router.post("/internal/render-jobs/recover")
+async def recover_render_jobs(
+    request: Request,
+    db: AsyncSession = DbSession,
+):
+    _require_worker(request)
+    finalized = await db.scalar(text("select private.graphytion_finalize_render_jobs()"))
+    await db.commit()
+    return {"data": {"finalized_jobs": int(finalized or 0)}}
+
+
 @router.post("/internal/render-jobs/claim")
 async def claim_render_job(
     request: Request,

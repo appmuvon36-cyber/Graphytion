@@ -371,8 +371,10 @@ async def leave_workspace(workspace_id: UUID,claims: AuthenticatedClaims,db: Asy
     actor=uid(claims)
     role=await require_workspace(db,actor,workspace_id)
     if role=="owner": raise HTTPException(status_code=409,detail="Transfer ownership before leaving")
-    await db.execute(text("update public.workspace_members set status='left'
-        where workspace_id=:workspace and user_id=:user"),{"workspace":workspace_id,"user":actor})
+    await db.execute(text("""
+        update public.workspace_members set status='left'
+        where workspace_id=:workspace and user_id=:user
+    """),{"workspace":workspace_id,"user":actor})
     await db.commit()
     return None
 

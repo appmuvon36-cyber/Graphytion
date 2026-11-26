@@ -63,6 +63,10 @@ create policy workspace_invitations_platform_admin_update on public.workspace_in
 drop policy if exists workspace_members_platform_admin_read on public.workspace_members;
 create policy workspace_members_platform_admin_read on public.workspace_members
   for select to graphytion_api using (private.graphytion_is_platform_admin());
+drop policy if exists workspace_members_platform_admin_update on public.workspace_members;
+create policy workspace_members_platform_admin_update on public.workspace_members
+  for update to graphytion_api using (private.graphytion_is_platform_admin())
+  with check (private.graphytion_is_platform_admin());
 
 drop policy if exists video_projects_platform_admin_read on public.video_projects;
 create policy video_projects_platform_admin_read on public.video_projects

@@ -145,20 +145,50 @@ class Worker:
                 log.exception("media_heartbeat_stopped")
         return True
 
+    async def presence_heartbeat(self) -> None:
+        while not self.stop.is_set():
+            try:
+                await self.api(
+                    "/internal/workers/heartbeat",
+                    method="POST",
+                    json={
+                        "worker_id": WORKER_ID,
+                        "worker_type": "media",
+                        "hostname": socket.gethostname(),
+                        "version": os.environ.get("RAILWAY_DEPLOYMENT_ID", "unknown"),
+                        "metadata": {"providers": ["gemini", "openai"]},
+                    },
+                )
+            except Exception:
+                log.warning("media_worker_heartbeat_unavailable", exc_info=True)
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=30)
+            except TimeoutError:
+                pass
+
     async def run(self) -> None:
         log.info("media_worker_started", extra={"worker_id": WORKER_ID, "queue": "postgresql+redis-wakeup"})
+        presence_task = asyncio.create_task(self.presence_heartbeat())
         last_recovery = 0.0
-        while not self.stop.is_set():
-            processed = await self.process()
-            now = asyncio.get_running_loop().time()
-            if now - last_recovery >= 30:
-                last_recovery = now
-                try:
-                    await self.api("/internal/media-jobs/recover", method="POST")
-                except Exception:
-                    log.exception("media_job_recovery_failed")
-            if not processed:
-                await self.wait_for_work()
+        try:
+            while not self.stop.is_set():
+                processed = await self.process()
+                now = asyncio.get_running_loop().time()
+                if now - last_recovery >= 30:
+                    last_recovery = now
+                    try:
+                        await self.api("/internal/media-jobs/recover", method="POST")
+                    except Exception:
+                        log.exception("media_job_recovery_failed")
+                if not processed:
+                    await self.wait_for_work()
+        finally:
+            self.stop.set()
+            presence_task.cancel()
+            try:
+                await presence_task
+            except asyncio.CancelledError:
+                pass
 
     async def wait_for_work(self) -> None:
         if self.redis is not None:

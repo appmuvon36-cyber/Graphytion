@@ -1,6 +1,10 @@
 -- Render jobs persist immutable composition snapshots; Redis only signals workers.
 begin;
 
+insert into storage.buckets(id,name,public)
+values ('render-artifacts','render-artifacts',false)
+on conflict (id) do update set public=false;
+
 create table if not exists public.render_jobs (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,

@@ -83,7 +83,7 @@ async function processJob(jobId?: string): Promise<boolean> {
     });
     const bytes = await readFile(outputPath);
     const form = new FormData();
-    form.set('file', new Blob([bytes], {type: 'video/mp4'}), 'output.mp4');
+    form.set('file', new Blob([Uint8Array.from(bytes)], {type: 'video/mp4'}), 'output.mp4');
     await api(`internal/render-jobs/${claimed.id}/artifact?worker_id=${encodeURIComponent(workerId)}`, {
       method: 'POST',
       body: form,

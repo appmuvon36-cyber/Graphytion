@@ -84,6 +84,190 @@ create table if not exists public.project_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.api_idempotency_keys (
+  id uuid primary key default gen_random_uuid(),
+  actor_user_id uuid not null references public.profiles(id) on delete cascade,
+  operation text not null,
+  idempotency_key text not null check (char_length(idempotency_key) between 16 and 128),
+  request_hash text not null check (request_hash ~ '^[a-f0-9]{64}
+  id uuid primary key default gen_random_uuid(),
+  actor_user_id uuid references public.profiles(id) on delete set null,
+  workspace_id uuid references public.workspaces(id) on delete set null,
+  action text not null,
+  resource_type text not null,
+  resource_id uuid,
+  metadata jsonb not null default '{}'::jsonb,
+  request_id text,
+  created_at timestamptz not null default now()
+);
+create index if not exists audit_logs_workspace_created_idx
+  on public.audit_logs(workspace_id,created_at desc);
+
+create or replace function public.graphytion_touch_updated_at()
+returns trigger language plpgsql set search_path = public as $$
+begin new.updated_at = now(); return new; end $$;
+
+drop trigger if exists profiles_touch_updated_at on public.profiles;
+create trigger profiles_touch_updated_at before update on public.profiles
+for each row execute function public.graphytion_touch_updated_at();
+drop trigger if exists workspaces_touch_updated_at on public.workspaces;
+create trigger workspaces_touch_updated_at before update on public.workspaces
+for each row execute function public.graphytion_touch_updated_at();
+drop trigger if exists video_projects_touch_updated_at on public.video_projects;
+create trigger video_projects_touch_updated_at before update on public.video_projects
+for each row execute function public.graphytion_touch_updated_at();
+
+create or replace function public.graphytion_sync_auth_profile()
+returns trigger language plpgsql security definer set search_path = public, auth as $$
+begin
+  insert into public.profiles(id,display_name)
+  values (new.id, nullif(btrim(coalesce(new.raw_user_meta_data->>'display_name', new.raw_user_meta_data->>'full_name','')), ''))
+  on conflict (id) do update set
+    display_name = coalesce(public.profiles.display_name, excluded.display_name),
+    updated_at = now();
+  return new;
+end $$;
+drop trigger if exists graphytion_auth_user_profile on auth.users;
+create trigger graphytion_auth_user_profile after insert on auth.users
+for each row execute function public.graphytion_sync_auth_profile();
+
+create or replace function public.graphytion_is_workspace_member(target_workspace uuid)
+returns boolean language sql stable security definer set search_path = public, auth as $$
+  select exists(select 1 from public.workspace_members m
+    where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active')
+$$;
+create or replace function public.graphytion_workspace_role(target_workspace uuid)
+returns text language sql stable security definer set search_path = public, auth as $$
+  select m.role from public.workspace_members m
+  where m.workspace_id = target_workspace and m.user_id = auth.uid() and m.status = 'active'
+  limit 1
+$$;
+create or replace function public.graphytion_workspace_owner(target_workspace uuid)
+returns uuid language sql stable security definer set search_path = public as $$
+  select w.owner_user_id from public.workspaces w where w.id=target_workspace
+$$;
+
+
+-- Tenant and identity keys are immutable after resource creation. All writes
+-- are mediated by FastAPI; these triggers also protect against accidental
+-- direct authenticated SQL updates that might otherwise cross tenant scope.
+create or replace function public.graphytion_protect_membership_identity()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if new.workspace_id <> old.workspace_id or new.user_id <> old.user_id then
+    raise exception 'workspace membership identity is immutable' using errcode = '42501';
+  end if;
+  if old.role = 'owner' and new.role <> 'owner' then
+    raise exception 'workspace ownership must be transferred explicitly' using errcode = '42501';
+  end if;
+  if new.role = 'owner' and old.role <> 'owner' then
+    raise exception 'workspace ownership must be transferred explicitly' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists workspace_members_protect_identity on public.workspace_members;
+create trigger workspace_members_protect_identity
+before update on public.workspace_members
+for each row execute function public.graphytion_protect_membership_identity();
+
+create or replace function public.graphytion_protect_project_tenant()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if new.workspace_id <> old.workspace_id or new.created_by <> old.created_by then
+    raise exception 'project tenant and creator are immutable' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists video_projects_protect_tenant on public.video_projects;
+create trigger video_projects_protect_tenant
+before update on public.video_projects
+for each row execute function public.graphytion_protect_project_tenant();
+
+alter table public.profiles enable row level security;
+alter table public.workspaces enable row level security;
+alter table public.workspace_members enable row level security;
+alter table public.workspace_invitations enable row level security;
+alter table public.video_projects enable row level security;
+alter table public.project_settings enable row level security;
+alter table public.audit_logs enable row level security;
+alter table public.api_idempotency_keys enable row level security;
+
+drop policy if exists profiles_select_self on public.profiles;
+create policy profiles_select_self on public.profiles for select to authenticated using (id = auth.uid());
+drop policy if exists profiles_update_self on public.profiles;
+create policy profiles_update_self on public.profiles for update to authenticated
+using (id = auth.uid()) with check (id = auth.uid());
+
+drop policy if exists workspaces_select_member on public.workspaces;
+create policy workspaces_select_member on public.workspaces for select to authenticated
+using (public.graphytion_is_workspace_member(id));
+drop policy if exists workspaces_update_admin on public.workspaces;
+create policy workspaces_update_admin on public.workspaces for update to authenticated
+using (public.graphytion_workspace_role(id) in ('owner','admin'))
+with check (public.graphytion_workspace_role(id) in ('owner','admin') and owner_user_id = public.graphytion_workspace_owner(id));
+
+drop policy if exists workspace_members_select_member on public.workspace_members;
+create policy workspace_members_select_member on public.workspace_members for select to authenticated
+using (public.graphytion_is_workspace_member(workspace_id));
+-- Membership mutations are server-only. No authenticated direct-write policy is granted.
+
+-- Invitation mutations are server-only; FastAPI enforces the invitation lifecycle.
+
+drop policy if exists video_projects_member_select on public.video_projects;
+create policy video_projects_member_select on public.video_projects for select to authenticated
+using (public.graphytion_is_workspace_member(workspace_id) and status <> 'deleted');
+-- Project mutations are server-only; API permission checks remain authoritative.
+
+drop policy if exists project_settings_member_select on public.project_settings;
+create policy project_settings_member_select on public.project_settings for select to authenticated
+using (exists(select 1 from public.video_projects p where p.id=project_id and public.graphytion_is_workspace_member(p.workspace_id)));
+-- Project settings mutations are server-only.
+
+drop policy if exists audit_logs_workspace_read on public.audit_logs;
+create policy audit_logs_workspace_read on public.audit_logs for select to authenticated
+using (workspace_id is not null and public.graphytion_workspace_role(workspace_id) in ('owner','admin'));
+
+
+-- Private profile avatar storage. Objects are namespaced by auth user UUID.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values ('avatars','avatars',false,5242880,array['image/png','image/jpeg','image/webp'])
+on conflict (id) do nothing;
+do $
+begin
+  if exists (
+    select 1 from storage.buckets
+    where id='avatars' and (public or file_size_limit > 5242880
+      or allowed_mime_types is distinct from array['image/png','image/jpeg','image/webp'])
+  ) then
+    raise exception 'Existing avatars bucket configuration is incompatible; reconcile it before migration';
+  end if;
+end $;
+
+drop policy if exists graphytion_avatar_read_own on storage.objects;
+create policy graphytion_avatar_read_own on storage.objects
+for select to authenticated
+using (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+drop policy if exists graphytion_avatar_insert_own on storage.objects;
+create policy graphytion_avatar_insert_own on storage.objects
+for insert to authenticated
+with check (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+drop policy if exists graphytion_avatar_delete_own on storage.objects;
+create policy graphytion_avatar_delete_own on storage.objects
+for delete to authenticated
+using (bucket_id='avatars' and (storage.foldername(name))[1]=auth.uid()::text);
+
+
+commit;
+),
+  response_body jsonb,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz,
+  expires_at timestamptz not null default (now() + interval '24 hours'),
+  unique (actor_user_id, operation, idempotency_key)
+);
+create index if not exists api_idempotency_expiry_idx
+  on public.api_idempotency_keys(expires_at);
+
 create table if not exists public.audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_user_id uuid references public.profiles(id) on delete set null,

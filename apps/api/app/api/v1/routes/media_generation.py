@@ -464,8 +464,8 @@ async def complete_media_generation_artifact(
                "size": len(content), "sha": digest})
         provider_cost = None
         if usage:
-            input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
-            output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+            input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")) )
+            output_tokens = usage.get("output_tokens", usage.get("completion_tokens", usage.get("total_output_tokens")) )
             if isinstance(input_tokens, int) and isinstance(output_tokens, int):
                 price = (await db.execute(text("""
                     select id,input_microusd_per_million,output_microusd_per_million

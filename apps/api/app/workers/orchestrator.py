@@ -712,13 +712,22 @@ async def _dispatch_render(
         "profile_key": profile["profile_key"], "profile_version": profile["version"],
     }
     max_attempts = await db.scalar(text("select max_attempts from public.platform_render_settings where singleton_id=1")) or 3
+    render_idempotency_key = hashlib.sha256(
+        f"{envelope.idempotency_key}:{profile['id']}:{profile['version']}:{digest}".encode("utf-8")
+    ).hexdigest()
     existing = (await db.execute(
-        text("select id,status,timeline_hash from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"),
-        {"workspace": run["workspace_id"], "key": envelope.idempotency_key},
+        text("""
+            select id,status,timeline_hash,render_profile_id,render_config,composition_version,
+                   production_run_id,parent_step_id
+            from public.render_jobs where workspace_id=:workspace and idempotency_key=:key
+        """),
+        {"workspace": run["workspace_id"], "key": render_idempotency_key},
     )).mappings().first()
     if existing:
-        if existing["timeline_hash"] != digest:
-            raise StepInputError("Render idempotency key conflicts with a different timeline snapshot")
+        if (existing["timeline_hash"] != digest or existing["render_profile_id"] != profile["id"]
+            or existing["render_config"] != render_config or existing["composition_version"] != "2.0.0"
+            or existing["production_run_id"] != envelope.run_id or existing["parent_step_id"] != envelope.step_id):
+            raise StepInputError("Render idempotency key conflicts with a different immutable render request")
         job_id = existing["id"]
     else:
         job_id = await db.scalar(text("""
@@ -732,14 +741,14 @@ async def _dispatch_render(
         """), {
             "workspace": run["workspace_id"], "project": run["project_id"], "actor": run["requested_by"],
             "snapshot": _canonical(snapshot), "hash": digest, "config": _canonical(render_config),
-            "key": envelope.idempotency_key, "profile": profile["id"], "version": version or snapshot.get("version"),
+            "key": render_idempotency_key, "profile": profile["id"], "version": version or snapshot.get("version"),
             "assets": _canonical([str(asset_id) for asset_id in asset_ids]),
             "timeline": timeline_id, "attempts": max_attempts, "run": envelope.run_id,
             "step": envelope.step_id,
         })
     await _attach_child(db, step, "render_job", job_id, {
         "render_job_id": str(job_id), "timeline_hash": digest,
-        "composition_version": "2.0.0", "idempotency_key": envelope.idempotency_key,
+        "composition_version": "2.0.0", "idempotency_key": render_idempotency_key,
     })
     await db.commit()
     await notify_worker("render", str(job_id))

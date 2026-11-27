@@ -29,6 +29,7 @@ class StructuredModelAdapter(Protocol):
         user_payload: dict[str, Any],
         output_schema: dict[str, Any],
         idempotency_key: str,
+        model_key: str | None = None,
     ) -> ModelResult: ...
 
 
@@ -79,14 +80,16 @@ class OpenAIChatCompletionsAdapter:
         user_payload: dict[str, Any],
         output_schema: dict[str, Any],
         idempotency_key: str,
+        model_key: str | None = None,
     ) -> ModelResult:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Idempotency-Key": idempotency_key[:255],
         }
+        selected_model = model_key or self._model_key
         body = {
-            "model": self._model_key,
+            "model": selected_model,
             "temperature": 0.4,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -147,7 +150,7 @@ class OpenAIChatCompletionsAdapter:
                 return ModelResult(
                     output=parsed,
                     provider_key=self.provider_key,
-                    model_key=str(payload.get("model") or self._model_key),
+                    model_key=str(payload.get("model") or selected_model),
                     input_tokens=usage.get("prompt_tokens"),
                     output_tokens=usage.get("completion_tokens"),
                     request_id=payload.get("id"),
@@ -186,8 +189,10 @@ class GeminiGenerateContentAdapter:
         user_payload: dict[str, Any],
         output_schema: dict[str, Any],
         idempotency_key: str,
+        model_key: str | None = None,
     ) -> ModelResult:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_key}:generateContent"
+        selected_model = model_key or self._model_key
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model}:generateContent"
         headers = {
             "x-goog-api-key": self._api_key,
             "Content-Type": "application/json",
@@ -256,7 +261,7 @@ class GeminiGenerateContentAdapter:
                 return ModelResult(
                     output=parsed,
                     provider_key=self.provider_key,
-                    model_key=self._model_key,
+                    model_key=selected_model,
                     input_tokens=usage.get("promptTokenCount"),
                     output_tokens=usage.get("candidatesTokenCount"),
                     request_id=payload.get("responseId"),
@@ -292,6 +297,7 @@ class LLMGateway:
         output_schema: dict[str, Any],
         idempotency_key: str,
         provider_key: str | None = None,
+        model_key: str | None = None,
     ) -> ModelResult:
         adapter = self._router.resolve(provider_key or self._default_provider)
         return await adapter.complete_json(
@@ -299,6 +305,7 @@ class LLMGateway:
             user_payload=user_payload,
             output_schema=output_schema,
             idempotency_key=f"graphytion:{agent_key}:{idempotency_key}",
+            model_key=model_key,
         )
 
 

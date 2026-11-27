@@ -86,3 +86,12 @@ This is a one-time owner action; do not expose a public self-service admin promo
 ## Invitation email activation
 
 Set `RESEND_API_KEY` and `INVITATION_FROM_EMAIL` on the API service only after the sender domain is verified in Resend. Until both are configured, invitation creation returns a provider-configuration error and does not expose the raw invitation token to Admin or Customer clients.
+
+
+## Recent render correctness hardening
+
+- The API rejects unpaired crossfade metadata before persisting a timeline or accepting a render request. The browser Player and render bundle use the same registered transition implementation.
+- Audio clips receive transition-derived fade-in/fade-out frame values from the immutable timeline snapshot; this is a real volume envelope, not a visual opacity effect.
+- Worker retries use the database-persisted `max_attempts` budget, including bounded timeout retries. PostgreSQL remains authoritative for the attempt count.
+- Final output metadata is checked with ffprobe before thumbnail upload. Preview renditions are independently checked for MP4/H.264, expected half-resolution even dimensions, and duration within one frame before the API persists the sidecar.
+- These code changes do not apply database migrations or deploy Railway services. A real render remains blocked until FastAPI is healthy with the dedicated runtime database role and required migrations are applied through the authorized production procedure.

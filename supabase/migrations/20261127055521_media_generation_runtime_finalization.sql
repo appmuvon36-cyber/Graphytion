@@ -235,7 +235,7 @@ language sql security definer set search_path='' as $$
   order by j.completed_at asc
   for update skip locked
   limit least(greatest(coalesce(p_limit,50),1),100)
-$;
+$$;
 
 revoke all on function private.graphytion_pending_media_reconciliation_jobs(integer) from public,anon,authenticated,service_role;
 grant execute on function private.graphytion_pending_media_reconciliation_jobs(integer) to graphytion_api;

@@ -39,7 +39,7 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  const clipVolume=Math.max(0,Math.min(1,Number(clip.props.volume??1)*track.volume*keyValue('volume',1)));
  const audioFadeIn=clip.transitionIn&&['fade','dissolve','crossfade'].includes(clip.transitionIn.type)?clip.transitionIn.durationFrames:0;
  const audioFadeOut=clip.transitionOut&&['fade','dissolve','crossfade'].includes(clip.transitionOut.type)?clip.transitionOut.durationFrames:0;
- const effects=clip.props.effects??{};
+ const effects=(clip.props.effects??{}) as Record<string,number>;
  const filter=[`brightness(${Number(effects.brightness??1)})`,`contrast(${Number(effects.contrast??1)})`,`saturate(${Number(effects.saturation??1)})`,`grayscale(${Number(effects.grayscale??0)})`,`sepia(${Number(effects.sepia??0)})`,`blur(${Number(effects.blur??0)}px)`,`hue-rotate(${Number(effects.hue_rotate??0)}deg)`].join(' ');
  const props={...clip.props,...(clip.crop?{crop:clip.crop}:{}),durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'?{fadeInFrames:Math.max(Number(clip.props.fadeInFrames)||0,audioFadeIn),fadeOutFrames:Math.max(Number(clip.props.fadeOutFrames)||0,audioFadeOut)}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
  const Component=definition.component;

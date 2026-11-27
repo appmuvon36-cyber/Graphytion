@@ -91,11 +91,13 @@ class Worker:
             return False
         job_id = job["id"]
         provider = GeminiMediaProvider(os.environ.get("GEMINI_API_KEY", ""))
-        if not provider.configured():
+        configured = provider.configured() if job["media_type"] == "image" else provider.video_configured()
+        if not configured:
+            error_code = "GEMINI_IMAGE_PROVIDER_NOT_CONFIGURED" if job["media_type"] == "image" else "GOOGLE_AGENT_PLATFORM_CREDENTIALS_NOT_CONFIGURED"
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/failed",
                 method="POST", params={"worker_id": WORKER_ID},
-                json={"error_code": "GEMINI_MEDIA_PROVIDER_NOT_CONFIGURED", "retryable": False},
+                json={"error_code": error_code, "retryable": False},
             )
             return True
         cancel_event = asyncio.Event()
@@ -106,12 +108,12 @@ class Worker:
                 prompt=job["prompt"], model=job["model_key"],
                 aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "1:1"),
                 output_format=(job.get("generation_config") or {}).get("output_format", "png"),
+                image_size=(job.get("generation_config") or {}).get("image_size", "1K"),
                 configuration=job.get("generation_config") or {},
             ) if job["media_type"] == "image" else provider.generate_video(
                 prompt=job["prompt"], model=job["model_key"],
                 aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "16:9"),
                 duration_seconds=(job.get("generation_config") or {}).get("duration_seconds", 8),
-                resolution=(job.get("generation_config") or {}).get("resolution", "720p"),
                 configuration=job.get("generation_config") or {},
             )
         )

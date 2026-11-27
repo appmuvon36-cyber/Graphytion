@@ -359,9 +359,11 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
             update public.media_generation_jobs set status='cancelled',completed_at=now(),
               worker_id=null,lease_expires_at=null,updated_at=now() where id=:id
         """), {"id": generation_id})
-        await release_fixed_operation(
-            db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-            resource_id=generation_id, reason="cancelled_during_provider_execution")
+        await db.execute(text("""
+            update public.media_generation_jobs
+            set error_code='CANCELLED_PROVIDER_OUTCOME_UNKNOWN',updated_at=now()
+            where id=:id
+        """), {"id": generation_id})
         status = "cancelled"
     else:
         status = "queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] else "failed"
@@ -424,11 +426,13 @@ async def complete_media_generation_artifact(
     owner = await db.scalar(text("select private.graphytion_media_generation_owner(:id,:worker)"), {"id": generation_id, "worker": worker_id})
     if owner is None:
         raise HTTPException(409, "Media generation lease is no longer owned")
+    await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
         select * from public.media_generation_jobs where id=:id and worker_id=:worker
           and status='processing' for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
-    await set_rls_subject(db, str(owner))
+    if row is None:
+        raise HTTPException(409, "Media generation lease is no longer owned")
     maximum = MAX_IMAGE_BYTES if row["media_type"] == "image" else MAX_VIDEO_BYTES
     content = await file.read(maximum + 1)
     if not content or len(content) > maximum:

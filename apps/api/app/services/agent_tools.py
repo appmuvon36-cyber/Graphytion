@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 from uuid import UUID
 
@@ -94,11 +95,20 @@ class AgentToolRegistry:
         handler, stage = str(row["handler_key"]), str(row["stage"])
         if HANDLER_STAGE.get(handler) != stage:
             raise HTTPException(409, "Registered handler is not valid for this stage")
+        configuration = row["configuration"] or {}
+        provider_key = configuration.get("provider_key")
+        model_key = configuration.get("model_key")
+        if provider_key is not None and provider_key not in {"openai", "gemini"}:
+            raise HTTPException(409, "Tool configuration contains an unsupported LLM provider")
+        if model_key is not None and (
+            not isinstance(model_key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model_key)
+        ):
+            raise HTTPException(409, "Tool configuration contains an invalid model key")
         return AgentTool(
             id=row["id"], key=row["tool_key"], agent_key=row["agent_key"],
             stage=stage, handler_key=handler, description=row["description"],
             permission=row["permission_key"], input_schema=row["input_schema"] or {},
-            configuration=row["configuration"] or {}, version=int(row["version"]),
+            configuration=configuration, version=int(row["version"]),
         )
 
     async def _allowed(self, *, db: AsyncSession, actor: UUID, workspace_id: UUID,

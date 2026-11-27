@@ -825,7 +825,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
             </div>
             <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
               {step.status==='waiting_approval'&&<button type="button" disabled={busy} onClick={()=>void approveWorkflowStep(step.id)} style={button}>Approve</button>}
-              {step.status==='ready'&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void completeWorkflowStep(step.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Mark complete</button>}
+              {step.status==='ready'&&step.step_type==='creative'&&step.requires_approval&&Boolean(step.approved_at)&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void completeWorkflowStep(step.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Mark complete</button>}
             </div>
           </div>)}
         </>}

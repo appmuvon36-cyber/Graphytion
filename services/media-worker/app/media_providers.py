@@ -10,7 +10,7 @@ class GeminiMediaProvider:
     """Gemini Interactions API adapter for image and short-video generation."""
 
     IMAGE_MODELS = {"gemini-3.1-flash-image"}
-    VIDEO_MODELS = {"gemini-omni-1.2-flash", "gemini-omni-1.1-flash-preview"}
+    VIDEO_MODELS = {"gemini-omni-1.2-flash", "gemini-omni-1.1-flash"}
 
     def __init__(self, api_key: str):
         self.api_key = api_key

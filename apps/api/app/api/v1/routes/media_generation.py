@@ -180,7 +180,8 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
     try:
         rows = (await db.execute(text("""
         select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
-               provider_job_id as provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
+               retry_count,max_retries,next_retry_at,last_error,last_error_class,provider_operation_status,
+               quota_reconciliation_status,provider_job_id as provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
                provider_cost_status,provider_cost_microusd,operational_cost_microusd,
                quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
@@ -224,8 +225,11 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
         "id": str(row["id"]), "project_id": str(row["project_id"]),
         "media_type": row["media_type"], "provider_key": row["provider_key"],
         "model_key": row["model_key"], "status": row["status"],
-        "provider_operation_id": row["provider_job_id"],
+        "provider_operation_id": row["provider_job_id"], "provider_operation_status": row["provider_operation_status"],
         "error_code": row["error_code"], "attempt_count": row["attempt_count"],
+        "retry_count": row["retry_count"], "max_retries": row["max_retries"], "next_retry_at": row["next_retry_at"],
+        "last_error": row["last_error"], "last_error_class": row["last_error_class"],
+        "quota_reconciliation_status": row["quota_reconciliation_status"],
         "generation_config": row["generation_config"],
         "provider_provenance": row["provider_provenance"],
         "provider_usage": row["provider_usage"],
@@ -251,7 +255,7 @@ async def retry_media_generation(
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
     row = (await db.execute(text("""
-        select id,project_id,workspace_id,media_type,status,provider_job_id,provider_operation_status
+        select id,project_id,workspace_id,media_type,status,provider_job_id,provider_operation_status,quota_reservation_id
         from public.media_generation_jobs where id=:id for update
     """), {"id": generation_id})).mappings().first()
     if row is None:
@@ -263,12 +267,16 @@ async def retry_media_generation(
         raise HTTPException(409, "The previous provider operation remains linked; resolve its provider cost and reconciliation before starting a new generation")
     operation = "image_generation" if row["media_type"] == "image" else "video_generation"
     resource_type = operation
-    reservation = await reserve_fixed_operation(
-        db, workspace_id=row["workspace_id"], project_id=row["project_id"],
-        resource_type=resource_type, resource_id=generation_id,
-        operation_key=operation, units=1,
-        idempotency_key=f"media-generation:{generation_id}:retry:{idempotency_key}",
-    )
+    reservation_status = await db.scalar(text("select status from public.quota_reservations where id=:id"), {"id": row["quota_reservation_id"]}) if row["quota_reservation_id"] else None
+    if row["quota_reservation_id"] and reservation_status == "reserved":
+        reservation = row["quota_reservation_id"]
+    else:
+        reservation = await reserve_fixed_operation(
+            db, workspace_id=row["workspace_id"], project_id=row["project_id"],
+            resource_type=resource_type, resource_id=generation_id,
+            operation_key=operation, units=1,
+            idempotency_key=f"media-generation:{generation_id}:retry:{idempotency_key}",
+        )
     await db.execute(text("""
         update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
           attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
@@ -465,10 +473,9 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
               completed_at=case when :status='failed' then now() else null end,updated_at=now()
             where id=:id
         """), {"id": generation_id, "status": status, "error": payload.error_code})
-        if status == "failed" and row["provider_job_id"] is None:
-            await release_fixed_operation(
-                db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-                resource_id=generation_id, reason=payload.error_code)
+        # Keep reservations open after provider attempts: a timeout or terminal error
+        # does not prove that the provider incurred zero billable cost. Reconciliation
+        # or an explicit pre-provider cancellation is the only release path.
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
         values(:actor,:workspace,'media_generation.failed','media_generation',:id,:request,cast(:metadata as jsonb))

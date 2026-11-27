@@ -15,7 +15,7 @@ The PRD and the repository's existing implementation are the controlling enginee
 - All implementation work targets `main`, as explicitly requested by the repository owner.
 - Do not create staging, preview, development, or feature branches unless the owner explicitly changes this policy.
 - Do not create a Supabase staging project or database branch.
-- Do not deploy or trigger a production deployment unless the owner explicitly requests deployment.
+- Production deployment is authorized during the current deployment phase when required to deliver an explicitly requested implementation. Use only the existing Graphytion Railway project and services; never create duplicate services. Do not create staging or preview deployments.
 - Keep commits small, scoped, descriptive, and reversible.
 - Never force-push, rewrite history, or delete existing production data.
 
@@ -95,7 +95,7 @@ Because work is performed on `main`:
 - Keep API changes compatible with the deployed frontend until both sides are updated.
 - Keep migrations forward-safe and data-preserving.
 - Do not commit secrets, local `.env` files, access tokens, service keys, private credentials, generated customer media, or production data exports.
-- Do not trigger deployment workflows unless explicitly requested.
+- Trigger the existing production deployment workflow when an implementation commit is ready and deployment is part of the owner's current task. Never trigger staging or preview deployments.
 - After each coherent implementation slice, summarize changed paths, commit SHA, migration implications, and remaining work.
 
 ## 8. Frontend rules
@@ -192,4 +192,4 @@ Do not claim "complete", "production-ready", "tested", "deployed", or "verified"
 - No public exposure of secrets or private storage.
 - No destructive database changes without explicit approval.
 - No force-push or history rewrite.
-- No deployment without explicit instruction.
+- Production deployment is permitted when explicitly authorized by the owner; the current deployment phase authorization applies to this Graphytion execution. No staging or preview deployments.

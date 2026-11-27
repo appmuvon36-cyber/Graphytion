@@ -224,10 +224,11 @@ async def audit_auth_event(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     # Anonymous recovery/resend events still require the restricted runtime
-    # database role; authenticated events additionally bind the verified subject.
-    await set_rls_runtime_role(db)
+    # database role; authenticated events bind the verified subject in one step.
     if actor is not None:
         await set_rls_subject(db, str(actor))
+    else:
+        await set_rls_runtime_role(db)
     await db.execute(
         text("""
             insert into public.audit_logs(

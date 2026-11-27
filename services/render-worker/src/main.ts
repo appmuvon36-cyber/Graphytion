@@ -121,7 +121,10 @@ async function processJob(jobId?: string): Promise<boolean> {
       if (update.cancel_requested) cancelRender();
     } catch (error) {
       console.error('render_lease_heartbeat_failed', {render_job_id: claimed.id, error});
-      cancelRender();
+      // Only a definitive lost-lease response should stop rendering. A brief
+      // API/network outage is retried on the next heartbeat instead of being
+      // misreported as a user cancellation.
+      if (error instanceof Error && /HTTP 409/.test(error.message)) cancelRender();
     }
   }, 30000);
   try {
@@ -161,7 +164,7 @@ async function processJob(jobId?: string): Promise<boolean> {
             if (update.cancel_requested) cancelRender();
           }).catch(error => {
             console.error('render_progress_update_failed', {render_job_id: claimed.id, error});
-            cancelRender();
+            if (error instanceof Error && /HTTP 409/.test(error.message)) cancelRender();
           });
         }
       },

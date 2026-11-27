@@ -24,7 +24,7 @@ api_router.include_router(platform_admin.router, prefix="/admin", tags=["platfor
 api_router.include_router(render.router, tags=["render jobs", "render workers"])
 api_router.include_router(assets.router, tags=["project assets"])
 api_router.include_router(timeline.router, tags=["multi-track timeline"])
-api_router.include_router(voiceover.router, tags=["TTS and voiceover"])
+api_router.include_router(voiceover.router, tags=["TTS and voiceover"])\napi_router.include_router(media_generation.router, tags=["image and video generation"])
 api_router.include_router(subtitles.router, tags=["subtitle tracks"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])

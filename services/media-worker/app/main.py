@@ -125,8 +125,17 @@ class Worker:
             )
             log.info("voiceover_completed", extra={"generation_id": job_id, "bytes": len(audio)})
         except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            retryable = status_code in {408, 425, 429} or status_code >= 500
+            if retryable:
+                retry_after = exc.response.headers.get("retry-after")
+                try:
+                    delay = float(retry_after) if retry_after else 2 ** min(max(int(job.get("attempt_count", 1)) - 1, 0), 5)
+                except (TypeError, ValueError):
+                    delay = 2 ** min(max(int(job.get("attempt_count", 1)) - 1, 0), 5)
+                await asyncio.sleep(max(1, min(delay, 60)))
             await self.fail(
-                job_id, f"TTS_PROVIDER_HTTP_{exc.response.status_code}", exc.response.status_code >= 500
+                job_id, f"TTS_PROVIDER_HTTP_{status_code}", retryable
             )
         except (httpx.TimeoutException, httpx.TransportError):
             await self.fail(job_id, "TTS_PROVIDER_NETWORK_ERROR", True)

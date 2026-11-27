@@ -375,6 +375,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const narration = voiceText.trim() || parsedScriptSegments.map(segment=>segment.text).join('\n');
       if (!visualPrompt.trim()) throw new Error('Isi Media Prompt atau storyboard visual direction sebelum menjalankan workflow otomatis.');
       if (!narration.trim()) throw new Error('Isi Voice Text atau script segments sebelum menjalankan workflow otomatis.');
+      if (voiceProvider !== 'gemini' || !voiceModel.startsWith('gemini-') || !voiceModel.endsWith('-tts')) {
+        throw new Error('Workflow otomatis menggunakan Gemini Developer API Direct untuk TTS. Pilih Gemini TTS dan model Gemini yang valid.');
+      }
       const subtitleTexts = parsedScriptSegments.length ? parsedScriptSegments.map(segment=>segment.text) : [narration];
       let subtitleCursor = 0;
       const subtitleSegments = subtitleTexts.flatMap(value => {
@@ -397,7 +400,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
           config:{media_type:mediaType,model_key:mediaType==='image'?'gemini-3.1-flash-image':'gemini-omni-1.2-flash',prompt:visualPrompt,generation_config:mediaConfig} },
         { key:'asset_persistence', step_type:'asset_persistence', depends_on:['media_generation'] },
         { key:'voiceover', step_type:'voiceover', depends_on:['creative_review'],
-          config:{text:narration,provider_key:voiceProvider,model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID'} },
+          config:{text:narration,provider_key:'gemini',model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID'} },
         { key:'audio_processing', step_type:'audio_processing', depends_on:['voiceover'] },
         { key:'subtitle', step_type:'subtitle', depends_on:['audio_processing'],
           config:{language:project?.default_language||'id-ID',format:'webvtt',style_config:{position:'bottom'},segments:subtitleSegments} },

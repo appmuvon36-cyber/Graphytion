@@ -407,7 +407,7 @@ async def save_media_provider_operation(
     result = await db.execute(text("""
         update public.media_generation_jobs
         set provider_operation_id=:operation,updated_at=now()
-        where id=:id and worker_id=:worker and status='processing'
+        where id=:id and worker_id=:worker and status in ('processing','cancel_requested')
           and provider_key='gemini'
         returning id
     """), {"operation": operation_id, "id": generation_id, "worker": worker_id})

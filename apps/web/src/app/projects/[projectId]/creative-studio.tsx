@@ -218,7 +218,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     try {
       const result = await api.createMediaGeneration(projectId, {
         media_type: mediaType,
-        provider_key: mediaType === 'image' ? 'gemini' : 'google_agent_platform',
+        provider_key: 'gemini',
         model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
         prompt: mediaPrompt.trim(),
         generation_config: mediaType === 'image'

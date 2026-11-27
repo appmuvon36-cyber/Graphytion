@@ -17,7 +17,6 @@ from app.services.supabase_auth import supabase_auth
 from app.services.llm_gateway import model_router
 from app.core.config import settings
 from app.services.queue_notifications import notify_worker
-from app.services.quota import reverse_quota, reserve_fixed_operation
 
 router = APIRouter()
 
@@ -734,13 +733,6 @@ async def admin_retry_render_job(
         if not exists:
             raise HTTPException(status_code=404, detail="Render job not found")
         raise HTTPException(status_code=409, detail="Only failed render jobs can be retried")
-    snapshot=dict(row["timeline_snapshot"])
-    await reserve_fixed_operation(
-        db,workspace_id=row["workspace_id"],project_id=row["project_id"],resource_type="render_job",
-        resource_id=render_job_id,operation_key="render_per_second",
-        units=max(1,(int(snapshot["durationFrames"])+int(snapshot["fps"])-1)//int(snapshot["fps"])),
-        idempotency_key="render:"+str(render_job_id)+":admin-retry:"+str(row["attempt_count"]+1),
-    )
     await _audit(db, request, actor, "platform.render_job.retried", "render_job",
                  render_job_id, {"attempt_count": row["attempt_count"], "max_attempts": row["max_attempts"]})
     await db.commit()
@@ -774,75 +766,12 @@ async def admin_retry_media_job(
         if not exists:
             raise HTTPException(status_code=404, detail="Media job not found")
         raise HTTPException(status_code=409, detail="Only failed or unavailable media jobs can be retried")
-    await reserve_fixed_operation(
-        db,workspace_id=row["workspace_id"],project_id=row["project_id"],resource_type="voiceover",
-        resource_id=generation_id,operation_key="voiceover_per_1000_chars",
-        units=max(1,(len(row["input_text"])+999)//1000),
-        idempotency_key="voiceover:"+str(generation_id)+":admin-retry:"+str(row["attempt_count"]+1),
-    )
     await _audit(db, request, actor, "platform.media_job.retried", "audio_generation",
                  generation_id, {"attempt_count": row["attempt_count"], "max_attempts": row["max_attempts"]})
     await db.commit()
     await notify_worker("media", str(generation_id))
     return {"data": {"generation_id": str(generation_id), "status": "queued"}}
 
-
-
-class ModelPriceInput(BaseModel):
-    input_microusd_per_million: int = Field(ge=0, le=100_000_000_000)
-    output_microusd_per_million: int = Field(ge=0, le=100_000_000_000)
-    notes: str | None = Field(default=None, max_length=500)
-
-
-@router.get("/providers/model-prices")
-async def list_model_prices(claims: AuthenticatedClaims, db: AsyncSession = DbSession):
-    actor = _actor(claims)
-    await _require_platform_admin(db, actor)
-    rows = (await db.execute(text("""
-        select id,provider_key,model_key,input_microusd_per_million,
-               output_microusd_per_million,effective_at,is_active,notes,created_at
-        from public.ai_model_prices order by provider_key,model_key,effective_at desc limit 500
-    """))).mappings().all()
-    return {"data": [dict(row) for row in rows]}
-
-
-@router.put("/providers/model-prices/{provider_key}/{model_key}")
-async def set_model_price(
-    provider_key: str, model_key: str, payload: ModelPriceInput, request: Request,
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_super_admin(db, actor)
-    provider, model = provider_key.strip().lower(), model_key.strip()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
-        raise HTTPException(status_code=422, detail="Invalid provider key")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model):
-        raise HTTPException(status_code=422, detail="Invalid model key")
-    await db.execute(text("""
-        update public.ai_model_prices set is_active=false
-        where provider_key=:provider and model_key=:model and is_active=true
-    """), {"provider": provider, "model": model})
-    row = (await db.execute(text("""
-        insert into public.ai_model_prices(
-            provider_key,model_key,input_microusd_per_million,
-            output_microusd_per_million,notes,created_by
-        ) values (:provider,:model,:input_rate,:output_rate,:notes,:actor)
-        returning id,provider_key,model_key,input_microusd_per_million,
-                  output_microusd_per_million,effective_at,is_active,notes,created_at
-    """), {
-        "provider": provider, "model": model,
-        "input_rate": payload.input_microusd_per_million,
-        "output_rate": payload.output_microusd_per_million,
-        "notes": payload.notes, "actor": actor,
-    })).mappings().one()
-    await _audit(db, request, actor, "platform.ai_model_price.updated",
-        "ai_model_price", row["id"], {
-            "provider_key": provider, "model_key": model,
-            "input_microusd_per_million": payload.input_microusd_per_million,
-            "output_microusd_per_million": payload.output_microusd_per_million,
-        })
-    await db.commit()
-    return {"data": dict(row)}
 
 
 @router.get("/usage")
@@ -855,9 +784,7 @@ async def platform_usage(
     totals = (await db.execute(text("""
         select coalesce(sum(input_tokens),0)::bigint as input_tokens,
           coalesce(sum(output_tokens),0)::bigint as output_tokens,
-          coalesce(sum(total_cost_microusd),0)::bigint as priced_cost_microusd,
-          count(*) filter (where cost_status='priced')::bigint as priced_events,
-          count(*) filter (where cost_status='unpriced')::bigint as unpriced_events
+          count(*)::bigint as events
         from public.ai_usage_events
         where created_at >= now()-make_interval(days => :days)
     """), {"days": days})).mappings().one()
@@ -865,235 +792,11 @@ async def platform_usage(
         select provider_key,model_key,
           coalesce(sum(input_tokens),0)::bigint as input_tokens,
           coalesce(sum(output_tokens),0)::bigint as output_tokens,
-          coalesce(sum(total_cost_microusd),0)::bigint as cost_microusd,
           count(*)::bigint as events
         from public.ai_usage_events
         where created_at >= now()-make_interval(days => :days)
         group by provider_key,model_key
-        order by cost_microusd desc,events desc limit 100
+        order by events desc limit 100
     """), {"days": days})).mappings().all()
     return {"data": {"period_days": days, "totals": dict(totals),
                      "by_provider_model": [dict(row) for row in breakdown]}}
-
-
-class WorkspaceQuotaInput(BaseModel):
-    quota_limit_microusd: int = Field(gt=0, le=10**15)
-    period_start: datetime
-    period_end: datetime
-    status: str = Field(default="active", pattern="^(active|paused)$")
-
-
-@router.get("/workspaces/{workspace_id}/quota")
-async def get_workspace_quota(
-    workspace_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_platform_admin(db, actor)
-    row = (await db.execute(text("""
-        select workspace_id,quota_limit_microusd,consumed_microusd,reserved_microusd,
-               period_start,period_end,status,updated_at
-        from public.workspace_quota_accounts where workspace_id=:workspace
-    """), {"workspace": workspace_id})).mappings().first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Workspace quota is not configured")
-    data = dict(row)
-    data["available_microusd"] = max(
-        0, int(row["quota_limit_microusd"])-int(row["consumed_microusd"])-int(row["reserved_microusd"])
-    )
-    ledger = (await db.execute(text("""
-        select id,reservation_id,entry_type,amount_microusd,idempotency_key,metadata,created_at
-        from public.quota_ledger_entries where workspace_id=:workspace
-        order by created_at desc limit 50
-    """), {"workspace": workspace_id})).mappings().all()
-    return {"data": data, "ledger": [dict(item) for item in ledger]}
-
-
-@router.put("/workspaces/{workspace_id}/quota")
-async def set_workspace_quota(
-    workspace_id: UUID, payload: WorkspaceQuotaInput, request: Request,
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_super_admin(db, actor)
-    if payload.period_end <= payload.period_start:
-        raise HTTPException(status_code=422, detail="Quota period_end must be later than period_start")
-    if await db.scalar(text("select id from public.workspaces where id=:workspace"), {"workspace": workspace_id}) is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    current = (await db.execute(text("""
-        select consumed_microusd,reserved_microusd,period_start
-        from public.workspace_quota_accounts where workspace_id=:workspace for update
-    """), {"workspace": workspace_id})).mappings().first()
-    reset_usage = bool(current and payload.period_start > current["period_start"])
-    if current and reset_usage and int(current["reserved_microusd"]) > 0:
-        raise HTTPException(status_code=409, detail="Cannot roll the quota period while reservations are still active")
-    if current and not reset_usage and payload.quota_limit_microusd < int(current["consumed_microusd"])+int(current["reserved_microusd"]):
-        raise HTTPException(status_code=409, detail="New quota limit cannot be below consumed plus reserved usage")
-    if current and reset_usage and payload.quota_limit_microusd < int(current["reserved_microusd"]):
-        raise HTTPException(status_code=409, detail="New quota limit cannot be below outstanding reservations")
-    row = (await db.execute(text("""
-        insert into public.workspace_quota_accounts(
-            workspace_id,quota_limit_microusd,period_start,period_end,status,updated_by
-        ) values (:workspace,:limit,:start,:end,:status,:actor)
-        on conflict(workspace_id) do update set
-            quota_limit_microusd=excluded.quota_limit_microusd,
-            period_start=excluded.period_start,period_end=excluded.period_end,
-            consumed_microusd=case when :reset_usage then 0 else public.workspace_quota_accounts.consumed_microusd end,
-            status=excluded.status,updated_by=excluded.updated_by,updated_at=now()
-        returning workspace_id,quota_limit_microusd,consumed_microusd,reserved_microusd,
-                  period_start,period_end,status,updated_at
-    """), {"workspace": workspace_id, "limit": payload.quota_limit_microusd,
-           "start": payload.period_start, "end": payload.period_end,
-           "status": payload.status, "actor": actor, "reset_usage": reset_usage})).mappings().one()
-    await _audit(db, request, actor, "platform.workspace_quota.updated",
-        "workspace_quota", workspace_id, {
-            "quota_limit_microusd": payload.quota_limit_microusd,
-            "period_start": payload.period_start.isoformat(),
-            "period_end": payload.period_end.isoformat(),
-            "status": payload.status,
-        })
-    await db.commit()
-    return {"data": dict(row)}
-
-
-class QuotaOperationPriceInput(BaseModel):
-    microusd_per_unit: int = Field(gt=0, le=10**12)
-    unit_name: str = Field(min_length=1, max_length=64)
-    notes: str | None = Field(default=None, max_length=500)
-
-
-@router.get("/quota/operation-prices")
-async def list_quota_operation_prices(claims: AuthenticatedClaims, db: AsyncSession = DbSession):
-    actor = _actor(claims)
-    await _require_platform_admin(db, actor)
-    rows = (await db.execute(text("""
-        select id,operation_key,microusd_per_unit,unit_name,effective_at,is_active,notes,created_at
-        from public.quota_operation_prices where price_kind='quota' order by operation_key,effective_at desc limit 100
-    """))).mappings().all()
-    return {"data": [dict(row) for row in rows]}
-
-
-@router.put("/quota/operation-prices/{operation_key}")
-async def set_quota_operation_price(
-    operation_key: str, payload: QuotaOperationPriceInput, request: Request,
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_super_admin(db, actor)
-    allowed = {"voiceover_per_1000_chars","render_per_second"}  # Media generation is free personal usage.
-    if operation_key not in allowed:
-        raise HTTPException(status_code=422, detail="Unsupported quota operation key")
-    await db.execute(text("""
-        update public.quota_operation_prices set is_active=false
-        where operation_key=:operation and price_kind='quota' and is_active=true
-    """), {"operation": operation_key})
-    row = (await db.execute(text("""
-        insert into public.quota_operation_prices(
-            operation_key,microusd_per_unit,unit_name,notes,created_by
-        ) values (:operation,:rate,:unit,:notes,:actor)
-        returning id,operation_key,microusd_per_unit,unit_name,effective_at,is_active,notes
-    """), {"operation": operation_key, "rate": payload.microusd_per_unit,
-           "unit": payload.unit_name.strip(), "notes": payload.notes, "actor": actor})).mappings().one()
-    await _audit(db, request, actor, "platform.quota_operation_price.updated",
-        "quota_operation_price", row["id"], {
-            "operation_key": operation_key, "microusd_per_unit": payload.microusd_per_unit,
-            "unit_name": payload.unit_name,
-        })
-    await db.commit()
-    return {"data": dict(row)}
-
-
-class QuotaReversalInput(BaseModel):
-    amount_microusd: int = Field(gt=0, le=10**15)
-    idempotency_key: str = Field(min_length=16, max_length=180)
-    reason: str = Field(min_length=3, max_length=240)
-
-
-@router.post("/quota-reservations/{reservation_id}/reverse")
-async def reverse_workspace_quota(
-    reservation_id: UUID, payload: QuotaReversalInput, request: Request,
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_super_admin(db, actor)
-    row = (await db.execute(text("""
-        select id,workspace_id,consumed_microusd,status
-        from public.quota_reservations where id=:id
-    """), {"id": reservation_id})).mappings().first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Quota reservation not found")
-    await reverse_quota(
-        db, reservation_id=reservation_id, amount_microusd=payload.amount_microusd,
-        idempotency_key=payload.idempotency_key, reason=payload.reason,
-    )
-    await _audit(db, request, actor, "platform.quota.reversed",
-        "quota_reservation", reservation_id, {
-            "workspace_id": str(row["workspace_id"]),
-            "amount_microusd": payload.amount_microusd, "reason": payload.reason,
-        })
-    await db.commit()
-    return {"data": {"reservation_id": str(reservation_id), "status": "reversed",
-                     "amount_microusd": payload.amount_microusd}}
-
-class MediaOperationalCostInput(BaseModel):
-    microusd_per_unit: int = Field(ge=0, le=10**15)
-    unit_name: Literal["image", "second"]
-    notes: str = Field(min_length=1, max_length=500)
-
-
-@router.get("/providers/media-operational-costs")
-async def list_media_operational_cost_prices(
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_platform_admin(db, actor)
-    rows = (await db.execute(text("""
-        select id,media_type,provider_key,model_key,operation_key,microusd_per_unit,unit_name,
-               effective_at,is_active,notes,created_at
-        from public.quota_operation_prices
-        where price_kind='operational'
-        order by media_type,provider_key,model_key,effective_at desc
-        limit 500
-    """))).mappings().all()
-    return {"data": [dict(row) for row in rows]}
-
-
-@router.put("/providers/media-operational-costs/{media_type}/{provider_key}/{model_key}")
-async def set_media_operational_cost_price(
-    media_type: str, provider_key: str, model_key: str,
-    payload: MediaOperationalCostInput, request: Request,
-    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
-):
-    actor = _actor(claims)
-    await _require_platform_admin(db, actor)
-    media = media_type.strip().lower()
-    provider, model = provider_key.strip().lower(), model_key.strip()
-    if media not in {"image", "video"}:
-        raise HTTPException(422, "Unsupported media type")
-    if payload.unit_name != ("image" if media == "image" else "second"):
-        raise HTTPException(422, "Operational cost unit does not match media type")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
-        raise HTTPException(422, "Invalid provider key")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model):
-        raise HTTPException(422, "Invalid model key")
-    await db.execute(text("""
-        update public.quota_operation_prices set is_active=false
-        where price_kind='operational' and media_type=:media and provider_key=:provider and model_key=:model and is_active=true
-    """), {"media": media, "provider": provider, "model": model})
-    row = (await db.execute(text("""
-        insert into public.quota_operation_prices(
-          operation_key,price_kind,media_type,provider_key,model_key,microusd_per_unit,unit_name,notes,created_by
-        ) values(:operation,'operational',:media,:provider,:model,:rate,:unit,:notes,:actor)
-        returning id,operation_key,price_kind,media_type,provider_key,model_key,microusd_per_unit,unit_name,effective_at,is_active
-    """), {"operation": "image_generation" if media == "image" else "video_generation",
-           "media": media, "provider": provider, "model": model,
-           "rate": payload.microusd_per_unit, "unit": payload.unit_name,
-           "notes": payload.notes, "actor": actor})).mappings().one()
-    await _audit(db, request, actor, "platform.media_operational_cost.updated",
-                 "media_operational_cost_price", row["id"], {
-                     "media_type": media, "provider_key": provider, "model_key": model,
-                     "microusd_per_unit": payload.microusd_per_unit, "unit_name": payload.unit_name,
-                 })
-    await db.commit()
-    return {"data": dict(row)}
-
-

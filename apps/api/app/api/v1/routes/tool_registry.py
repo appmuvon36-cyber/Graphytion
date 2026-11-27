@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,6 +168,41 @@ async def update_agent_tool(tool_id: UUID, payload: ToolUpdate, request: Request
                  "tool.updated", str(tool_id), {"fields": sorted(values), "active": row["is_active"]})
     await db.commit()
     return {"data": dict(row)}
+
+
+
+@router.get("/agent-tool-permissions")
+async def list_agent_tool_permissions(
+    claims: AuthenticatedClaims, workspace_id: UUID | None = Query(default=None),
+    include_revoked: bool = Query(default=False), db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _admin(db, actor)
+    rows = (await db.execute(text("""
+        select id,workspace_id,principal_type,principal_id,tool_key,permission_key,
+               effect,valid_from,expires_at,revoked_at,created_by,updated_by,created_at,updated_at
+        from public.agent_tool_permissions
+        where (:workspace is null or workspace_id=:workspace)
+          and (:include_revoked or revoked_at is null)
+        order by created_at desc limit 1000
+    """), {"workspace": workspace_id, "include_revoked": include_revoked})).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
+@router.get("/agent-tool-audit")
+async def list_agent_tool_audit(
+    claims: AuthenticatedClaims, workspace_id: UUID | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500), db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _admin(db, actor)
+    rows = (await db.execute(text("""
+        select id,workspace_id,actor_user_id,tool_key,action,resource_id,request_id,metadata,created_at
+        from public.agent_tool_audit_events
+        where (:workspace is null or workspace_id=:workspace)
+        order by created_at desc limit :limit
+    """), {"workspace": workspace_id, "limit": limit})).mappings().all()
+    return {"data": [dict(row) for row in rows]}
 
 
 @router.post("/agent-tool-permissions", status_code=201)

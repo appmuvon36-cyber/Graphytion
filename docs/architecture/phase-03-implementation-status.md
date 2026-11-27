@@ -517,9 +517,9 @@ Existing production services only; no additional service or database was created
 
 This section supersedes earlier runtime statements above where they conflict with the current connected production evidence.
 
-**Current source:** branch `main`, HEAD `f01dc8cd495fdd37ce34db2aa70032c1730c1aa2`.  
-**Dispatcher implementation commit:** `8a962bbe233e6e8ca37e3c32e839b382b7e9d441`.  
-**CI:** workflow run `46048353245` completed SUCCESS on the dispatcher source commit. The subsequent HEAD commit only applied formatting to the API lifespan block. Railway rebuilt that final HEAD successfully.
+**Current source:** branch `main`, HEAD `a3def8e0e9efd6482f9ed24a50725a88ce43ba5a`.  
+**Dispatcher implementation commit:** `8a962bbe233e6e8ca37e3c32e839b382b7e9d441`. Subsequent integration refinements include RLS-safe reconciliation/failure recording, TTS word-alignment subtitle timing, and Studio auto-completion of the approved creative gate.  
+**CI:** workflow run `46049427514` completed SUCCESS on HEAD `a3def8e0e9efd6482f9ed24a50725a88ce43ba5a`; typecheck, web/admin build, Remotion bundle, migration SQL parse, Python compile/lint/import, worker import and FastAPI startup smoke all passed. Railway rebuilt and started that HEAD successfully.
 
 ### Persistent Orchestrator Dispatcher
 
@@ -531,7 +531,7 @@ This section supersedes earlier runtime statements above where they conflict wit
 | Versioned payload contract | IMPLEMENTED | Strict Pydantic envelope and per-step configuration models; persisted `payload_schema_version`, `payload_contract`, `input_fingerprint`. |
 | Retry and cancellation | IMPLEMENTED | Persisted retry count, next retry, error class and backoff; cancellation of unattached DAG steps is reconciled with Production Run cancellation. |
 | Audit / lineage | INTEGRATED | Claim, start, completion, child attachment, retry, timeout, recovery, cancellation and approval are represented in workflow events; child rows retain Production Run and parent-step references. |
-| Media / TTS / subtitle / timeline / render handlers | IMPLEMENTED / INTEGRATED | Dispatcher creates and attaches idempotent media, audio and render jobs; subtitle track creation uses existing revision helper; timeline composes persisted media, voiceover and subtitle references. |
+| Media / TTS / subtitle / timeline / render handlers | IMPLEMENTED / INTEGRATED | Dispatcher creates and attaches idempotent media, audio and render jobs; subtitle track creation uses the existing revision helper and persisted TTS word alignment when available; timeline composes persisted media, voiceover and subtitle references. |
 | Derived asset/audio/composition/QC/delivery steps | INTEGRATED | Existing `private.graphytion_sync_production_run` remains the deterministic artifact-reconciliation state machine. These nodes are not redundantly claimed by the dispatcher. |
 | Agent Intelligence | INTEGRATED | Existing creative worker, five-agent registry and four-tool registry remain the agent execution path; dispatcher consumes the persisted agent task and enforces the creative approval gate. |
 | MP4 private delivery | INTEGRATED, NOT RUNTIME-VERIFIED | Existing Render Worker, private `render-artifacts` bucket, render metadata, lineage and secure download path remain the final delivery path. No new render was run under the no-generation/no-render instruction. |
@@ -542,9 +542,9 @@ Three additive migrations are applied to project `xtjwmezfzexvupbfsdqt`:
 
 - `20261127180420_persistent_orchestrator_dispatcher.sql`
 - `20261127180559_dispatch_only_executable_production_steps.sql`
-- `20261127180718_dispatcher_timeout_reconciliation.sql`
+- `20261127180718_dispatcher_timeout_reconciliation.sql`\n- `20261127182523_orchestrator_privileged_reconciliation.sql`
 
-Production history contains 48 migrations; all 48 versions have matching repository migration files. The new step lease/payload/retry columns are present, both private claim/heartbeat functions are SECURITY DEFINER with EXECUTE granted to `graphytion_api` and `graphytion_runtime`, and RLS remains enabled on `production_run_steps`.
+Production history contains 49 migrations; all 49 versions have matching repository migration files. The new step lease/payload/retry columns are present, the four private worker functions for claim, heartbeat, active-run reconciliation and failure recording are SECURITY DEFINER with EXECUTE granted to `graphytion_api` and `graphytion_runtime`, and RLS remains enabled on `production_run_steps`.
 
 The five-agent/four-tool registry is retained. Storage buckets `avatars`, `project-assets`, and `render-artifacts` are all private.
 
@@ -552,8 +552,8 @@ The five-agent/four-tool registry is retained. Storage buckets `avatars`, `proje
 
 The existing four-service topology remains unchanged:
 
-- API: deployment `184b9e02-754c-408e-b87b-cfaf38025164` — SUCCESS.
-- Media Worker: deployment `d1b4b4d8-5a41-4b88-ab2b-729eab3dd963` — SUCCESS.
+- API: deployment `e16b1dfa-293a-4016-b291-5e36ac1b0757` — SUCCESS.
+- Media Worker: deployment `66e095a8-b026-4d41-a009-ec9b178fcd7f` — SUCCESS.
 - Web: deployment `92f7f6fc-0288-48c1-b6ac-d5acea6bff1e` — SUCCESS.
 - Render Worker: deployment `59d052b0-a3ca-4492-ade7-6da23e394cea` — SUCCESS.
 

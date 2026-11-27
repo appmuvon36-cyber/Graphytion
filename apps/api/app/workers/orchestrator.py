@@ -158,7 +158,10 @@ async def _reset_worker_session(db: AsyncSession) -> None:
         """))
         await db.commit()
     except Exception:
-        await db.rollback()
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         logger.warning("orchestrator_worker_session_reset_failed", exc_info=True)
 
 

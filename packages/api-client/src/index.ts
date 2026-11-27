@@ -5,6 +5,7 @@ export type MediaGenerationApi = {
   provider_key: string;
   model_key: string;
   status: 'queued' | 'processing' | 'cancel_requested' | 'completed' | 'failed' | 'cancelled';
+  provider_operation_id?: string | null;
   error_code?: string | null;
   attempt_count: number;
   generation_config?: Record<string, unknown>;
@@ -26,7 +27,7 @@ export type MediaGenerationApi = {
 
 export type MediaGenerationCreate = {
   media_type: 'image' | 'video';
-  provider_key?: 'gemini' | 'google_agent_platform';
+  provider_key?: 'gemini';
   model_key: string;
   prompt: string;
   generation_config?: Record<string, unknown>;

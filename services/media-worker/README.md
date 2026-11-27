@@ -8,8 +8,8 @@ Build from repository root: `docker build -f services/media-worker/Dockerfile -t
 
 Both image and video generation use the **Gemini Developer API** and the same server-side `GEMINI_API_KEY` secret. The worker sends the key only in the `x-goog-api-key` request header; it is never returned to the browser or logged.
 
-- Image: `gemini-3.1-flash-image` through `POST https://generativelanguage.googleapis.com/v1beta/interactions`.
-- Video: `gemini-omni-1.2-flash` through the same Interactions API. Video jobs use background execution, persist the returned interaction ID, poll `GET /v1beta/interactions/{id}`, and request cancellation through `POST /v1beta/interactions/{id}/cancel` when cancellation is requested.
+- Image: `gemini-3.1-flash-image` through `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent`, using `generationConfig.imageConfig` for aspect ratio and image size.
+- Video: `gemini-omni-1.2-flash` through `POST https://generativelanguage.googleapis.com/v1beta/interactions`. Video jobs use background execution, persist the returned interaction ID, poll `GET /v1beta/interactions/{id}`, and request cancellation through `POST /v1beta/interactions/{id}/cancel` when cancellation is requested.
 - Video output is accepted only when the provider returns inline base64 MP4 data. Google Cloud Storage URIs are not fetched by this worker.
 
 Provider output is validated by MIME type and file signature before FastAPI stores it as a private project asset. Provider usage and cost remain explicitly unpriced unless verifiable usage and a matching active price-book entry are available. The worker never invents usage or cost.

@@ -167,6 +167,115 @@ class OpenAIChatCompletionsAdapter:
         ) from last_error
 
 
+class GeminiGenerateContentAdapter:
+    """Gemini JSON-mode adapter; Pydantic validates the returned domain schema."""
+
+    provider_key = "gemini"
+
+    def __init__(self, api_key: str, model_key: str, timeout_seconds: int = 60) -> None:
+        if not api_key:
+            raise ValueError("Gemini API key is required")
+        self._api_key = api_key
+        self._model_key = model_key
+        self._timeout = httpx.Timeout(float(timeout_seconds), connect=10.0)
+
+    async def complete_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: dict[str, Any],
+        output_schema: dict[str, Any],
+        idempotency_key: str,
+    ) -> ModelResult:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_key}:generateContent"
+        headers = {
+            "x-goog-api-key": self._api_key,
+            "Content-Type": "application/json",
+            "X-Graphytion-Idempotency-Key": idempotency_key[:255],
+        }
+        body = {
+            "systemInstruction": {
+                "parts": [{
+                    "text": (
+                        system_prompt
+                        + "\\nReturn a JSON object conforming to this schema:\\n"
+                        + json.dumps(output_schema, ensure_ascii=False)
+                    )
+                }]
+            },
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": json.dumps(user_payload, ensure_ascii=False)}],
+            }],
+            "generationConfig": {
+                "temperature": 0.4,
+                "responseMimeType": "application/json",
+            },
+        }
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    response = await client.post(url, headers=headers, json=body)
+                if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                    if attempt < 2:
+                        retry_after = response.headers.get("Retry-After", "").strip()
+                        try:
+                            delay = min(max(float(retry_after), 0.0), 30.0) if retry_after else 0.5 * (2**attempt)
+                        except ValueError:
+                            delay = 0.5 * (2**attempt)
+                        await asyncio.sleep(delay)
+                        continue
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "code": "LLM_PROVIDER_TEMPORARILY_UNAVAILABLE",
+                            "message": f"Gemini remained unavailable after bounded retries (HTTP {response.status_code}).",
+                        },
+                    )
+                if response.is_error:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "code": "LLM_PROVIDER_REJECTED",
+                            "message": f"Gemini rejected the request (HTTP {response.status_code}).",
+                        },
+                    )
+                payload = response.json()
+                candidates = payload.get("candidates") or []
+                parts = (candidates[0].get("content") or {}).get("parts") or [] if candidates else []
+                raw_output = "".join(
+                    part.get("text", "") for part in parts if isinstance(part.get("text"), str)
+                )
+                if not raw_output:
+                    raise ValueError("Gemini response did not contain JSON text")
+                parsed = json.loads(raw_output)
+                if not isinstance(parsed, dict):
+                    raise ValueError("Structured model output must be a JSON object")
+                usage = payload.get("usageMetadata") or {}
+                return ModelResult(
+                    output=parsed,
+                    provider_key=self.provider_key,
+                    model_key=self._model_key,
+                    input_tokens=usage.get("promptTokenCount"),
+                    output_tokens=usage.get("candidatesTokenCount"),
+                    request_id=payload.get("responseId"),
+                )
+            except HTTPException:
+                raise
+            except (httpx.TimeoutException, httpx.RequestError, ValueError, KeyError, IndexError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (2**attempt))
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "LLM_PROVIDER_UNAVAILABLE",
+                "message": "Gemini request failed after bounded retries.",
+            },
+        ) from last_error
+
+
 class LLMGateway:
     """Structured-output boundary used by all creative agents."""
 
@@ -203,4 +312,13 @@ if settings.openai_api_key_value:
             timeout_seconds=settings.llm_timeout_seconds,
         ),
     )
-llm_gateway = LLMGateway(model_router)
+if settings.gemini_api_key_value:
+    model_router.register(
+        "gemini",
+        GeminiGenerateContentAdapter(
+            api_key=settings.gemini_api_key_value,
+            model_key=settings.gemini_model_key,
+            timeout_seconds=settings.llm_timeout_seconds,
+        ),
+    )
+llm_gateway = LLMGateway(model_router, default_provider=settings.llm_default_provider)

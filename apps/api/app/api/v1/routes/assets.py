@@ -303,7 +303,7 @@ async def delete_project_asset(
     actor = _actor(claims)
     await set_rls_subject(db, str(actor))
     row = (await db.execute(text("""
-        select id,project_id,workspace_id,bucket,object_path,status
+        select id,project_id,workspace_id,bucket,object_path,status,generation_metadata
         from public.project_assets where id=:asset
     """), {"asset": asset_id})).mappings().first()
     if row is None or row["status"] == "deleted":
@@ -361,13 +361,18 @@ async def delete_project_asset(
     """), {"asset": asset_id})
     await db.commit()
     try:
-        await SupabaseStorage().remove(bucket=row["bucket"], object_path=row["object_path"])
+        storage = SupabaseStorage()
+        await storage.remove(bucket=row["bucket"], object_path=row["object_path"])
+        metadata = row["generation_metadata"] or {}
+        thumbnail = metadata.get("thumbnail") if isinstance(metadata, dict) else None
+        if isinstance(thumbnail, dict) and thumbnail.get("bucket") and thumbnail.get("object_path"):
+            await storage.remove(bucket=thumbnail["bucket"], object_path=thumbnail["object_path"])
     except Exception as exc:
         await db.execute(text("""
             update public.project_assets set status='delete_failed' where id=:asset
         """), {"asset": asset_id})
         await db.commit()
-        raise HTTPException(status_code=502, detail="Project asset storage deletion failed; retry is available") from exc
+        raise HTTPException(status_code=502, detail="Project asset or preview storage deletion failed; retry is available") from exc
     await db.execute(text("""
         update public.project_assets set status='deleted',deleted_at=now()
         where id=:asset

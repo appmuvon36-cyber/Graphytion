@@ -72,8 +72,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const call = useCallback(async <T,>(path: string, init: RequestInit = {}) => {
-    try { return await api.request<T>(path, init); }
+  const call = useCallback(async <T,>(request: string | (() => Promise<T>), init: RequestInit = {}) => {
+    try { return typeof request === 'function' ? await request() : await api.request<T>(request, init); }
     catch (e) {
       if (e instanceof ApiClientError && e.status === 401) setError('Sesi berakhir. Silakan masuk kembali ke Customer Studio.');
       throw e;
@@ -89,7 +89,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
         call<{data: StoryboardApi[]}>('/projects/' + projectId + '/storyboards'),
         call<{data: CreativeRunItem[]}>('/projects/' + projectId + '/creative-runs'),
-        call<{data: RenderItem[]}>('/projects/' + projectId + '/renders'),
+        call(() => api.listRenders(projectId)),
         call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets?scope=workspace'),
         call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
@@ -452,10 +452,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     if(!previewSnapshot)return;
     setBusy(true);setError('');setNotice('');
     try{
-      const result=await call<{data:{render_job_id:string;status:string}}>('/projects/'+projectId+'/renders',{
-        method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
-        body:JSON.stringify({snapshot:previewSnapshot}),
-      });
+      const result=await call(() => api.createRender(projectId,{snapshot:previewSnapshot},crypto.randomUUID()));
       setNotice('Current timeline render queued · '+result.data.render_job_id);
       await load();
     }catch(e){setError(e instanceof Error?e.message:'Timeline render submission failed');}
@@ -478,7 +475,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
 
   async function cancelRender(id: string) {
     setBusy(true); setError('');
-    try { await call('/renders/' + id + '/cancel', { method: 'POST' }); setNotice('Queued render cancelled.'); await load(); }
+    try { await call(() => api.cancelRender(id)); setNotice('Render cancellation requested.'); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Render cancellation failed'); }
     finally { setBusy(false); }
   }
@@ -486,7 +483,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   async function downloadRender(id: string) {
     setError('');
     try {
-      const result = await call<{data:{signed_url:string}}>('/renders/' + id + '/download');
+      const result = await call(() => api.downloadRender(id));
       window.location.assign(result.data.signed_url);
     } catch (e) { setError(e instanceof Error ? e.message : 'Render download unavailable'); }
   }

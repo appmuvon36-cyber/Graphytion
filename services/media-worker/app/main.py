@@ -95,7 +95,10 @@ class Worker:
         except Exception:
             log.exception("media_job_failure_callback_failed", extra={"generation_id": generation_id})
 
-    async def media_generation_heartbeat(self, generation_id: str, cancel_event: asyncio.Event) -> None:
+    async def media_generation_heartbeat(
+        self, generation_id: str, cancel_event: asyncio.Event,
+        lease_lost_event: asyncio.Event,
+    ) -> None:
         while not self.stop.is_set() and not cancel_event.is_set():
             await asyncio.sleep(30)
             try:
@@ -103,13 +106,30 @@ class Worker:
                     f"/internal/media-generation-jobs/{generation_id}/heartbeat",
                     method="POST", params={"worker_id": WORKER_ID},
                 )
-                if state.get("cancel_requested") or state.get("status") != "processing":
+                if state.get("cancel_requested"):
                     cancel_event.set()
                     return
+                if state.get("status") != "processing":
+                    lease_lost_event.set()
+                    cancel_event.set()
+                    return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 409:
+                    lease_lost_event.set()
+                    cancel_event.set()
+                    log.warning("media_generation_lease_lost", extra={"generation_id": generation_id})
+                    return
+                # A transient API 5xx/429 must not be mistaken for a user
+                # cancellation. Retry heartbeat; a real lease loss returns 409.
+                log.warning("media_generation_heartbeat_http_error", extra={
+                    "generation_id": generation_id, "status_code": exc.response.status_code,
+                })
+                await asyncio.sleep(5)
             except Exception:
+                # Preserve the in-flight provider operation during short network
+                # outages. PostgreSQL lease ownership is checked on the next pulse.
                 log.exception("media_generation_heartbeat_failed", extra={"generation_id": generation_id})
-                cancel_event.set()
-                return
+                await asyncio.sleep(5)
 
     async def process_generated_media(self) -> bool:
         try:
@@ -133,7 +153,10 @@ class Worker:
             )
             return True
         cancel_event = asyncio.Event()
-        heartbeat_task = asyncio.create_task(self.media_generation_heartbeat(job_id, cancel_event))
+        lease_lost_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            self.media_generation_heartbeat(job_id, cancel_event, lease_lost_event)
+        )
         cancel_wait = asyncio.create_task(cancel_event.wait())
 
         async def persist_provider_operation(operation_id: str) -> None:
@@ -176,14 +199,23 @@ class Worker:
                 try:
                     content, mime, provenance = await generation_task
                 except (asyncio.CancelledError, Exception):
+                    if lease_lost_event.is_set():
+                        log.warning("media_generation_stopped_after_lease_loss", extra={"generation_id": job_id})
+                        return True
                     await self.api(
                         f"/internal/media-generation-jobs/{job_id}/cancelled",
                         method="POST", params={"worker_id": WORKER_ID},
                     )
                     log.info("media_generation_cancelled", extra={"generation_id": job_id})
                     return True
+                if lease_lost_event.is_set():
+                    log.warning("media_generation_result_discarded_after_lease_loss", extra={"generation_id": job_id})
+                    return True
             else:
                 content, mime, provenance = await generation_task
+                if lease_lost_event.is_set():
+                    log.warning("media_generation_result_discarded_after_lease_loss", extra={"generation_id": job_id})
+                    return True
             thumbnail_content = None
             if job["media_type"] == "video":
                 try:
@@ -214,6 +246,9 @@ class Worker:
                 extra={"generation_id": job_id, "media_type": job["media_type"], "bytes": len(content)},
             )
         except httpx.HTTPStatusError as exc:
+            if lease_lost_event.is_set():
+                log.warning("media_generation_callback_skipped_after_lease_loss", extra={"generation_id": job_id})
+                return True
             status_code = exc.response.status_code
             retryable = status_code in {408, 425, 429} or status_code >= 500
             await self.api(

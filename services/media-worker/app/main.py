@@ -128,6 +128,7 @@ class Worker:
                 configuration=job.get("generation_config") or {},
                 cancel_event=cancel_event,
                 on_operation=persist_provider_operation,
+                existing_operation_id=job.get("provider_job_id"),
             )
         )
         try:

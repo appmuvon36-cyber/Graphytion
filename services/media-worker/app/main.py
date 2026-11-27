@@ -6,7 +6,9 @@ import logging
 import os
 import signal
 import socket
+import sys
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 from redis.asyncio import Redis
@@ -15,7 +17,35 @@ from app.audio_analysis import analyze_audio_bytes
 from app.providers import GeminiTTSProvider, OpenAITTSProvider
 from app.media_providers import GeminiMediaProvider
 
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+class JsonLogFormatter(logging.Formatter):
+    SAFE_CONTEXT_FIELDS = {
+        "path", "method", "attempt", "delay_seconds", "generation_id",
+        "job_id", "worker_id", "status_code", "error_code", "retryable",
+        "media_type", "provider", "model", "asset_id", "project_id",
+        "workspace_id", "duration_seconds", "operation_id",
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        event = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+            "level": record.levelname.lower(),
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for field in self.SAFE_CONTEXT_FIELDS:
+            value = getattr(record, field, None)
+            if value is not None:
+                event[field] = value
+        if record.exc_info:
+            event["exception"] = self.formatException(record.exc_info)
+        return json.dumps(event, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JsonLogFormatter())
+root_logger = logging.getLogger()
+root_logger.handlers[:] = [handler]
+root_logger.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 log = logging.getLogger("graphytion.media-worker")
 API_BASE = os.environ.get("GRAPHYTION_API_BASE_URL", "").rstrip("/")
 TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")

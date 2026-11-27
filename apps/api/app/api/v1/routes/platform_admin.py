@@ -242,7 +242,7 @@ async def platform_audit_logs(
 
 
 class PlatformMemberRoleUpdate(BaseModel):
-    role: str = Field(pattern=r"^(admin|editor|member|viewer|billing)$")
+    role: str = Field(pattern=r"^(admin|editor|member|viewer)$")
 
 
 @router.get("/workspaces/{workspace_id}/members")

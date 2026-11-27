@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 
 from app.audio_analysis import analyze_audio_bytes
 from app.providers import GeminiTTSProvider, OpenAITTSProvider
+from app.media_providers import GeminiMediaProvider
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("graphytion.media-worker")
@@ -61,8 +62,146 @@ class Worker:
         except Exception:
             log.exception("media_job_failure_callback_failed", extra={"generation_id": generation_id})
 
-    async def process(self) -> bool:
+    async def media_generation_heartbeat(self, generation_id: str, cancel_event: asyncio.Event) -> None:
+        while not self.stop.is_set() and not cancel_event.is_set():
+            await asyncio.sleep(30)
+            try:
+                state = await self.api(
+                    f"/internal/media-generation-jobs/{generation_id}/heartbeat",
+                    method="POST", params={"worker_id": WORKER_ID},
+                )
+                if state.get("cancel_requested") or state.get("status") != "processing":
+                    cancel_event.set()
+                    return
+            except Exception:
+                log.exception("media_generation_heartbeat_failed", extra={"generation_id": generation_id})
+                cancel_event.set()
+                return
+
+    async def process_generated_media(self) -> bool:
         try:
+            job = await self.api(
+                "/internal/media-generation-jobs/claim",
+                method="POST", params={"worker_id": WORKER_ID},
+            )
+        except Exception:
+            log.exception("media_generation_claim_failed")
+            return False
+        if not job:
+            return False
+        job_id = job["id"]
+        provider = GeminiMediaProvider(os.environ.get("GEMINI_API_KEY", ""))
+        if not provider.configured():
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/failed",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"error_code": "GEMINI_MEDIA_PROVIDER_NOT_CONFIGURED", "retryable": False},
+            )
+            return True
+        cancel_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(self.media_generation_heartbeat(job_id, cancel_event))
+        cancel_wait = asyncio.create_task(cancel_event.wait())
+        generation_task = asyncio.create_task(
+            provider.generate_image(
+                prompt=job["prompt"], model=job["model_key"],
+                aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "1:1"),
+                output_format=(job.get("generation_config") or {}).get("output_format", "png"),
+                configuration=job.get("generation_config") or {},
+            ) if job["media_type"] == "image" else provider.generate_video(
+                prompt=job["prompt"], model=job["model_key"],
+                aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "16:9"),
+                duration_seconds=(job.get("generation_config") or {}).get("duration_seconds", 8),
+                resolution=(job.get("generation_config") or {}).get("resolution", "720p"),
+                configuration=job.get("generation_config") or {},
+            )
+        )
+        try:
+            done, _ = await asyncio.wait(
+                {generation_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancel_wait in done and cancel_event.is_set():
+                generation_task.cancel()
+                try:
+                    await generation_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                await self.api(
+                    f"/internal/media-generation-jobs/{job_id}/cancelled",
+                    method="POST", params={"worker_id": WORKER_ID},
+                )
+                log.info("media_generation_cancelled", extra={"generation_id": job_id})
+                return True
+            content, mime, provenance = await generation_task
+            if cancel_event.is_set():
+                await self.api(
+                    f"/internal/media-generation-jobs/{job_id}/cancelled",
+                    method="POST", params={"worker_id": WORKER_ID},
+                )
+                return True
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/artifact",
+                method="POST",
+                params={"worker_id": WORKER_ID},
+                data={
+                    "provider_provenance": json.dumps(provenance),
+                    "provider_usage": json.dumps(provenance.get("usage")) if provenance.get("usage") is not None else "",
+                },
+                files={
+                    "file": (
+                        "generated-image.png" if job["media_type"] == "image" else "generated-video.mp4",
+                        content, mime,
+                    ),
+                },
+                timeout=httpx.Timeout(900, connect=20),
+            )
+            log.info(
+                "media_generation_completed",
+                extra={"generation_id": job_id, "media_type": job["media_type"], "bytes": len(content)},
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            retryable = status_code in {408, 425, 429} or status_code >= 500
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/failed",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"error_code": f"GEMINI_MEDIA_HTTP_{status_code}", "retryable": retryable},
+            )
+        except (httpx.TimeoutException, httpx.TransportError):
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/failed",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"error_code": "GEMINI_MEDIA_NETWORK_ERROR", "retryable": True},
+            )
+        except asyncio.CancelledError:
+            raise
+        except ValueError as exc:
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/failed",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"error_code": str(exc)[:120] or "GEMINI_MEDIA_INVALID_REQUEST", "retryable": False},
+            )
+        except Exception:
+            log.exception("media_generation_failed", extra={"generation_id": job_id})
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/failed",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"error_code": "GEMINI_MEDIA_GENERATION_FAILED", "retryable": True},
+            )
+        finally:
+            cancel_wait.cancel()
+            heartbeat_task.cancel()
+            try:
+                await cancel_wait
+            except asyncio.CancelledError:
+                pass
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        return True
+
+    async def process(self) -> bool:
+        if await self.process_generated_media():\n            return True\n        try:
             job = await self.api(
                 "/internal/media-jobs/claim",
                 method="POST",

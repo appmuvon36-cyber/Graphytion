@@ -54,7 +54,23 @@ class Worker:
         self.stop = asyncio.Event()
 
     async def api(self, path: str, **kwargs):
-        response = await self.http.request(kwargs.pop("method", "GET"), path.lstrip("/"), **kwargs)
+        method = kwargs.pop("method", "GET")
+        response = None
+        for attempt in range(4):
+            try:
+                response = await self.http.request(method, path.lstrip("/"), **kwargs)
+                break
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                if attempt == 3:
+                    raise
+                delay = min(0.25 * (2 ** attempt), 2.0)
+                log.warning(
+                    "internal_api_connect_retry",
+                    extra={"path": path, "method": method, "attempt": attempt + 1, "delay_seconds": delay},
+                )
+                await asyncio.sleep(delay)
+        if response is None:
+            raise RuntimeError("INTERNAL_API_REQUEST_NOT_SENT")
         response.raise_for_status()
         body = response.json()
         return body.get("data", body)

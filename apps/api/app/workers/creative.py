@@ -148,76 +148,13 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             await processing_task
             return True
         except HTTPException as exc:
-            retryable = exc.status_code in (429, 502, 503, 504)
+            # _process_creative_run owns the domain transition and commits retry
+            # scheduling/failure before re-raising. Do not perform a second,
+            # stale worker transition after its lease has already been released.
             logger.warning(
-                "creative_run_failed",
-                extra={
-                    "run_id": str(claimed["run_id"]),
-                    "status_code": exc.status_code,
-                    "retryable": retryable,
-                },
+                "creative_run_transition_persisted",
+                extra={"run_id": str(claimed["run_id"]), "status_code": exc.status_code},
             )
-            # Stop lease renewal before releasing the run. Transient provider
-            # failures retry only within the persisted attempt budget; validation,
-            # authorization and other permanent failures become terminal.
-            heartbeat_task.cancel()
-            await asyncio.gather(heartbeat_task, return_exceptions=True)
-            await db.rollback()
-            max_attempts = await db.scalar(text("""
-                select max_attempts from public.production_runs where id=:run
-            """), {"run": claimed["run_id"]})
-            if retryable and int(claimed["attempt_count"]) < int(max_attempts or 3):
-                await asyncio.sleep(min(2 ** max(int(claimed["attempt_count"]) - 1, 0), 15))
-                next_status = "queued"
-                task_status = "retry_wait"
-                error_code = "PROVIDER_TEMPORARY_FAILURE"
-                safe_message = "Creative provider temporarily unavailable; retry scheduled"
-            else:
-                next_status = "failed"
-                task_status = "failed"
-                error_code = "CREATIVE_EXECUTION_FAILED"
-                safe_message = "Creative execution failed; inspect run error metadata"
-            released = await db.execute(text("""
-                update public.production_runs
-                set status=:status,error_code=:code,error_message_safe=:message,
-                    completed_at=case when :status='failed' then now() else null end,
-                    worker_id=null,lease_expires_at=null
-                where id=:run and worker_id=:worker
-                returning id
-            """), {
-                "status": next_status, "code": error_code, "message": safe_message,
-                "run": claimed["run_id"], "worker": WORKER_ID,
-            })
-            if released.scalar_one_or_none() is not None:
-                await db.execute(text("""
-                    update public.agent_tasks
-                    set status=:status,error_code=:code,
-                        error_detail_internal=:detail,
-                        completed_at=case when :status='failed' then now() else null end,
-                        worker_id=null,lease_expires_at=null
-                    where id=:task and worker_id=:worker
-                """), {
-                    "status": task_status, "code": error_code,
-                    "detail": f"HTTP {exc.status_code}: {str(exc.detail)[:1000]}",
-                    "task": task_id, "worker": WORKER_ID,
-                })
-                await db.execute(text("""
-                    insert into public.workflow_events(
-                        production_run_id,event_type,event_payload,sequence_number
-                    ) values (
-                        :run,:event,cast(:payload as jsonb),
-                        (select coalesce(max(sequence_number),0)+1
-                         from public.workflow_events where production_run_id=:run)
-                    )
-                """), {
-                    "run": claimed["run_id"],
-                    "event": "stage.retry_scheduled" if next_status == "queued" else "stage.failed",
-                    "payload": json.dumps({
-                        "stage": stage, "status_code": exc.status_code,
-                        "retryable": retryable, "attempt": int(claimed["attempt_count"]),
-                    }),
-                })
-            await db.commit()
             return True
         except Exception:
             logger.exception("creative_worker_unhandled_failure", extra={"run_id": str(claimed["run_id"])})

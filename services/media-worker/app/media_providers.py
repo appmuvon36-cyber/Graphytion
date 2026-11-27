@@ -148,8 +148,8 @@ class GeminiMediaProvider:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_INVALID_BASE64") from exc
         mime = inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png"
         signatures = {
-            "image/png": content.startswith(b"\\x89PNG\\r\\n\\x1a\\n"),
-            "image/jpeg": content.startswith(b"\\xff\\xd8\\xff"),
+            "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/jpeg": content.startswith(b"\xff\xd8\xff"),
             "image/webp": len(content) > 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP",
         }
         if mime not in signatures or not signatures[mime] or not content:

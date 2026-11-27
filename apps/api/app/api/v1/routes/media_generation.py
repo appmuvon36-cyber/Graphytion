@@ -90,7 +90,6 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
             raise HTTPException(422, "Unsupported Google Agent Platform video model")
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
-        resolution = config.get("resolution", "720p")
         if ratio not in {"16:9", "9:16"} or duration not in range(3, 11):
             raise HTTPException(422, "Google Omni Flash supports 3-10 second videos")
         config.update({"aspect_ratio": ratio, "duration_seconds": duration})

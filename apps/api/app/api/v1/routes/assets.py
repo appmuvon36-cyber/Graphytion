@@ -148,22 +148,43 @@ async def upload_project_asset(
         await storage.upload(
             bucket=ASSET_BUCKET, object_path=object_path, content=content, content_type=content_type
         )
-        row = (await db.execute(text("""
-            insert into public.project_assets(
-                id,workspace_id,project_id,uploaded_by,bucket,object_path,
-                file_name,content_type,size_bytes,sha256,asset_family_id,version_number,
-                supersedes_asset_id,source_type
-            ) values (
-                :id,:workspace,:project,:actor,:bucket,:path,:name,:type,:size,:hash,
-                :family,:version,:supersedes,'upload'
-            ) returning *
-        """), {
-            "id": asset_id, "workspace": workspace_id, "project": project_id,
-            "actor": actor, "bucket": ASSET_BUCKET, "path": object_path,
-            "name": filename, "type": content_type, "size": len(content), "hash": digest,
-            "family": asset_family_id, "version": version_number,
-            "supersedes": supersedes_asset_id,
-        })).mappings().one()
+        if supersedes_asset_id:
+            columns_ready = await db.scalar(text("""
+                select count(*)=3 from information_schema.columns
+                where table_schema='public' and table_name='project_assets'
+                  and column_name in ('asset_family_id','version_number','supersedes_asset_id')
+            """))
+            if not columns_ready:
+                raise HTTPException(status_code=503, detail="Asset versioning migration is not applied")
+            row = (await db.execute(text("""
+                insert into public.project_assets(
+                    id,workspace_id,project_id,uploaded_by,bucket,object_path,
+                    file_name,content_type,size_bytes,sha256,asset_family_id,version_number,
+                    supersedes_asset_id,source_type
+                ) values (
+                    :id,:workspace,:project,:actor,:bucket,:path,:name,:type,:size,:hash,
+                    :family,:version,:supersedes,'upload'
+                ) returning *
+            """), {
+                "id": asset_id, "workspace": workspace_id, "project": project_id,
+                "actor": actor, "bucket": ASSET_BUCKET, "path": object_path,
+                "name": filename, "type": content_type, "size": len(content), "hash": digest,
+                "family": asset_family_id, "version": version_number,
+                "supersedes": supersedes_asset_id,
+            })).mappings().one()
+        else:
+            row = (await db.execute(text("""
+                insert into public.project_assets(
+                    id,workspace_id,project_id,uploaded_by,bucket,object_path,
+                    file_name,content_type,size_bytes,sha256
+                ) values (
+                    :id,:workspace,:project,:actor,:bucket,:path,:name,:type,:size,:hash
+                ) returning *
+            """), {
+                "id": asset_id, "workspace": workspace_id, "project": project_id,
+                "actor": actor, "bucket": ASSET_BUCKET, "path": object_path,
+                "name": filename, "type": content_type, "size": len(content), "hash": digest,
+            })).mappings().one()
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
             values (:actor,:workspace,'project.asset.uploaded','project_asset',:asset,:request_id)
@@ -175,9 +196,10 @@ async def upload_project_asset(
             "workspace_id": str(row["workspace_id"]), "uploaded_by": str(row["uploaded_by"]),
             "file_name": row["file_name"], "content_type": row["content_type"],
             "size_bytes": row["size_bytes"], "sha256": row["sha256"],
-            "status": row["status"], "asset_family_id": str(row["asset_family_id"]),
-            "version_number": row["version_number"],
-            "supersedes_asset_id": str(row["supersedes_asset_id"]) if row["supersedes_asset_id"] else None,
+            "status": row["status"],
+            "asset_family_id": str(row["asset_family_id"]) if "asset_family_id" in row else None,
+            "version_number": row["version_number"] if "version_number" in row else 1,
+            "supersedes_asset_id": str(row["supersedes_asset_id"]) if row.get("supersedes_asset_id") else None,
             "created_at": row["created_at"],
         }}
     except Exception as exc:
@@ -202,9 +224,7 @@ async def list_project_assets(
     workspace_id = await _project_workspace(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
         select id,project_id,workspace_id,uploaded_by,file_name,content_type,
-               size_bytes,sha256,status,asset_family_id,version_number,supersedes_asset_id,
-               source_type,source_provider,source_job_id,provenance,usage_rights_status,
-               license_type,commercial_use_allowed,attribution,created_at
+               size_bytes,sha256,status,created_at
         from public.project_assets
         where workspace_id=:workspace and status='active'
           and (:scope='workspace' or project_id=:project)

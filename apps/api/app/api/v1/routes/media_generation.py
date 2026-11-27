@@ -33,6 +33,8 @@ class MediaGenerationCreate(BaseModel):
     model_key: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=32000)
     generation_config: dict[str, Any] = Field(default_factory=dict)
+    production_run_id: UUID | None = None
+    parent_step_id: UUID | None = None
 
 
 class MediaGenerationFailure(BaseModel):
@@ -120,6 +122,18 @@ async def create_media_generation(
 ):
     actor = _actor(claims)
     workspace = await _scope(db, project_id, actor, "project.update")
+    if payload.production_run_id is not None:
+        run_ok = await db.scalar(text("""select exists(select 1 from public.production_runs
+          where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"""),
+          {"run": payload.production_run_id, "workspace": workspace, "project": project_id, "actor": actor})
+        step_ok = await db.scalar(text("""select exists(select 1 from public.production_run_steps
+          where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project
+            and status in ('ready','running'))"""),
+          {"step": payload.parent_step_id, "run": payload.production_run_id, "workspace": workspace, "project": project_id}) if payload.parent_step_id else False
+        if not run_ok or (payload.parent_step_id is not None and not step_ok):
+            raise HTTPException(404, "Production run or step not found in this project")
+    elif payload.parent_step_id is not None:
+        raise HTTPException(422, "parent_step_id requires production_run_id")
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
     config = _validate_config(payload)
@@ -127,15 +141,15 @@ async def create_media_generation(
         row = (await db.execute(text("""
         insert into public.media_generation_jobs(
           workspace_id,project_id,requested_by,media_type,provider_key,model_key,
-          prompt,generation_config,idempotency_key
+          prompt,generation_config,idempotency_key,production_run_id,parent_step_id
         ) values (:workspace,:project,:actor,:type,:provider,:model,:prompt,
-          cast(:config as jsonb),:key)
+          cast(:config as jsonb),:key,:run,:step)
         on conflict(workspace_id,idempotency_key) do nothing
         returning id,status,media_type,provider_key,model_key,created_at
         """), {"workspace": workspace, "project": project_id, "actor": actor,
                "type": payload.media_type, "provider": payload.provider_key,
                "model": payload.model_key, "prompt": payload.prompt,
-               "config": json.dumps(config), "key": idempotency_key})).mappings().first()
+               "config": json.dumps(config), "key": idempotency_key, "run": payload.production_run_id, "step": payload.parent_step_id})).mappings().first()
     except ProgrammingError as exc:
         await db.rollback()
         if _migration_missing(exc):
@@ -143,13 +157,20 @@ async def create_media_generation(
         raise
     if row is None:
         old = (await db.execute(text("""
-            select id,status,media_type,provider_key,model_key,prompt,generation_config
+            select id,status,media_type,provider_key,model_key,prompt,generation_config,production_run_id,parent_step_id
             from public.media_generation_jobs
             where workspace_id=:workspace and idempotency_key=:key
         """), {"workspace": workspace, "key": idempotency_key})).mappings().first()
-        if old is None or old["media_type"] != payload.media_type or old["provider_key"] != payload.provider_key or old["model_key"] != payload.model_key or old["prompt"] != payload.prompt or old["generation_config"] != config:
+        if old is None or old["media_type"] != payload.media_type or old["provider_key"] != payload.provider_key or old["model_key"] != payload.model_key or old["prompt"] != payload.prompt or old["generation_config"] != config or old["production_run_id"] != payload.production_run_id or old["parent_step_id"] != payload.parent_step_id:
             raise HTTPException(409, "Idempotency key was used for a different media request")
         return {"data": {"generation_id": str(old["id"]), "status": old["status"], "replayed": True}}
+    if payload.production_run_id is not None and payload.parent_step_id is not None:
+        await db.execute(text("""
+            update public.production_run_steps
+            set child_job_type='media_generation',child_job_id=:job,status='running',
+                started_at=coalesce(started_at,now()),updated_at=now()
+            where id=:step and production_run_id=:run
+        """), {"job": row["id"], "step": payload.parent_step_id, "run": payload.production_run_id})
     try:
         # Personal Graphytion usage is free: do not reserve or debit user quota.
         # Provider and internal operating costs are tracked separately on the job.
@@ -666,14 +687,14 @@ async def complete_media_generation_artifact(
             insert into public.project_assets(
               id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,
               content_type,size_bytes,sha256,source_type,source_provider,source_model,source_job_id,
-              provenance,generation_metadata,usage_rights_status,generated_at
+              provenance,generation_metadata,usage_rights_status,generated_at,production_run_id,parent_step_id
             ) values(:id,:workspace,:project,:actor,:bucket,:path,:name,:mime,:size,:sha,
-              'generated',:provider,:model,:job,cast(:provenance as jsonb),cast(:generation_metadata as jsonb),'unverified',now())
+              'generated',:provider,:model,:job,cast(:provenance as jsonb),cast(:generation_metadata as jsonb),'unverified',now(),:run,:step)
         """), {"id": asset_id, "workspace": row["workspace_id"], "project": row["project_id"],
                "actor": owner, "bucket": BUCKET, "path": path,
                "name": f"generated-{generation_id}.{suffix}", "mime": mime,
                "size": len(content), "sha": digest, "provider": row["provider_key"], "model": row["model_key"],
-               "job": generation_id, "provenance": json.dumps(provenance),
+               "job": generation_id, "provenance": json.dumps(provenance), "run": row["production_run_id"], "step": row["parent_step_id"],
                "generation_metadata": json.dumps(generation_metadata)})
         provider_cost = None
         if usage:

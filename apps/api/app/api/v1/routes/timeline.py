@@ -17,6 +17,8 @@ router=APIRouter();permissions=WorkspacePermissionResolver()
 class TimelineSave(BaseModel):
  snapshot:dict[str,Any]
  expected_version:int|None=Field(default=None,ge=1)
+ production_run_id:UUID|None=None
+ parent_step_id:UUID|None=None
 class _Actor:
  @staticmethod
  def get(claims:dict[str,Any])->UUID:
@@ -44,6 +46,11 @@ async def get_latest_timeline(project_id:UUID,claims:AuthenticatedClaims,db:Asyn
 @router.put("/projects/{project_id}/timeline")
 async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_Actor.get(claims);workspace=await _scope(db,project_id,actor,"project.update")
+ if payload.production_run_id is not None:
+  run_ok=await db.scalar(text("select exists(select 1 from public.production_runs where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"),{"run":payload.production_run_id,"workspace":workspace,"project":project_id,"actor":actor})
+  step_ok=await db.scalar(text("select exists(select 1 from public.production_run_steps where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project and status in ('ready','running'))"),{"step":payload.parent_step_id,"run":payload.production_run_id,"workspace":workspace,"project":project_id}) if payload.parent_step_id else False
+  if not run_ok or (payload.parent_step_id is not None and not step_ok):raise HTTPException(404,"Production run or step not found in this project")
+ elif payload.parent_step_id is not None:raise HTTPException(422,"parent_step_id requires production_run_id")
  brand_row=(await db.execute(text("""select bk.brand_config from public.video_projects p
  left join public.brand_kits bk on bk.id=p.brand_kit_id and bk.workspace_id=p.workspace_id
  where p.id=:project and p.workspace_id=:workspace"""),{"project":project_id,"workspace":workspace})).mappings().first()
@@ -57,9 +64,9 @@ async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,cla
  current=int(latest or 0)
  if payload.expected_version is not None and payload.expected_version!=current:raise HTTPException(409,detail={"message":"Timeline changed since it was loaded","current_version":current})
  version=current+1
- row=(await db.execute(text("""insert into public.video_timelines(workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,snapshot,compiled_hash,created_by)
- values(:workspace,:project,:version,2,:fps,:width,:height,:duration,cast(:snapshot as jsonb),:hash,:actor)
- returning id,version,created_at"""),{"workspace":workspace,"project":project_id,"version":version,"fps":snapshot["fps"],"width":snapshot["width"],"height":snapshot["height"],"duration":snapshot["durationFrames"],"snapshot":json.dumps(snapshot),"hash":digest,"actor":actor})).mappings().one()
+ row=(await db.execute(text("""insert into public.video_timelines(workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,snapshot,compiled_hash,created_by,production_run_id,parent_step_id)
+ values(:workspace,:project,:version,2,:fps,:width,:height,:duration,cast(:snapshot as jsonb),:hash,:actor,:run,:step)
+ returning id,version,created_at"""),{"workspace":workspace,"project":project_id,"version":version,"fps":snapshot["fps"],"width":snapshot["width"],"height":snapshot["height"],"duration":snapshot["durationFrames"],"snapshot":json.dumps(snapshot),"hash":digest,"actor":actor,"run":payload.production_run_id,"step":payload.parent_step_id})).mappings().one()
  await db.execute(text("""insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
  values(:actor,:workspace,'timeline.version.saved','video_timeline',:id,:request,cast(:metadata as jsonb))"""),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"version":version,"hash":digest,"clips":len(snapshot["clips"]),"tracks":len(snapshot["tracks"])})})
  await db.commit()

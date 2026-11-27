@@ -31,6 +31,8 @@ class RenderCreate(BaseModel):
     snapshot: dict[str, Any]
     render_profile_id: UUID | None = None
     composition_version: str = Field(default="2.0.0", min_length=1, max_length=32)
+    production_run_id: UUID | None = None
+    parent_step_id: UUID | None = None
 
 
 class RenderProgress(BaseModel):
@@ -103,6 +105,13 @@ async def create_render(
 ):
     actor = _actor(claims)
     workspace_id = await _project_workspace(db, project_id, actor, "project.update")
+    if payload.production_run_id is not None:
+        run_ok = await db.scalar(text("""select exists(select 1 from public.production_runs where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"""), {"run": payload.production_run_id, "workspace": workspace_id, "project": project_id, "actor": actor})
+        step_ok = await db.scalar(text("""select exists(select 1 from public.production_run_steps where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project and status in ('ready','running'))"""), {"step": payload.parent_step_id, "run": payload.production_run_id, "workspace": workspace_id, "project": project_id}) if payload.parent_step_id else False
+        if not run_ok or (payload.parent_step_id is not None and not step_ok):
+            raise HTTPException(404, detail="Production run or step not found in this project")
+    elif payload.parent_step_id is not None:
+        raise HTTPException(422, detail="parent_step_id requires production_run_id")
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(status_code=400, detail="Idempotency-Key header must contain 16-128 characters")
     snapshot = dict(payload.snapshot)
@@ -128,19 +137,28 @@ async def create_render(
     render_config = {"codec":profile["video_codec"],"format":profile["container"],"video_crf":profile["video_crf"],"video_bitrate":profile["video_bitrate"],"audio_codec":profile["audio_codec"],"audio_bitrate":profile["audio_bitrate"],"concurrency":profile["render_concurrency"],"priority":profile["priority"],"thumbnail_enabled":profile["thumbnail_enabled"],"preview_enabled":profile["preview_enabled"],"profile_key":profile["profile_key"],"profile_version":profile["version"]}
     max_attempts = await db.scalar(text("select max_attempts from public.platform_render_settings where singleton_id=1")) or 3
     timeline_id = await db.scalar(text("select id from public.video_timelines where project_id=:project and compiled_hash=:hash order by version desc limit 1"), {"project":project_id,"hash":timeline_hash})
-    row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id,max_attempts) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id,:max_attempts) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id,"max_attempts":max_attempts})).mappings().first()
+    row = (await db.execute(text("insert into public.render_jobs(workspace_id,project_id,requested_by,composition_id,composition_version,timeline_snapshot,timeline_hash,render_config,idempotency_key,render_profile_id,snapshot_version,asset_manifest,timeline_id,max_attempts,production_run_id,parent_step_id) values(:workspace,:project,:actor,'GraphytionTimeline',:version,cast(:snapshot as jsonb),:hash,cast(:config as jsonb),:key,:profile,:snapshot_version,cast(:assets as jsonb),:timeline_id,:max_attempts,:run,:step) on conflict(workspace_id,idempotency_key) do nothing returning id,status"), {"workspace":workspace_id,"project":project_id,"actor":actor,"version":payload.composition_version,"snapshot":json.dumps(snapshot,ensure_ascii=False),"hash":timeline_hash,"config":json.dumps(render_config),"key":idempotency_key,"profile":profile["id"],"snapshot_version":snapshot["version"],"assets":json.dumps([str(x) for x in asset_ids]),"timeline_id":timeline_id,"max_attempts":max_attempts,"run":payload.production_run_id,"step":payload.parent_step_id})).mappings().first()
     if row is None:
-        existing = (await db.execute(text("select id,status,timeline_hash,render_profile_id,render_config,composition_version from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
+        existing = (await db.execute(text("select id,status,timeline_hash,render_profile_id,render_config,composition_version,production_run_id,parent_step_id from public.render_jobs where workspace_id=:workspace and idempotency_key=:key"), {"workspace":workspace_id,"key":idempotency_key})).mappings().first()
         if (
             existing is None
             or existing["timeline_hash"] != timeline_hash
             or existing["render_profile_id"] != profile["id"]
             or existing["render_config"] != render_config
             or existing["composition_version"] != payload.composition_version
+            or existing["production_run_id"] != payload.production_run_id
+            or existing["parent_step_id"] != payload.parent_step_id
         ):
             raise HTTPException(409, detail="Idempotency-Key was used for a different render request")
         await db.rollback()
         return {"data":{"render_job_id":str(existing["id"]),"status":existing["status"],"replayed":True}}
+    if payload.production_run_id is not None and payload.parent_step_id is not None:
+        await db.execute(text("""
+            update public.production_run_steps
+            set child_job_type='render_job',child_job_id=:job,status='running',
+                started_at=coalesce(started_at,now()),updated_at=now()
+            where id=:step and production_run_id=:run
+        """), {"job": row["id"], "step": payload.parent_step_id, "run": payload.production_run_id})
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values (:actor,:workspace,'render.queued','render_job',:job,:request_id)
@@ -347,7 +365,7 @@ async def complete_render_artifact(
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
         select id,workspace_id,project_id,requested_by,worker_id,status,render_config,
-               timeline_hash,composition_version
+               timeline_hash,composition_version,production_run_id,parent_step_id
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
@@ -391,12 +409,12 @@ async def complete_render_artifact(
             insert into public.project_assets(
                 workspace_id,project_id,uploaded_by,bucket,object_path,file_name,
                 content_type,size_bytes,sha256,status,source_type,source_provider,
-                source_model,provenance,generation_metadata,generated_at
+                source_model,provenance,generation_metadata,generated_at,production_run_id,parent_step_id
             ) values(
                 :workspace,:project,:actor,:bucket,:path,:filename,
                 :mime,:size,:hash,'active','generated','remotion',
                 'remotion-render-worker',cast(:provenance as jsonb),
-                cast(:metadata as jsonb),now()
+                cast(:metadata as jsonb),now(),:run,:step
             )
             on conflict(object_path) do update set
                 status='active',file_name=excluded.file_name,content_type=excluded.content_type,
@@ -408,7 +426,7 @@ async def complete_render_artifact(
             "bucket":RENDER_BUCKET,"path":object_path,"filename":f"Graphytion Render {str(render_job_id)[:8]}.{extension}",
             "mime":mime_type,"size":len(content),"hash":digest,
             "provenance":json.dumps({"provider":"remotion","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash")}),
-            "metadata":json.dumps({"artifact_type":"render_output","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash"),"composition_version":row.get("composition_version"),"render_config":row.get("render_config") or {},**({"thumbnail":{"bucket":thumbnail["storage_bucket"],"object_path":thumbnail["storage_path"]}} if thumbnail else {})})
+            "metadata":json.dumps({"artifact_type":"render_output","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash"),"composition_version":row.get("composition_version"),"render_config":row.get("render_config") or {},**({"thumbnail":{"bucket":thumbnail["storage_bucket"],"object_path":thumbnail["storage_path"]}} if thumbnail else {})}),"run":row.get("production_run_id"),"step":row.get("parent_step_id")
         })
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
@@ -446,7 +464,7 @@ async def create_render_sidecar_artifact(
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
-        select id,workspace_id,project_id,worker_id,status,snapshot_version
+        select id,workspace_id,project_id,worker_id,status,snapshot_version,production_run_id,parent_step_id
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
@@ -472,15 +490,15 @@ async def create_render_sidecar_artifact(
         await db.execute(text("""
             insert into public.render_artifacts
             (workspace_id,project_id,render_job_id,artifact_type,storage_bucket,storage_path,
-             mime_type,size_bytes,sha256,snapshot_version)
-            values(:workspace,:project,:job,:type,:bucket,:path,:mime,:size,:hash,:snapshot)
+             mime_type,size_bytes,sha256,snapshot_version,production_run_id,parent_step_id)
+            values(:workspace,:project,:job,:type,:bucket,:path,:mime,:size,:hash,:snapshot,:run,:step)
             on conflict(render_job_id,artifact_type) do update set
               storage_bucket=excluded.storage_bucket,storage_path=excluded.storage_path,
               mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,sha256=excluded.sha256,
               snapshot_version=excluded.snapshot_version,created_at=now()
         """), {"workspace":row["workspace_id"],"project":row["project_id"],"job":render_job_id,
                "type":artifact_type,"bucket":RENDER_BUCKET,"path":object_path,"mime":mime,
-               "size":len(content),"hash":digest,"snapshot":row["snapshot_version"]})
+               "size":len(content),"hash":digest,"snapshot":row["snapshot_version"],"run":row["production_run_id"],"step":row["parent_step_id"]})
         await db.commit()
     except Exception as exc:
         await db.rollback()

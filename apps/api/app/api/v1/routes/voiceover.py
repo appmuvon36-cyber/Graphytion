@@ -24,6 +24,8 @@ class VoiceoverCreate(BaseModel):
  scene_id:UUID|None=None
  generation_config:dict[str,Any]=Field(default_factory=dict)
  subtitle_segment_id:UUID|None=None
+ production_run_id:UUID|None=None
+ parent_step_id:UUID|None=None
 
  @model_validator(mode="after")
  def validate_provider_options(self):
@@ -55,6 +57,11 @@ def _require_worker(request:Request)->None:
 @router.post("/projects/{project_id}/voiceovers",status_code=202)
 async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Request,claims:AuthenticatedClaims,idempotency_key:str|None=Header(default=None,alias="Idempotency-Key"),db:AsyncSession=DbSession):
  actor=_actor(claims);workspace=await _scope(db,project_id,actor,"project.update")
+ if payload.production_run_id is not None:
+  run_ok=await db.scalar(text("select exists(select 1 from public.production_runs where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"),{"run":payload.production_run_id,"workspace":workspace,"project":project_id,"actor":actor})
+  step_ok=await db.scalar(text("select exists(select 1 from public.production_run_steps where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project and status in ('ready','running'))"),{"step":payload.parent_step_id,"run":payload.production_run_id,"workspace":workspace,"project":project_id}) if payload.parent_step_id else False
+  if not run_ok or (payload.parent_step_id is not None and not step_ok):raise HTTPException(404,"Production run or step not found in this project")
+ elif payload.parent_step_id is not None:raise HTTPException(422,"parent_step_id requires production_run_id")
  if not idempotency_key or not 16<=len(idempotency_key)<=128:raise HTTPException(400,"Idempotency-Key must contain 16-128 characters")
  if payload.scene_id:
   exists=await db.scalar(text("select exists(select 1 from public.storyboard_scenes ss join public.storyboards sb on sb.id=ss.storyboard_id where ss.id=:scene and sb.project_id=:project)"),{"scene":payload.scene_id,"project":project_id})
@@ -63,13 +70,15 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
   exists=await db.scalar(text("select exists(select 1 from public.subtitle_segments s join public.subtitle_tracks t on t.id=s.track_id where s.id=:segment and t.project_id=:project and t.workspace_id=:workspace)"),{"segment":payload.subtitle_segment_id,"project":project_id,"workspace":workspace})
   if not exists:raise HTTPException(404,"Subtitle segment does not belong to this project")
  status="queued"
- row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,subtitle_segment_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
- values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
- on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
+ row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,subtitle_segment_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key,production_run_id,parent_step_id)
+ values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key,:run,:step)
+ on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key,"run":payload.production_run_id,"step":payload.parent_step_id})).mappings().first()
  if row is None:
-  old=(await db.execute(text("select id,status,input_text,provider_key,voice_key,model_key,subtitle_segment_id,language,scene_id,generation_config from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
-  if (not old or old["input_text"]!=payload.text or old["provider_key"]!=payload.provider_key or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key or old["subtitle_segment_id"]!=payload.subtitle_segment_id or old["language"]!=payload.language or old["scene_id"]!=payload.scene_id or old["generation_config"]!=(payload.generation_config or {})):raise HTTPException(409,"Idempotency key was used for a different voiceover request")
+  old=(await db.execute(text("select id,status,input_text,provider_key,voice_key,model_key,subtitle_segment_id,language,scene_id,generation_config,production_run_id,parent_step_id from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
+  if (not old or old["input_text"]!=payload.text or old["provider_key"]!=payload.provider_key or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key or old["subtitle_segment_id"]!=payload.subtitle_segment_id or old["language"]!=payload.language or old["scene_id"]!=payload.scene_id or old["generation_config"]!=(payload.generation_config or {}) or old["production_run_id"]!=payload.production_run_id or old["parent_step_id"]!=payload.parent_step_id):raise HTTPException(409,"Idempotency key was used for a different voiceover request")
   return {"data":{"voiceover_id":str(old["id"]),"status":old["status"],"replayed":True}}
+ if payload.production_run_id is not None and payload.parent_step_id is not None:
+  await db.execute(text("update public.production_run_steps set child_job_type='audio_generation',child_job_id=:job,status='running',started_at=coalesce(started_at,now()),updated_at=now() where id=:step and production_run_id=:run"),{"job":row["id"],"step":payload.parent_step_id,"run":payload.production_run_id})
  await db.execute(text("insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata) values(:actor,:workspace,'voiceover.requested','audio_generation',:id,:request,cast(:metadata as jsonb))"),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"status":status})})
  await db.commit()
  await notify_worker("media", str(row["id"]))
@@ -159,7 +168,7 @@ async def complete_media_artifact(generation_id:UUID,request:Request,file:Upload
    if not metadata:raise ValueError("Waveform requires media metadata")
    waveform_hash=hashlib.sha256(waveform_content).hexdigest()
    await SupabaseStorage().upload(bucket=BUCKET,object_path=waveform_path,content=waveform_content,content_type="application/json",upsert=False,timeout_seconds=180)
-  await db.execute(text("insert into public.project_assets(id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,content_type,size_bytes,sha256) values(:id,:workspace,:project,:actor,:bucket,:path,:name,'audio/mpeg',:size,:hash)"),{"id":asset_id,"workspace":row["workspace_id"],"project":row["project_id"],"actor":row["requested_by"],"bucket":BUCKET,"path":path,"name":"voiceover-"+str(generation_id)+".mp3","size":len(content),"hash":digest})
+  await db.execute(text("insert into public.project_assets(id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,content_type,size_bytes,sha256,production_run_id,parent_step_id) values(:id,:workspace,:project,:actor,:bucket,:path,:name,'audio/mpeg',:size,:hash,:run,:step)"),{"id":asset_id,"workspace":row["workspace_id"],"project":row["project_id"],"actor":row["requested_by"],"bucket":BUCKET,"path":path,"name":"voiceover-"+str(generation_id)+".mp3","size":len(content),"hash":digest,"run":row["production_run_id"],"step":row["parent_step_id"]})
   await db.execute(text("update public.audio_generations set status='completed',asset_id=:asset,alignment_result=cast(:alignment as jsonb),alignment_status=:alignment_status,completed_at=now(),worker_id=null,lease_expires_at=null where id=:id"),{"asset":asset_id,"alignment":json.dumps(alignment),"alignment_status":alignment["status"],"id":generation_id})
   if waveform_content:
    await db.execute(text("""insert into public.audio_analysis_artifacts(workspace_id,project_id,audio_generation_id,audio_asset_id,waveform_bucket,waveform_path,waveform_sha256,media_metadata)

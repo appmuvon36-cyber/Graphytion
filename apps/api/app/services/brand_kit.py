@@ -51,6 +51,7 @@ def apply_brand_tokens(
     # A logo is not metadata: it is an allowlisted image layer in the immutable
     # composition snapshot, resolved through the normal private asset pipeline.
     logo_asset_id = config.get("logo_asset_id")
+    logo_layout = config.get("logo_layout") or {}
     if logo_asset_id:
         clips = result.setdefault("clips", [])
         clips[:] = [clip for clip in clips if clip.get("brandKitLogo") is not True]

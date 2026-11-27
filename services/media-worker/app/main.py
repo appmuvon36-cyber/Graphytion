@@ -24,6 +24,20 @@ WORKER_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:10]}"
 POLL_INTERVAL_SECONDS = max(1, int(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "3")))
 
 
+async def create_video_thumbnail(video_bytes: bytes) -> bytes:
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1",
+        "-i", "pipe:0", "-frames:v", "1", "-vf", "scale='min(640,iw)':-2",
+        "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    output, error = await process.communicate(video_bytes)
+    if process.returncode != 0 or not output.startswith(b"\xff\xd8\xff"):
+        raise RuntimeError("MEDIA_VIDEO_THUMBNAIL_FAILED")
+    return output
+
+
 class Worker:
     def __init__(self) -> None:
         if not API_BASE or not TOKEN:
@@ -154,6 +168,20 @@ class Worker:
                     return True
             else:
                 content, mime, provenance = await generation_task
+            thumbnail_content = None
+            if job["media_type"] == "video":
+                try:
+                    thumbnail_content = await create_video_thumbnail(content)
+                except Exception:
+                    log.warning("media_video_thumbnail_unavailable", extra={"generation_id": job_id})
+            artifact_files = {
+                "file": (
+                    "generated-image.png" if job["media_type"] == "image" else "generated-video.mp4",
+                    content, mime,
+                ),
+            }
+            if thumbnail_content:
+                artifact_files["thumbnail_file"] = ("generated-video-thumbnail.jpg", thumbnail_content, "image/jpeg")
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/artifact",
                 method="POST",
@@ -162,12 +190,7 @@ class Worker:
                     "provider_provenance": json.dumps(provenance),
                     "provider_usage": json.dumps(provenance.get("usage")) if provenance.get("usage") is not None else "",
                 },
-                files={
-                    "file": (
-                        "generated-image.png" if job["media_type"] == "image" else "generated-video.mp4",
-                        content, mime,
-                    ),
-                },
+                files=artifact_files,
                 timeout=httpx.Timeout(900, connect=20),
             )
             log.info(

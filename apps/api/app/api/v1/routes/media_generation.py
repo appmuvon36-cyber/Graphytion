@@ -665,6 +665,7 @@ async def complete_media_generation_cancel(generation_id: UUID, request: Request
 @router.post("/internal/media-generation-jobs/{generation_id}/artifact", status_code=201)
 async def complete_media_generation_artifact(
     generation_id: UUID, request: Request, file: UploadFile,
+    thumbnail_file: UploadFile | None = File(default=None),
     provider_provenance: str = Form(...), provider_usage: str | None = Form(default=None),
     worker_id: str = Query(min_length=1, max_length=128), db: AsyncSession = DbSession,
 ):
@@ -704,11 +705,37 @@ async def complete_media_generation_artifact(
     asset_id = uuid4()
     digest = hashlib.sha256(content).hexdigest()
     path = f"{row['workspace_id']}/{row['project_id']}/{asset_id}.{suffix}"
-    await SupabaseStorage().upload(
+    storage = SupabaseStorage()
+    await storage.upload(
         bucket=BUCKET, object_path=path, content=content, content_type=mime,
         upsert=False, timeout_seconds=600,
     )
+    thumbnail_path = None
+    thumbnail_metadata = None
+    if thumbnail_file is not None and row["media_type"] == "video":
+        thumbnail_bytes = await thumbnail_file.read(10 * 1024 * 1024 + 1)
+        if 1 <= len(thumbnail_bytes) <= 10 * 1024 * 1024 and thumbnail_bytes.startswith(b"\xff\xd8\xff"):
+            candidate_path = f"{row['workspace_id']}/{row['project_id']}/{asset_id}-thumbnail.jpg"
+            try:
+                await storage.upload(
+                    bucket=BUCKET, object_path=candidate_path, content=thumbnail_bytes,
+                    content_type="image/jpeg", upsert=False, timeout_seconds=120,
+                )
+                thumbnail_path = candidate_path
+                thumbnail_metadata = {
+                    "bucket": BUCKET, "object_path": candidate_path, "mime_type": "image/jpeg",
+                    "size_bytes": len(thumbnail_bytes), "sha256": hashlib.sha256(thumbnail_bytes).hexdigest(),
+                }
+            except Exception:
+                thumbnail_path = None
+                thumbnail_metadata = None
     try:
+        generation_metadata = {
+            "prompt_sha256": hashlib.sha256(row["prompt"].encode("utf-8")).hexdigest(),
+            "generation_config": row["generation_config"],
+        }
+        if thumbnail_metadata:
+            generation_metadata["thumbnail"] = thumbnail_metadata
         await db.execute(text("""
             insert into public.project_assets(
               id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,
@@ -721,7 +748,7 @@ async def complete_media_generation_artifact(
                "name": f"generated-{generation_id}.{suffix}", "mime": mime,
                "size": len(content), "sha": digest, "provider": row["provider_key"], "model": row["model_key"],
                "job": generation_id, "provenance": json.dumps(provenance),
-               "generation_metadata": json.dumps({"prompt_sha256": hashlib.sha256(row["prompt"].encode("utf-8")).hexdigest(), "generation_config": row["generation_config"]})})
+               "generation_metadata": json.dumps(generation_metadata)})
         provider_cost = None
         estimated_provider_cost = None
         provider_price = None
@@ -802,10 +829,12 @@ async def complete_media_generation_artifact(
         await db.commit()
     except Exception:
         await db.rollback()
-        try:
-            await SupabaseStorage().remove(bucket=BUCKET, object_path=path)
-        except Exception:
-            pass
+        for cleanup_path in (path, thumbnail_path):
+            if cleanup_path:
+                try:
+                    await storage.remove(bucket=BUCKET, object_path=cleanup_path)
+                except Exception:
+                    pass
         raise
     return {"data": {"generation_id": str(generation_id), "asset_id": str(asset_id),
                      "status": "completed", "size_bytes": len(content), "mime_type": mime}}

@@ -230,17 +230,17 @@ async def list_project_assets(
     actor = _actor(claims)
     workspace_id = await _project_workspace(db, project_id, actor, "project.read")
     version_columns_ready = await db.scalar(text("""
-        select count(*)=11 from information_schema.columns
+        select count(*)=12 from information_schema.columns
         where table_schema='public' and table_name='project_assets'
           and column_name in ('asset_family_id','version_number','supersedes_asset_id',
-            'source_type','source_provider','source_job_id','provenance',
+            'source_type','source_provider','source_job_id','provenance','generation_metadata',
             'usage_rights_status','license_type','commercial_use_allowed','attribution')
     """))
     fields = """id,project_id,workspace_id,uploaded_by,file_name,content_type,
                 size_bytes,sha256,status,created_at"""
     if version_columns_ready:
         fields += """,asset_family_id,version_number,supersedes_asset_id,source_type,
-                     source_provider,source_job_id,provenance,usage_rights_status,
+                     source_provider,source_job_id,provenance,generation_metadata,usage_rights_status,
                      license_type,commercial_use_allowed,attribution"""
     rows = (await db.execute(text(f"""
         select {fields}
@@ -250,7 +250,23 @@ async def list_project_assets(
         order by created_at desc
         limit 500
     """), {"workspace": workspace_id, "project": project_id, "scope": scope})).mappings().all()
-    return {"data": [dict(row) for row in rows]}
+    result = []
+    storage = SupabaseStorage()
+    for row in rows:
+        item = dict(row)
+        metadata = item.get("generation_metadata") or {}
+        thumbnail = metadata.get("thumbnail") if isinstance(metadata, dict) else None
+        if isinstance(thumbnail, dict) and thumbnail.get("bucket") and thumbnail.get("object_path"):
+            try:
+                item["thumbnail_url"] = await storage.create_signed_url(
+                    bucket=thumbnail["bucket"], object_path=thumbnail["object_path"], expires_in=300
+                )
+            except Exception:
+                item["thumbnail_url"] = None
+        else:
+            item["thumbnail_url"] = None
+        result.append(item)
+    return {"data": result}
 
 
 @router.get("/assets/{asset_id}/download")

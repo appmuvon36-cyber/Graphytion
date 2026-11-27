@@ -257,5 +257,6 @@ export const ProjectAssetApiSchema = z.object({
   id: UUID, project_id: UUID, workspace_id: UUID, uploaded_by: UUID,
   file_name: z.string(), content_type: z.string(), size_bytes: z.number().int().positive(),
   sha256: z.string().length(64), status: z.enum(['active','deleted']), created_at: Timestamp,
+  thumbnail_url: z.string().url().nullable().optional(),
 }).strict();
 export type ProjectAssetApi = z.infer<typeof ProjectAssetApiSchema>;

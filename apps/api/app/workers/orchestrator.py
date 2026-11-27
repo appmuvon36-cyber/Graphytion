@@ -878,46 +878,27 @@ async def _dispatch_step(
 async def _fail_step(
     step: dict[str, Any], error: Exception, *, retryable: bool
 ) -> None:
+    cancelled = isinstance(error, StepCancelledError)
+    error_code = "RUN_CANCELLED" if cancelled else (
+        "STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError))
+        else "STEP_EXECUTION_FAILED"
+    )
+    error_class = "cancelled" if cancelled else ("transient" if retryable else "permanent")
+    safe_message = str(error).replace("\\n", " ")[:500]
     async with SessionLocal() as db:
         await _reset_worker_session(db)
-        current = (await db.execute(text("""
-            select production_run_id,attempt_count,max_attempts,worker_id
-            from public.production_run_steps where id=:step for update
-        """), {"step": step["id"]})).mappings().first()
-        if not current or current["worker_id"] != WORKER_ID:
-            await db.rollback()
-            return
-        cancelled = isinstance(error, StepCancelledError)
-        retry = retryable and not cancelled and current["attempt_count"] < current["max_attempts"]
-        delay = min(300, 2 ** min(int(current["attempt_count"]), 8))
-        safe_message = str(error).replace("\n", " ")[:500]
-        await db.execute(text("""
-            update public.production_run_steps
-               set status=:status,worker_id=null,lease_expires_at=null,heartbeat_at=null,
-                   retry_count=retry_count+case when :retry then 1 else 0 end,
-                   next_retry_at=case when :retry then now()+make_interval(secs=>:delay) else null end,
-                   available_at=case when :retry then now()+make_interval(secs=>:delay) else available_at end,
-                   error_code=:code,error_message_safe=:message,last_error_class=:class,
-                   last_error_at=now(),completed_at=case when :retry then null else now() end,
-                   external_operation_state=case when :cancelled then 'not_started'
-                     when external_operation_state in ('submitted','reconciling','unknown')
-                     then 'unknown' else 'failed' end,updated_at=now()
-             where id=:step and worker_id=:worker
-        """), {
-            "status": "cancelled" if cancelled else ("ready" if retry else "failed"),
-            "retry": retry, "delay": delay,
-            "code": "RUN_CANCELLED" if cancelled else ("STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED"),
-            "message": safe_message, "class": "cancelled" if cancelled else ("transient" if retry else "permanent"),
-            "step": step["id"], "worker": WORKER_ID, "cancelled": cancelled,
-        })
-        await _append_event(db, current["production_run_id"],
-            "step.cancelled" if cancelled else ("step.retry" if retry else "step.failed"), {
-            "step_id": str(step["id"]), "step_key": step["step_key"],
-            "worker_id": WORKER_ID, "retryable": retry, "retry_delay_seconds": delay if retry else None,
-            "error_code": "RUN_CANCELLED" if cancelled else ("STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED"),
-            "error_class": "cancelled" if cancelled else ("transient" if retry else "permanent"),
-        })
-        await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": current["production_run_id"]})
+        await db.execute(
+            text("""
+                select private.graphytion_record_step_failure(
+                  :step,:worker,:code,:message,:class,:retryable,:cancelled
+                )
+            """),
+            {
+                "step": step["id"], "worker": WORKER_ID, "code": error_code,
+                "message": safe_message, "class": error_class,
+                "retryable": retryable, "cancelled": cancelled,
+            },
+        )
         await db.commit()
 
 
@@ -970,34 +951,13 @@ async def _reconcile_runs() -> None:
     async with SessionLocal() as db:
         try:
             await _reset_worker_session(db)
-            rows = (await db.execute(text("""
-                select id,requested_by,status from public.production_runs
-                where status in ('queued','planning','ready_for_review','cancel_requested')
-                order by updated_at limit 50
-            """))).mappings().all()
-            for row in rows:
-                await set_rls_subject(db, str(row["requested_by"]))
-                if row["status"] == "cancel_requested":
-                    cancelled = (await db.execute(text("""
-                        update public.production_run_steps
-                           set status='cancelled',worker_id=null,lease_expires_at=null,
-                               heartbeat_at=null,completed_at=now(),error_code='RUN_CANCELLED',
-                               error_message_safe='Production Run cancellation was requested',
-                               external_operation_state='not_started',updated_at=now()
-                         where production_run_id=:run and child_job_id is null
-                           and status in ('pending','ready','waiting_approval','running')
-                        returning id,step_key
-                    """), {"run": row["id"]})).mappings().all()
-                    for step in cancelled:
-                        await _append_event(db, row["id"], "step.cancelled", {
-                            "step_id": str(step["id"]), "step_key": step["step_key"],
-                            "reason": "production_run_cancelled",
-                        })
-                await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": row["id"]})
+            await db.execute(
+                text("select private.graphytion_reconcile_active_production_runs(:limit)"),
+                {"limit": 50},
+            )
             await db.commit()
         finally:
             await _reset_worker_session(db)
-
 
 async def run_dispatcher() -> None:
     logger.info("production_orchestrator_dispatcher_started", extra={

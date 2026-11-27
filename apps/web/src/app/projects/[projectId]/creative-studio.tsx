@@ -236,7 +236,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const result = await api.createMediaGeneration(projectId, {
         media_type: mediaType,
         provider_key: 'gemini',
-        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
+        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.1-flash',
         prompt: mediaPrompt.trim(),
         generation_config: mediaType === 'image'
           ? { aspect_ratio: mediaAspectRatio, image_size: mediaImageSize }
@@ -627,7 +627,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         {mediaGenerations.map(item=><div key={item.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'9px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}>
           <div style={{minWidth:0}}>
             <strong>{item.media_type.toUpperCase()} · {item.model_key} · {item.status}</strong>
-            <p style={{fontSize:11,color:'#68788e',margin:'3px 0'}}>{item.error_code||item.id} · Attempt {item.attempt_count} · Provider cost {item.provider_cost_status||'unpriced'}</p>
+            <p style={{fontSize:11,color:'#68788e',margin:'3px 0'}}>{item.error_code||item.id} · Attempt {item.attempt_count}</p>
           </div>
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
             {item.status==='completed'&&<button type="button" onClick={()=>void downloadGeneratedMedia(item)} style={button}>Open artifact</button>}

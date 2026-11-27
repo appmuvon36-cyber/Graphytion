@@ -39,7 +39,7 @@ begin
   select id,input_microusd_per_million,output_microusd_per_million into selected_price
   from public.ai_model_prices
   where provider_key=new.provider_key and model_key=new.model_key
-    and is_active=true and effective_at <= coalesce(new.created_at,now())
+    and effective_at <= coalesce(new.created_at,now())
   order by effective_at desc,created_at desc limit 1;
   if not found or new.input_tokens is null or new.output_tokens is null then
     new.pricing_id := null;

@@ -87,7 +87,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: StoryboardApi[]}>('/projects/' + projectId + '/storyboards'),
         call<{data: CreativeRunItem[]}>('/projects/' + projectId + '/creative-runs'),
         call<{data: RenderItem[]}>('/projects/' + projectId + '/renders'),
-        call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets'),
+        call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets?scope=workspace'),
         call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
         api.listMediaGenerations(projectId),
@@ -550,7 +550,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       {renders.length===0&&<p style={{color:'#68788e'}}>Belum ada render job.</p>}
     </section>
     <section style={panel}>
-      <h2 style={{marginTop:0}}>06 · Project assets</h2>
+      <h2 style={{marginTop:0}}>06 · Workspace Asset Library</h2>
       <form onSubmit={uploadAsset} style={{display:'flex',gap:9,alignItems:'center',flexWrap:'wrap',marginBottom:12}}>
         <input type="file" aria-label="Upload project asset" accept="image/png,image/jpeg,image/webp,image/svg+xml,video/mp4,audio/mpeg,audio/wav,font/woff2,font/woff,font/ttf,font/otf,application/pdf" onChange={event=>setAssetFile(event.target.files?.[0]||null)} style={{...field,maxWidth:380}}/>
         <button disabled={busy||!assetFile} style={button}>Upload asset</button>

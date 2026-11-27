@@ -149,13 +149,17 @@ def _fingerprint(value: Any) -> str:
 
 async def _reset_worker_session(db: AsyncSession) -> None:
     # Worker sessions are pooled; never retain a prior tenant's assumed role/JWT claims.
-    await db.rollback()
-    await db.execute(text("RESET ROLE"))
-    await db.execute(text("""
-        select set_config('request.jwt.claim.sub','',false),
-               set_config('request.jwt.claim.role','',false)
-    """))
-    await db.commit()
+    try:
+        await db.rollback()
+        await db.execute(text("RESET ROLE"))
+        await db.execute(text("""
+            select set_config('request.jwt.claim.sub','',false),
+                   set_config('request.jwt.claim.role','',false)
+        """))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("orchestrator_worker_session_reset_failed", exc_info=True)
 
 
 async def _append_event(
@@ -824,16 +828,18 @@ async def _process_one(step: dict[str, Any]) -> None:
     heartbeat_task = asyncio.create_task(_heartbeat(step["id"]))
     try:
         async with SessionLocal() as db:
-            await _reset_worker_session(db)
-            envelope, run = await _load_envelope(db, step)
-            await _append_event(db, step["production_run_id"], "step.started", {
-                "step_id": str(step["id"]), "step_key": step["step_key"],
-                "worker_id": WORKER_ID, "attempt_count": step["attempt_count"],
-                "schema_version": envelope.schema_version,
-            })
-            await db.commit()
-            await _dispatch_step(db, step, envelope, run)
-            await _reset_worker_session(db)
+            try:
+                await _reset_worker_session(db)
+                envelope, run = await _load_envelope(db, step)
+                await _append_event(db, step["production_run_id"], "step.started", {
+                    "step_id": str(step["id"]), "step_key": step["step_key"],
+                    "worker_id": WORKER_ID, "attempt_count": step["attempt_count"],
+                    "schema_version": envelope.schema_version,
+                })
+                await db.commit()
+                await _dispatch_step(db, step, envelope, run)
+            finally:
+                await _reset_worker_session(db)
     except asyncio.CancelledError:
         raise
     except Exception as exc:

@@ -18,6 +18,7 @@ from app.core.errors import (
 )
 from app.core.logging import configure_logging, logger
 from app.workers.creative import run_worker
+from app.workers.orchestrator import run_dispatcher
 
 configure_logging(settings.log_level)
 
@@ -26,12 +27,15 @@ configure_logging(settings.log_level)
 async def lifespan(_: FastAPI):
     logger.info("application_starting", environment=settings.app_env)
     creative_worker_task = asyncio.create_task(run_worker(), name="graphytion-creative-worker")
+    orchestrator_task = asyncio.create_task(run_dispatcher(), name="graphytion-production-orchestrator")
     logger.info("creative_worker_embedded", worker="postgresql-lease-poller")
+    logger.info("production_orchestrator_embedded", worker="postgresql-dag-dispatcher")
     try:
         yield
     finally:
         creative_worker_task.cancel()
-        await asyncio.gather(creative_worker_task, return_exceptions=True)
+        orchestrator_task.cancel()
+        await asyncio.gather(creative_worker_task, orchestrator_task, return_exceptions=True)
         await engine.dispose()
 
 

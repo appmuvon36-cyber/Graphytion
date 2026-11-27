@@ -25,6 +25,28 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 
 
 async def set_rls_subject(session: AsyncSession, user_id: str | None) -> None:
+    if user_id is not None:
+        # RLS policies are deliberately scoped to graphytion_runtime. Explicitly
+        # assume that inherited role for each authenticated request instead of
+        # relying on implicit membership inheritance from graphytion_api.
+        has_runtime_role = (
+            await session.execute(
+                text("""
+                    select exists (
+                        select 1
+                        from pg_roles r
+                        where r.rolname='graphytion_runtime'
+                          and pg_has_role(current_user,r.oid,'MEMBER')
+                    )
+                """)
+            )
+        ).scalar_one()
+        if not has_runtime_role:
+            raise RuntimeError(
+                "Authenticated database session is not a member of graphytion_runtime"
+            )
+        await session.execute(text("SET ROLE graphytion_runtime"))
+
     await session.execute(
         text("""
             select
@@ -42,7 +64,15 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             try:
                 await session.rollback()
+                # A pooled connection must never retain the assumed runtime role
+                # or a previous user's JWT claims after this request completes.
+                await session.execute(text("RESET ROLE"))
                 await set_rls_subject(session, None)
                 await session.commit()
             except Exception:
                 await session.rollback()
+                try:
+                    await session.execute(text("RESET ROLE"))
+                    await session.commit()
+                except Exception:
+                    await session.rollback()

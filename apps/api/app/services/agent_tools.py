@@ -105,7 +105,7 @@ class AgentToolRegistry:
             principals.append(("resource", resource_id))
         effects = (await db.execute(text("""
             select effect from public.agent_tool_permissions
-            where workspace_id=:workspace and tool_key in (:tool,'*')
+            where workspace_id=:workspace and (tool_key is null or tool_key in (:tool,'*'))
               and revoked_at is null and valid_from<=now()
               and (expires_at is null or expires_at>now())
               and (principal_type,principal_id) in

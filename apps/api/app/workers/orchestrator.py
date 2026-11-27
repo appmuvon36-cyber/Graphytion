@@ -385,11 +385,14 @@ async def _dispatch_media(
     )
     generation_config = _validate_config(payload)
     old = (await db.execute(
-        text("select id,status,media_type,model_key,prompt,generation_config from public.media_generation_jobs where workspace_id=:workspace and idempotency_key=:key"),
+        text("select id,status,media_type,provider_key,model_key,prompt,generation_config,production_run_id,parent_step_id from public.media_generation_jobs where workspace_id=:workspace and idempotency_key=:key"),
         {"workspace": run["workspace_id"], "key": envelope.idempotency_key},
     )).mappings().first()
     if old:
-        if old["media_type"] != payload.media_type or old["model_key"] != payload.model_key or old["prompt"] != payload.prompt or old["generation_config"] != generation_config:
+        if (old["media_type"] != payload.media_type or old["provider_key"] != payload.provider_key
+            or old["model_key"] != payload.model_key or old["prompt"] != payload.prompt
+            or old["generation_config"] != generation_config or old["production_run_id"] != envelope.run_id
+            or old["parent_step_id"] != envelope.step_id):
             raise StepInputError("Media idempotency key conflicts with a different generation payload")
         child_id = old["id"]
     else:
@@ -435,11 +438,15 @@ async def _dispatch_voiceover(
         production_run_id=envelope.run_id, parent_step_id=envelope.step_id,
     )
     old = (await db.execute(
-        text("select id,status,input_text,provider_key,model_key,voice_key,language,generation_config from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),
+        text("select id,status,input_text,provider_key,model_key,voice_key,language,generation_config,production_run_id,parent_step_id,scene_id,subtitle_segment_id from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),
         {"workspace": run["workspace_id"], "key": envelope.idempotency_key},
     )).mappings().first()
     if old:
-        if old["input_text"] != payload.text or old["provider_key"] != payload.provider_key or old["model_key"] != payload.model_key or old["voice_key"] != payload.voice_key or old["language"] != payload.language or old["generation_config"] != payload.generation_config:
+        if (old["input_text"] != payload.text or old["provider_key"] != payload.provider_key
+            or old["model_key"] != payload.model_key or old["voice_key"] != payload.voice_key
+            or old["language"] != payload.language or old["generation_config"] != payload.generation_config
+            or old["production_run_id"] != envelope.run_id or old["parent_step_id"] != envelope.step_id
+            or old["scene_id"] is not None or old["subtitle_segment_id"] is not None):
             raise StepInputError("Voiceover idempotency key conflicts with a different TTS payload")
         child_id = old["id"]
     else:

@@ -117,6 +117,13 @@ async def upload_project_asset(
     asset_family_id = uuid4()
     version_number = 1
     if supersedes_asset_id:
+        columns_ready = await db.scalar(text("""
+            select count(*)=3 from information_schema.columns
+            where table_schema='public' and table_name='project_assets'
+              and column_name in ('asset_family_id','version_number','supersedes_asset_id')
+        """))
+        if not columns_ready:
+            raise HTTPException(status_code=503, detail="Asset versioning migration is not applied")
         previous = (await db.execute(text("""
             select asset_family_id from public.project_assets
             where id=:asset and workspace_id=:workspace and status='active' for update

@@ -108,3 +108,11 @@ GRAPHYTION_API_BASE_URL=http://graphytionapi.railway.internal:8080/api/v1
 Do not use port 8000 or omit `/api/v1`. The worker client appends relative paths such as `internal/workers/heartbeat` and `internal/render-jobs/claim` to this base URL.
 
 If worker claims return 200 but heartbeat returns 500 with PostgreSQL `AmbiguousColumnError: column reference "worker_id" is ambiguous`, verify migration `20261127022404_worker_heartbeat_conflict_target_fix` is applied. It changes the upsert conflict target to the named `worker_heartbeats_pkey` constraint. Confirm both worker types appear as `online` in `public.worker_heartbeats` and inspect API logs for HTTP 200 on heartbeat and recovery calls.
+
+
+## Personal render delivery and Asset Library integration
+
+- Render jobs are personal-use operations: no quota reservation, debit, reconciliation, or billing dependency is executed by the render API. Keep existing legacy economics tables intact for compatibility; do not create pricing records for personal rendering.
+- The validated final output is stored once in the private `render-artifacts` bucket and registered as a generated `project_assets` row that references that same bucket/object path. The normal Asset Library signed preview/download path serves it without duplicating the file into `project-assets`.
+- The generated asset metadata records the render job ID, timeline hash and composition version. Asset deletion refuses to remove an output still referenced by a completed render job.
+- This is implemented in source; no real render was run and no claim of MP4 runtime completion is made until worker output is actually produced and validated.

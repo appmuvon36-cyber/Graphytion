@@ -168,9 +168,11 @@ class Settings(BaseSettings):
             raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL must use the postgresql+asyncpg driver")
         if not (direct_database or pooler_database):
             raise ValueError(
-                "GRAPHYTION_RUNTIME_DATABASE_URL target/login is not an allowed Graphytion runtime endpoint "
-                f"(host={db_url.host!r}, username={db_url.username!r}, port={db_url.port!r}, "
-                f"driver={db_url.drivername!r}); expected the dedicated graphytion_api role "
+                "GRAPHYTION_RUNTIME_DATABASE_URL target/login is not an allowed "
+                "Graphytion runtime endpoint "
+                f"(host={db_url.host!r}, username={db_url.username!r}, "
+                f"port={db_url.port!r}, driver={db_url.drivername!r}); "
+                "expected the dedicated graphytion_api role "
                 "on the Graphytion direct host or Supavisor pooler"
             )
         if not db_url.password or "CHANGE_ME" in self.database_url_value:

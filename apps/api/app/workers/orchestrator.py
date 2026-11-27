@@ -856,33 +856,35 @@ async def _process_one(step: dict[str, Any]) -> None:
 
 async def _reconcile_runs() -> None:
     async with SessionLocal() as db:
-        await _reset_worker_session(db)
-        rows = (await db.execute(text("""
-            select id,requested_by,status from public.production_runs
-            where status in ('queued','planning','ready_for_review','cancel_requested')
-            order by updated_at limit 50
-        """))).mappings().all()
-        for row in rows:
-            await set_rls_subject(db, str(row["requested_by"]))
-            if row["status"] == "cancel_requested":
-                cancelled = (await db.execute(text("""
-                    update public.production_run_steps
-                       set status='cancelled',worker_id=null,lease_expires_at=null,
-                           heartbeat_at=null,completed_at=now(),error_code='RUN_CANCELLED',
-                           error_message_safe='Production Run cancellation was requested',
-                           external_operation_state='not_started',updated_at=now()
-                     where production_run_id=:run and child_job_id is null
-                       and status in ('pending','ready','waiting_approval','running')
-                    returning id,step_key
-                """), {"run": row["id"]})).mappings().all()
-                for step in cancelled:
-                    await _append_event(db, row["id"], "step.cancelled", {
-                        "step_id": str(step["id"]), "step_key": step["step_key"],
-                        "reason": "production_run_cancelled",
-                    })
-            await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": row["id"]})
-        await db.commit()
-        await _reset_worker_session(db)
+        try:
+            await _reset_worker_session(db)
+            rows = (await db.execute(text("""
+                select id,requested_by,status from public.production_runs
+                where status in ('queued','planning','ready_for_review','cancel_requested')
+                order by updated_at limit 50
+            """))).mappings().all()
+            for row in rows:
+                await set_rls_subject(db, str(row["requested_by"]))
+                if row["status"] == "cancel_requested":
+                    cancelled = (await db.execute(text("""
+                        update public.production_run_steps
+                           set status='cancelled',worker_id=null,lease_expires_at=null,
+                               heartbeat_at=null,completed_at=now(),error_code='RUN_CANCELLED',
+                               error_message_safe='Production Run cancellation was requested',
+                               external_operation_state='not_started',updated_at=now()
+                         where production_run_id=:run and child_job_id is null
+                           and status in ('pending','ready','waiting_approval','running')
+                        returning id,step_key
+                    """), {"run": row["id"]})).mappings().all()
+                    for step in cancelled:
+                        await _append_event(db, row["id"], "step.cancelled", {
+                            "step_id": str(step["id"]), "step_key": step["step_key"],
+                            "reason": "production_run_cancelled",
+                        })
+                await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": row["id"]})
+            await db.commit()
+        finally:
+            await _reset_worker_session(db)
 
 
 async def run_dispatcher() -> None:

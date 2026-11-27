@@ -244,6 +244,10 @@ export function createApiClient(options: ApiClientOptions) {
       ),
     retryProductionStep: (runId: string, stepId: string) =>
       request<{ data: { step_id: string; status: string; attempt_count: number } }>(`creative-runs/${runId}/steps/${stepId}/retry`, { method: 'POST' }),
+    bindProductionStepAsset: (runId: string, stepId: string, asset_id: string, usage_role: 'input'|'reference'|'source'|'preview' = 'input') =>
+      request<{ data: { id: string; asset_id: string; usage_role: string; created_at: string } }>(
+        `creative-runs/${runId}/steps/${stepId}/assets`, { method: 'POST', body: JSON.stringify({ asset_id, usage_role }) },
+      ),
     attachProductionChild: (runId: string, stepId: string, child_type: 'agent_task'|'media_generation'|'audio_generation'|'render_job', child_job_id: string) =>
       request<{ data: { step_id: string; child_job_type: string; child_job_id: string; state: Record<string, unknown> } }>(
         `creative-runs/${runId}/steps/${stepId}/attach-child`, { method: 'POST', body: JSON.stringify({ child_type, child_job_id }) },

@@ -305,6 +305,7 @@ export const ProductionWorkflowStepApiSchema = z.object({
   child_job_type: z.enum(['agent_task','media_generation','audio_generation','render_job']).nullable(),
   child_job_id: UUID.nullable(), created_at: Timestamp, updated_at: Timestamp,
   dependencies: z.array(z.object({step_id:UUID,step_key:z.string()}).strict()),
+  assets: z.array(z.object({asset_id:UUID,usage_role:z.enum(['input','reference','source','preview'])}).strict()),
 }).strict();
 export type ProductionWorkflowStepApi = z.infer<typeof ProductionWorkflowStepApiSchema>;
 export type ProductionWorkflowStepDefinitionApi = {

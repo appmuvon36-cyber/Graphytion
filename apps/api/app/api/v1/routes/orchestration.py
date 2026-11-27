@@ -175,7 +175,9 @@ async def get_production_workflow(
           s.available_at,s.timeout_seconds,s.started_at,s.completed_at,s.error_code,
           s.error_message_safe,s.child_job_type,s.child_job_id,s.created_at,s.updated_at,
           coalesce(jsonb_agg(jsonb_build_object('step_id',d.depends_on_step_id,'step_key',p.step_key))
-            filter(where d.depends_on_step_id is not null),'[]'::jsonb) dependencies
+            filter(where d.depends_on_step_id is not null),'[]'::jsonb) dependencies,
+          coalesce((select jsonb_agg(jsonb_build_object('asset_id',b.asset_id,'usage_role',b.usage_role))
+            from public.production_run_step_assets b where b.step_id=s.id),'[]'::jsonb) assets
         from public.production_run_steps s
         left join public.production_run_step_dependencies d on d.step_id=s.id
         left join public.production_run_steps p on p.id=d.depends_on_step_id
@@ -349,6 +351,46 @@ async def cancel_production_workflow(
     await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": run_id})
     await db.commit()
     return {"data": {"run_id": str(run_id), "status": "cancel_requested"}}
+
+
+class StepAssetBind(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: UUID
+    usage_role: Literal["input", "reference", "source", "preview"] = "input"
+
+
+@router.post("/creative-runs/{run_id}/steps/{step_id}/assets", status_code=201)
+async def bind_production_step_asset(
+    run_id: UUID, step_id: UUID, payload: StepAssetBind, claims: AuthenticatedClaims,
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    run = await _run_scope(db, run_id, actor, "project.update")
+    step = (await db.execute(text("""
+        select id,status from public.production_run_steps
+        where id=:step and production_run_id=:run and workspace_id=:workspace
+    """), {"step": step_id, "run": run_id, "workspace": run["workspace_id"]})).mappings().first()
+    if step is None:
+        raise HTTPException(404, "Production step not found")
+    if step["status"] not in {"ready", "running"}:
+        raise HTTPException(409, "Assets can only be bound to a ready or running step")
+    asset_ok = await db.scalar(text("""
+        select exists(select 1 from public.project_assets
+        where id=:asset and workspace_id=:workspace and project_id=:project
+          and status='active' and deleted_at is null)
+    """), {"asset": payload.asset_id, "workspace": run["workspace_id"], "project": run["project_id"]})
+    if not asset_ok:
+        raise HTTPException(404, "Active project asset not found")
+    row = (await db.execute(text("""
+        insert into public.production_run_step_assets(
+          production_run_id,workspace_id,project_id,step_id,asset_id,usage_role,created_by
+        ) values(:run,:workspace,:project,:step,:asset,:role,:actor)
+        on conflict(step_id,asset_id,usage_role) do update set created_by=excluded.created_by
+        returning id,asset_id,usage_role,created_at
+    """), {"run": run_id, "workspace": run["workspace_id"], "project": run["project_id"],
+           "step": step_id, "asset": payload.asset_id, "role": payload.usage_role, "actor": actor})).mappings().one()
+    await db.commit()
+    return {"data": dict(row)}
 
 
 class StepComplete(BaseModel):

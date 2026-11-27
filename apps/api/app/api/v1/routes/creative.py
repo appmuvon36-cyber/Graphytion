@@ -1050,8 +1050,10 @@ async def discover_agent_tools(
     project_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
-    await _project_scope(db, project_id, actor, "project.read")
-    return {"data": agent_tool_registry.discover()}
+    workspace_id = await _project_scope(db, project_id, actor, "project.read")
+    return {"data": await agent_tool_registry.discover(
+        db=db, actor=actor, workspace_id=workspace_id,
+    )}
 
 
 @router.post("/projects/{project_id}/creative-runs/{stage}", status_code=202)

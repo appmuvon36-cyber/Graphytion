@@ -98,9 +98,8 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
             raise HTTPException(422, "Video generation requires the Gemini Developer API provider")
         if payload.model_key not in {"gemini-omni-1.1-flash", "gemini-omni-1.2-flash"}:
             raise HTTPException(422, "Unsupported Gemini Developer API video model")
-        # Canonicalize the legacy 1.2 alias to the currently documented
-        # Developer API model. Persist and report the actual provider model.
-        payload.model_key = "gemini-omni-1.1-flash"
+        # Canonicalize legacy 1.1 requests to the current Developer API model.
+        payload.model_key = "gemini-omni-1.2-flash"
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
         if ratio not in {"16:9", "9:16"} or duration not in range(3, 16):

@@ -17,7 +17,7 @@ class GeminiMediaProvider:
     """Gemini image API-key adapter and Agent Platform video OAuth adapter."""
 
     IMAGE_MODELS = {"gemini-3.1-flash-image"}
-    VIDEO_MODEL = "gemini-omni-flash-preview"
+    VIDEO_MODEL = "gemini-omni-1.2-flash"
     CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
     def __init__(self, api_key: str):
@@ -159,21 +159,23 @@ class GeminiMediaProvider:
 
     async def generate_video(
         self, *, prompt: str, model: str, aspect_ratio: str = "16:9",
-        duration_seconds: int = 8, configuration: dict[str, Any] | None = None,
+        duration_seconds: int = 8, resolution: str = "720p", configuration: dict[str, Any] | None = None,
     ) -> tuple[bytes, str, dict[str, Any]]:
         if model != self.VIDEO_MODEL:
             raise ValueError("GEMINI_VIDEO_MODEL_UNSUPPORTED")
         if aspect_ratio not in {"16:9", "9:16"}:
             raise ValueError("VIDEO_ASPECT_RATIO_UNSUPPORTED")
-        if not 3 <= duration_seconds <= 10:
+        if not 3 <= duration_seconds <= 15:
             raise ValueError("VIDEO_DURATION_UNSUPPORTED")
+        if resolution not in {"360p", "720p", "1080p", "4k"}:
+            raise ValueError("VIDEO_RESOLUTION_UNSUPPORTED")
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
         body = await self._video_interaction(project=project, payload={
             "model": self.VIDEO_MODEL,
             "input": [{"type": "text", "text": prompt}],
             "response_format": [{
                 "type": "video", "delivery": "inline",
-                "aspect_ratio": aspect_ratio, "duration": f"{duration_seconds}s",
+                "aspect_ratio": aspect_ratio, "resolution": resolution, "duration": f"{duration_seconds}s",
             }],
             "background": False,
             "store": True,
@@ -201,5 +203,5 @@ class GeminiMediaProvider:
         return content, "video/mp4", {
             "provider": "google-agent-platform", "model": self.VIDEO_MODEL,
             "response_id": body.get("id"), "usage": body.get("usage"),
-            "duration_seconds": duration_seconds, "aspect_ratio": aspect_ratio,
+            "duration_seconds": duration_seconds, "aspect_ratio": aspect_ratio, "resolution": resolution,
         }

@@ -243,3 +243,26 @@ The owner has explicitly reprioritized Phase 03: continue system/backend impleme
 - No production schema migration or Supabase mutation was made in this source change.
 - No Railway deployment, service creation, secret change, or Redis provisioning was performed.
 - Phase 03 remains OPEN. Buildability and runtime behavior must be verified separately; no production completion is claimed.
+
+
+## Vertical orchestration implementation update — 2026-11-27
+
+Latest source implementation after the priority reset:
+
+- `services/ai-worker/Dockerfile` now builds the canonical `apps/api` package from the monorepo root and invokes `graphytion-creative-worker`; the former idle-only worker container entrypoint is no longer used.
+- `apps/api/app/api/v1/routes/creative.py` now persists model-stage outputs and provider provenance as durable workflow checkpoints before artifact assembly. Brief, script, story arc, storyboard, and scene regeneration can resume from their saved structured output after a worker restart/retry instead of repeating completed provider calls.
+- Checkpoint writes verify active worker ownership, non-expired lease, and absence of cancellation before committing. The checkpoint hash uses the existing canonical snapshot hashing function. Existing PostgreSQL workflow checkpoint schema is reused; no migration is needed for this change.
+- `apps/api/app/workers/creative.py` now supports optional Redis list wake-ups while continuing to claim jobs transactionally from PostgreSQL. If Redis is unset or unavailable, workers continue bounded PostgreSQL polling. Redis never owns job state and missed wake-ups do not lose jobs.
+- The creative enqueue API sends the Redis wake-up only after the production run and agent task have committed to PostgreSQL. Redis failure does not roll back or misreport a persisted job.
+- These changes complete a source-level resilience and queue-coordination slice for the P0 creative worker. They are not evidence of deployed runtime or end-to-end production execution.
+
+### Status for this implementation slice
+
+- AI Worker package execution entrypoint: IMPLEMENTED (source); INTEGRATED (shared API domain package); runtime VERIFIED: pending.
+- Creative stage checkpoints: IMPLEMENTED and INTEGRATED with existing PostgreSQL `workflow_checkpoints`; restart/retry behavior not runtime VERIFIED.
+- Redis wake-up: IMPLEMENTED as optional coordination; PostgreSQL polling remains the durable fallback; Redis runtime remains DEFERRED until provisioned.
+- Creative API enqueue → durable PostgreSQL row → optional wake-up: IMPLEMENTED in source; end-to-end worker consumption remains unverified.
+- Remotion renderer: existing dedicated Node.js worker and shared timeline snapshot architecture retained; no duplicate renderer or new render service created in this change.
+- No production migration, secret change, Railway deployment, or synthetic production job was performed.
+
+**Latest verified source HEAD:** pending final commit resolution. Phase 03 remains OPEN.

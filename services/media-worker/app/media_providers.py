@@ -99,7 +99,6 @@ class GeminiMediaProvider:
             "response_format": {
                 "type": "video", "duration": f"{duration_seconds}s",
                 "resolution": resolution, "aspect_ratio": aspect_ratio,
-                "delivery": "inline",
             },
             "background": False,
             "store": False,

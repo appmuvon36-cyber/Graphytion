@@ -8,6 +8,7 @@ import os
 import socket
 from datetime import datetime, timezone
 from typing import Any, Literal
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routes.media_generation import MediaGenerationCreate, _validate_config
 from app.api.v1.routes.render import _validate_snapshot
+from app.api.v1.routes.subtitles import SubtitleSegmentInput, _insert_segment
 from app.api.v1.routes.voiceover import VoiceoverCreate
 from app.core.database import SessionLocal, set_rls_subject
 from app.services.brand_kit import apply_brand_tokens
@@ -481,18 +483,24 @@ async def _dispatch_subtitles(
             "style": _canonical(config.style_config), "actor": run["requested_by"],
             "run": envelope.run_id, "step": envelope.step_id,
         })
+        request = SimpleNamespace(state=SimpleNamespace(request_id=uuid4()))
         for index, segment in enumerate(config.segments):
-            await db.execute(text("""
-                insert into public.subtitle_segments(
-                  track_id,segment_index,start_ms,end_ms,text,speaker,word_timings,
-                  style_config,position_config,alignment_metadata,audio_asset_id
-                ) values(:track,:index,:start,:end,:text,:speaker,'[]'::jsonb,
-                  '{}'::jsonb,'{}'::jsonb,'{}'::jsonb,:audio_asset)
-            """), {
-                "track": track_id, "index": index, "start": segment.start_ms,
-                "end": segment.end_ms, "text": segment.text, "speaker": segment.speaker,
-                "audio_asset": audio_asset_id,
-            })
+            item = SubtitleSegmentInput(
+                segment_index=index, start_ms=segment.start_ms, end_ms=segment.end_ms,
+                text=segment.text, speaker=segment.speaker,
+                audio_asset_id=UUID(str(audio_asset_id)) if audio_asset_id else None,
+            )
+            await _insert_segment(
+                db, track_id, item, UUID(str(run["requested_by"])), request
+            )
+        await db.execute(text("""
+            insert into public.audit_logs(
+              actor_user_id,workspace_id,action,resource_type,resource_id,request_id
+            ) values(:actor,:workspace,'subtitle_track.created','subtitle_track',:track,:request)
+        """), {
+            "actor": run["requested_by"], "workspace": run["workspace_id"],
+            "track": track_id, "request": request.state.request_id,
+        })
     await _finish_without_child(db, step, {
         "subtitle_track_id": str(track_id),
         "segment_count": len(config.segments),

@@ -379,6 +379,11 @@ async def complete_render_artifact(
         where id=:job
     """), {"bucket": RENDER_BUCKET, "path": object_path, "size": len(content), "hash": digest, "job": render_job_id})
     await db.execute(text("update public.render_attempts set status='completed',ended_at=now(),diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id,"diagnostics":json.dumps({"bytes":len(content),"sha256":digest,"mime_type":mime_type})})
+    # Reuse the separately stored thumbnail as Asset Library preview metadata.
+    thumbnail = (await db.execute(text("""
+        select storage_bucket,storage_path from public.render_artifacts
+        where render_job_id=:job and artifact_type='thumbnail'
+    """), {"job":render_job_id})).mappings().first()
     # Register the final MP4/WebM as a normal project asset so the central
     # Asset Library, secure preview and download flows can discover it.
     await db.execute(text("""
@@ -402,7 +407,7 @@ async def complete_render_artifact(
         "bucket":RENDER_BUCKET,"path":object_path,"filename":f"Graphytion Render {str(render_job_id)[:8]}.{extension}",
         "mime":mime_type,"size":len(content),"hash":digest,
         "provenance":json.dumps({"provider":"remotion","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash")}),
-        "metadata":json.dumps({"artifact_type":"render_output","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash"),"composition_version":row.get("composition_version"),"render_config":row.get("render_config") or {}})
+        "metadata":json.dumps({"artifact_type":"render_output","render_job_id":str(render_job_id),"timeline_hash":row.get("timeline_hash"),"composition_version":row.get("composition_version"),"render_config":row.get("render_config") or {},**({"thumbnail":{"bucket":thumbnail["storage_bucket"],"object_path":thumbnail["storage_path"]}} if thumbnail else {})})
     })
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)

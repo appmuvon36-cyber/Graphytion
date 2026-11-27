@@ -18,7 +18,7 @@ from app.core.database import set_rls_subject
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.supabase_storage import SupabaseStorage
 from app.services.queue_notifications import notify_worker
-from app.services.quota import reserve_fixed_operation, reconcile_fixed_operation, release_fixed_operation
+from app.services.quota import release_fixed_operation
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
@@ -333,11 +333,7 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
             select * from private.graphytion_recover_media_generation_jobs()
         """))).mappings().all()
         pending = (await db.execute(text("""
-            select * from public.media_generation_jobs
-            where status in ('completed','failed','cancelled')
-              and quota_reconciliation_status='pending'
-            order by completed_at asc nulls last,created_at asc
-            for update skip locked limit :limit
+            select * from private.graphytion_pending_media_reconciliation_jobs(:limit)
         """), {"limit": 50})).mappings().all()
         reconciled = 0
         for job in pending:

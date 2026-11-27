@@ -323,6 +323,7 @@ async def retry_production_step(
         values(:run,'step.retry_scheduled',cast(:payload as jsonb),
           (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
     """), {"run": run_id, "payload": json.dumps({"step_id": str(step_id), "attempt": row["attempt_count"]})})
+    await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": run_id})
     await db.commit()
     return {"data": {"step_id": str(step_id), "status": "ready", "attempt_count": row["attempt_count"]}}
 

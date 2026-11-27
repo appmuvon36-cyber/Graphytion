@@ -29,6 +29,23 @@ create unique index if not exists agent_tool_registry_workspace_key_uq
 create index if not exists agent_tool_registry_discovery_idx
   on public.agent_tool_registry(workspace_id,stage,is_active);
 
+insert into public.agent_tool_registry(
+  workspace_id,tool_key,agent_key,stage,handler_key,description,permission_key,input_schema,configuration,is_active
+) values
+  (null,'creative.generate_brief','prompt_interpreter','brief','creative.generate_brief',
+   'Interpret a user prompt into a structured creative brief.','project.update',
+   '{"type":"object","properties":{"input_prompt":{"type":"string","minLength":1,"maxLength":20000}},"required":["input_prompt"],"additionalProperties":false}'::jsonb,'{}'::jsonb,true),
+  (null,'creative.write_script','scriptwriter','script','creative.write_script',
+   'Write a structured narration script from an approved brief.','project.update',
+   '{"type":"object","properties":{"brief_id":{"type":"string","format":"uuid"}},"required":["brief_id"],"additionalProperties":false}'::jsonb,'{}'::jsonb,true),
+  (null,'creative.create_storyboard','story_director','storyboard','creative.create_storyboard',
+   'Create a storyboard from an approved script.','project.update',
+   '{"type":"object","properties":{"script_id":{"type":"string","format":"uuid"}},"required":["script_id"],"additionalProperties":false}'::jsonb,'{}'::jsonb,true),
+  (null,'creative.regenerate_scene','scene_regenerator','scene','creative.regenerate_scene',
+   'Regenerate one scene while preserving its approved narrative source.','project.update',
+   '{"type":"object","properties":{"scene_id":{"type":"string","format":"uuid"},"revision_instruction":{"type":"string","minLength":3,"maxLength":2000}},"required":["scene_id","revision_instruction"],"additionalProperties":false}'::jsonb,'{}'::jsonb,true)
+on conflict do nothing;
+
 create table if not exists public.agent_tool_permissions (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -97,6 +114,7 @@ drop policy if exists agent_tool_audit_api_insert on public.agent_tool_audit_eve
 create policy agent_tool_audit_api_insert on public.agent_tool_audit_events
   for insert to graphytion_api with check (
     workspace_id is null or private.graphytion_is_workspace_member(workspace_id)
+    or private.graphytion_is_platform_admin()
   );
 
 revoke all on public.agent_tool_registry,public.agent_tool_permissions,public.agent_tool_audit_events

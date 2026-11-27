@@ -328,6 +328,7 @@ class Worker:
                     last_recovery = now
                     try:
                         await self.api("/internal/media-jobs/recover", method="POST")
+                        await self.api("/internal/media-generation-jobs/recover", method="POST")
                     except Exception:
                         log.exception("media_job_recovery_failed")
                 if not processed:

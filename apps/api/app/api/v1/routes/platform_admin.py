@@ -967,7 +967,7 @@ async def list_quota_operation_prices(claims: AuthenticatedClaims, db: AsyncSess
     await _require_platform_admin(db, actor)
     rows = (await db.execute(text("""
         select id,operation_key,microusd_per_unit,unit_name,effective_at,is_active,notes,created_at
-        from public.quota_operation_prices order by operation_key,effective_at desc limit 100
+        from public.quota_operation_prices where price_kind='quota' order by operation_key,effective_at desc limit 100
     """))).mappings().all()
     return {"data": [dict(row) for row in rows]}
 
@@ -984,7 +984,7 @@ async def set_quota_operation_price(
         raise HTTPException(status_code=422, detail="Unsupported quota operation key")
     await db.execute(text("""
         update public.quota_operation_prices set is_active=false
-        where operation_key=:operation and is_active=true
+        where operation_key=:operation and price_kind='quota' and is_active=true
     """), {"operation": operation_key})
     row = (await db.execute(text("""
         insert into public.quota_operation_prices(

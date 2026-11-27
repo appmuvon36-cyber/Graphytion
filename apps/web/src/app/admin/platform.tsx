@@ -18,6 +18,8 @@ type RenderSettings={max_concurrent_jobs:number;lease_seconds:number;max_attempt
 type MotionControl={component_key:string;component_version:string;category:string;enabled:boolean;reason?:string|null};
 type AdminRenderJob={id:string;project_name:string;workspace_name:string;status:string;progress_percent:number;worker_id?:string|null;lease_expires_at?:string|null;render_profile?:string|null;attempt_count:number;latest_attempt_status?:string|null};
 type AdminMediaJob={id:string;project_name:string;workspace_name:string;status:string;provider_key:string;model_key:string;voice_key:string;worker_id?:string|null;lease_expires_at?:string|null;attempt_count:number;max_attempts:number;error_code?:string|null;asset_id?:string|null};
+type ModelPrice = { id:string; provider_key:string; model_key:string; input_microusd_per_million:number; output_microusd_per_million:number; effective_at:string; is_active:boolean; notes?:string|null };
+type UsageSummary = { period_days:number; totals:{input_tokens:number;output_tokens:number;priced_cost_microusd:number;priced_events:number;unpriced_events:number}; by_provider_model:Array<{provider_key:string;model_key:string;input_tokens:number;output_tokens:number;cost_microusd:number;events:number}> };
 type WorkerStatus={worker_id:string;worker_type:'media'|'render';hostname:string;version?:string|null;status:string;runtime_status:'online'|'stale';last_seen_at:string;metadata?:Record<string,unknown>};
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';

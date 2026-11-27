@@ -415,7 +415,7 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 ## Gemini Developer API media provider migration — 2026-11-27
 
 - The repository's `AGENTS.md` authorizes production deployment for explicitly requested implementation during this deployment phase. It prohibits staging/preview deployment, not production deployment; no AGENTS.md prohibition needed removal.
-- Media Worker image and video adapters now use the Gemini Developer API REST Interactions endpoint `https://generativelanguage.googleapis.com/v1beta/interactions` and the `x-goog-api-key` header.
+- Media Worker uses model-specific Gemini Developer API contracts: image generation uses `POST /v1beta/models/gemini-3.1-flash-image:generateContent` with `generationConfig.imageConfig`; video generation uses `POST /v1beta/interactions`. Both use the `x-goog-api-key` header.
 - Image model: `gemini-3.1-flash-image`. Video model: `gemini-omni-1.2-flash`. Video submission uses background execution; interaction IDs are stored in the existing `media_generation_jobs.provider_job_id` field, retrieved with GET polling, and cancellation is requested through the provider cancel endpoint.
 - FastAPI accepts only `provider_key='gemini'` for image and video. Customer Studio now submits that provider key for both media types.
 - Removed the Media Worker `google-auth` dependency and removed Google Cloud/Service Account variables from its environment example. No Google Cloud Project, ADC, Service Account, Vertex AI, Agent Platform OAuth, or GCS download path is required by the source adapter.

@@ -139,23 +139,21 @@ class Worker:
                 {generation_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED,
             )
             if cancel_wait in done and cancel_event.is_set():
-                # Both image and video use the Interactions API. Once an operation
-                # ID is persisted, the provider adapter requests cancellation and
-                # polls the terminal state before the job is marked cancelled.
+                # Both image and video use the Interactions API. The adapter
+                # requests cancellation and polls the provider's terminal state.
+                # A provider that already completed must still have its real
+                # artifact persisted; only a cancelled/failed operation is final.
                 try:
-                    await generation_task
+                    content, mime, provenance = await generation_task
                 except (asyncio.CancelledError, Exception):
-                    pass
-                await self.api(
-                    f"/internal/media-generation-jobs/{job_id}/cancelled",
-                    method="POST", params={"worker_id": WORKER_ID},
-                )
-                log.info("media_generation_cancelled", extra={"generation_id": job_id})
-                return True
-            # If the provider completed before its cancellation request took
-            # effect, persist the real output instead of falsely discarding a
-            # billable completed operation as cancelled.
-            content, mime, provenance = await generation_task
+                    await self.api(
+                        f"/internal/media-generation-jobs/{job_id}/cancelled",
+                        method="POST", params={"worker_id": WORKER_ID},
+                    )
+                    log.info("media_generation_cancelled", extra={"generation_id": job_id})
+                    return True
+            else:
+                content, mime, provenance = await generation_task
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/artifact",
                 method="POST",

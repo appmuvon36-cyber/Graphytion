@@ -154,7 +154,7 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
     actor = _actor(claims)
     await _scope(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
-        select id,media_type,provider_key,model_key,status,error_code,attempt_count,
+        select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
                asset_id,output_mime_type,output_size_bytes,output_sha256,
                provider_cost_status,provider_cost_microusd,operational_cost_microusd,
                quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at

@@ -359,7 +359,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     setBusy(true); setError('');
     try {
       await api.createProductionWorkflow(workflowRunId, [
-        { key:'creative_review', step_type:'creative', requires_approval:true },
+        { key:'creative_agents', step_type:'agent' },
+        { key:'creative_review', step_type:'creative', depends_on:['creative_agents'], requires_approval:true },
         { key:'media_generation', step_type:'media_generation', depends_on:['creative_review'] },
         { key:'asset_persistence', step_type:'asset_persistence', depends_on:['media_generation'] },
         { key:'voiceover', step_type:'voiceover', depends_on:['creative_review'] },

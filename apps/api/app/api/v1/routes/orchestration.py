@@ -142,6 +142,30 @@ async def create_production_workflow(
         })).scalar_one()
         ids[step.key] = row
 
+    # Bind the run's persisted creative agent task to the canonical agent step.
+    # This preserves the agent -> workflow lineage even when the workflow is
+    # initialized after the creative task was queued or completed.
+    for step in payload.steps:
+        if step.step_type != "agent":
+            continue
+        tasks = (await db.execute(text("""
+            select id,status from public.agent_tasks
+            where production_run_id=:run order by created_at desc for update
+        """), {"run": run_id})).mappings().all()
+        if len(tasks) != 1:
+            raise HTTPException(409, "An agent step requires exactly one persisted creative task for this Production Run")
+        task = tasks[0]
+        await db.execute(text("""
+            update public.agent_tasks set parent_step_id=:step
+            where id=:task and production_run_id=:run
+        """), {"step": ids[step.key], "task": task["id"], "run": run_id})
+        await db.execute(text("""
+            update public.production_run_steps
+            set child_job_type='agent_task',child_job_id=:task,status='running',
+                started_at=coalesce(started_at,now()),updated_at=now()
+            where id=:step and production_run_id=:run
+        """), {"task": task["id"], "step": ids[step.key], "run": run_id})
+
     for step in payload.steps:
         for parent in step.depends_on:
             await db.execute(text("""
@@ -409,6 +433,19 @@ async def complete_production_step(
 ):
     actor = _actor(claims)
     run = await _run_scope(db, run_id, actor, "project.update")
+    step = (await db.execute(text("""
+        select step_key,step_type,status,requires_approval,approved_at,child_job_id
+        from public.production_run_steps
+        where id=:step and production_run_id=:run and workspace_id=:workspace
+        for update
+    """), {"step": step_id, "run": run_id, "workspace": run["workspace_id"]})).mappings().first()
+    if step is None:
+        raise HTTPException(404, "Production step not found")
+    # Human acknowledgement is reserved for the explicitly approved creative
+    # review gate. Media, audio, subtitle, timeline and render stages can only
+    # complete from their persisted child job or artifact transaction.
+    if step["step_type"] != "creative" or not step["requires_approval"] or step["approved_at"] is None:
+        raise HTTPException(409, "Only an approved creative review gate can be completed manually")
     ready = await db.scalar(text("""
         select not exists (
           select 1 from public.production_run_step_dependencies d
@@ -423,7 +460,8 @@ async def complete_production_step(
         set status='completed',output_refs=cast(:outputs as jsonb),
             completed_at=now(),updated_at=now()
         where id=:step and production_run_id=:run and workspace_id=:workspace
-          and status in ('ready','running') and child_job_id is null
+          and step_type='creative' and requires_approval and approved_at is not null
+          and status='ready' and child_job_id is null
         returning id,step_key
     """), {"outputs": json.dumps(payload.output_refs), "step": step_id,
            "run": run_id, "workspace": run["workspace_id"]})).mappings().first()

@@ -148,23 +148,22 @@ async def create_media_generation(
         if old is None or old["media_type"] != payload.media_type or old["provider_key"] != payload.provider_key or old["model_key"] != payload.model_key or old["prompt"] != payload.prompt or old["generation_config"] != config:
             raise HTTPException(409, "Idempotency key was used for a different media request")
         return {"data": {"generation_id": str(old["id"]), "status": old["status"], "replayed": True}}
-    operation = "image_generation" if payload.media_type == "image" else "video_generation"
     try:
-        reservation = await reserve_fixed_operation(
-            db, workspace_id=workspace, project_id=project_id,
-            resource_type="image_generation" if payload.media_type == "image" else "video_generation",
-            resource_id=row["id"], operation_key=operation, units=1,
-            idempotency_key=f"media-generation:{row['id']}:initial",
-        )
+        # Personal Graphytion usage is free: do not reserve or debit user quota.
+        # Provider and internal operating costs are tracked separately on the job.
         await db.execute(text("""
-            update public.media_generation_jobs set quota_reservation_id=:reservation where id=:id
-        """), {"reservation": reservation, "id": row["id"]})
+            update public.media_generation_jobs
+            set quota_debit_microusd=0,quota_reconciliation_status='pending',
+                economics_status='unpriced',updated_at=now()
+            where id=:id
+        """), {"id": row["id"]})
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
             values(:actor,:workspace,'media_generation.requested','media_generation',:id,:request,cast(:metadata as jsonb))
         """), {"actor": actor, "workspace": workspace, "id": row["id"],
                "request": request.state.request_id,
-               "metadata": json.dumps({"media_type": payload.media_type, "provider": payload.provider_key, "model": payload.model_key})})
+               "metadata": json.dumps({"media_type": payload.media_type, "provider": payload.provider_key,
+                                       "model": payload.model_key, "billing_mode": "free_personal"})})
         await db.commit()
     except Exception:
         await db.rollback()
@@ -265,22 +264,14 @@ async def retry_media_generation(
         raise HTTPException(409, "Only failed media generation jobs can be retried")
     if row["provider_job_id"]:
         raise HTTPException(409, "The previous provider operation remains linked; resolve its provider cost and reconciliation before starting a new generation")
-    operation = "image_generation" if row["media_type"] == "image" else "video_generation"
-    resource_type = operation
-    reservation_status = await db.scalar(text("select status from public.quota_reservations where id=:id"), {"id": row["quota_reservation_id"]}) if row["quota_reservation_id"] else None
-    if row["quota_reservation_id"] and reservation_status == "reserved":
-        reservation = row["quota_reservation_id"]
-    else:
-        reservation = await reserve_fixed_operation(
-            db, workspace_id=row["workspace_id"], project_id=row["project_id"],
-            resource_type=resource_type, resource_id=generation_id,
-            operation_key=operation, units=1,
-            idempotency_key=f"media-generation:{generation_id}:retry:{idempotency_key}",
-        )
+    # Free personal mode never creates a new quota reservation. Preserve a
+    # pre-existing reservation reference only for legacy jobs pending cost resolution.
+    reservation = row["quota_reservation_id"]
     await db.execute(text("""
         update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
           attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
-          quota_reservation_id=:reservation,provider_operation_status='not_started',completed_at=null,updated_at=now()
+          quota_reservation_id=:reservation,quota_debit_microusd=case when :reservation is null then 0 else quota_debit_microusd end,
+          provider_operation_status='not_started',completed_at=null,updated_at=now()
         where id=:id and status='failed'
     """), {"id": generation_id, "reservation": reservation})
     await db.execute(text("""
@@ -342,7 +333,11 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
             select * from private.graphytion_recover_media_generation_jobs()
         """))).mappings().all()
         pending = (await db.execute(text("""
-            select * from private.graphytion_pending_media_reconciliation_jobs(:limit)
+            select * from public.media_generation_jobs
+            where status in ('completed','failed','cancelled')
+              and quota_reconciliation_status='pending'
+            order by completed_at asc nulls last,created_at asc
+            for update skip locked limit :limit
         """), {"limit": 50})).mappings().all()
         reconciled = 0
         for job in pending:
@@ -383,19 +378,16 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
             if operational_cost is None and cost_price:
                 units = int((job["generation_config"] or {}).get("duration_seconds", 1)) if job["media_type"] == "video" else 1
                 operational_cost = int(cost_price["microusd_per_unit"]) * units
-            if provider_cost is None or operational_cost is None or job["quota_reservation_id"] is None:
+            if provider_cost is None or operational_cost is None:
                 continue
-            await reconcile_fixed_operation(
-                db, resource_type="image_generation" if job["media_type"] == "image" else "video_generation",
-                resource_id=job["id"],
-            )
-            reservation = (await db.execute(text("""
-                select consumed_microusd,status from public.quota_reservations where id=:id
-            """), {"id": job["quota_reservation_id"]})).mappings().first()
-            if reservation is None or reservation["status"] != "consumed":
-                continue
-            quota_debit = int(reservation["consumed_microusd"])
-            margin = quota_debit - provider_cost - operational_cost
+            # Any legacy hold is released only after provider cost is known.
+            if provider_cost is not None and job["quota_reservation_id"] is not None:
+                await release_fixed_operation(
+                    db, resource_type="image_generation" if job["media_type"] == "image" else "video_generation",
+                    resource_id=job["id"], reason="free_personal_mode_provider_cost_resolved",
+                )
+            quota_debit = 0
+            margin = None
             snapshot = dict(job["price_snapshot"] or {})
             if provider_price:
                 snapshot["provider"] = {
@@ -414,7 +406,7 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
                   provider_price_id=coalesce(:provider_price_id,provider_price_id),
                   operational_cost_microusd=:operational_cost,
                   operational_price_id=coalesce(:operational_price_id,operational_price_id),
-                  quota_debit_microusd=:quota_debit,margin_microusd=:margin,
+                  quota_debit_microusd=0,margin_microusd=null,
                   economics_status='complete',quota_reconciliation_status='complete',
                   quota_reconciled_at=now(),price_snapshot=cast(:snapshot as jsonb),updated_at=now()
                 where id=:id
@@ -686,16 +678,12 @@ async def complete_media_generation_artifact(
         """), {"asset": asset_id, "mime": mime, "size": len(content), "sha": digest,
                "provenance": json.dumps(provenance), "usage": json.dumps(usage) if usage else None,
                "provider_cost": provider_cost, "id": generation_id, "worker": worker_id})
-        if provider_cost is not None and operational_cost is not None:
-            await reconcile_fixed_operation(
+        if provider_cost is not None and row["quota_reservation_id"] is not None:
+            await release_fixed_operation(
                 db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-                resource_id=generation_id,
+                resource_id=generation_id, reason="free_personal_mode_provider_cost_resolved",
             )
-        reservation = (await db.execute(text("""
-            select consumed_microusd from public.quota_reservations
-            where id=:id and status='consumed'
-        """), {"id": row["quota_reservation_id"]})).mappings().first() if row["quota_reservation_id"] else None
-        quota_debit = int(reservation["consumed_microusd"]) if reservation else None
+        quota_debit = 0
         cost_price = (await db.execute(text("""
             select id,microusd_per_unit,unit_name,effective_at
             from public.quota_operation_prices
@@ -710,8 +698,8 @@ async def complete_media_generation_artifact(
         if cost_price:
             units = int((row["generation_config"] or {}).get("duration_seconds", 1)) if row["media_type"] == "video" else 1
             operational_cost = int(cost_price["microusd_per_unit"]) * units
-        margin = quota_debit - provider_cost - operational_cost if quota_debit is not None and provider_cost is not None and operational_cost is not None else None
-        economics_status = "complete" if margin is not None else ("partial" if any(value is not None for value in (quota_debit, provider_cost, operational_cost)) else "unpriced")
+        margin = None
+        economics_status = "complete" if provider_cost is not None and operational_cost is not None else ("partial" if provider_cost is not None or operational_cost is not None else "unpriced")
         await db.execute(text("""
             update public.media_generation_jobs set operational_cost_microusd=:operational,
               quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics,

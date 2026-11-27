@@ -232,7 +232,6 @@ returns setof public.media_generation_jobs
 language sql security definer set search_path='' as $
   select j.* from public.media_generation_jobs j
   where j.status in ('completed','failed','cancelled') and j.quota_reconciliation_status='pending'
-    and j.quota_reservation_id is not null
   order by j.completed_at asc
   for update skip locked
   limit least(greatest(coalesce(p_limit,50),1),100)

@@ -234,6 +234,38 @@ async def delete_project_asset(
     if row["status"] not in ("active", "deleting", "delete_failed"):
         raise HTTPException(status_code=409, detail="Project asset is already in a lifecycle transition")
     await _project_workspace(db, row["project_id"], actor, "project.update")
+    referenced = await db.scalar(text("""
+        select
+          exists(
+            select 1 from public.brand_kits bk
+            where bk.workspace_id=:workspace and bk.brand_config->>'logo_asset_id'=:asset
+              and bk.status='active'
+          )
+          or exists(
+            select 1 from public.video_timelines t
+            where t.workspace_id=:workspace and (
+              exists(select 1 from jsonb_array_elements(coalesce(t.snapshot->'assetRefs','[]'::jsonb)) a
+                     where a->>'assetId'=:asset)
+              or exists(select 1 from jsonb_array_elements(coalesce(t.snapshot->'clips','[]'::jsonb)) clip
+                        where clip->>'assetId'=:asset
+                           or clip->'props'->>'assetId'=:asset
+                           or clip->'props'->>'fontAssetId'=:asset)
+            )
+          )
+          or exists(
+            select 1 from public.composition_templates ct
+            where ct.workspace_id=:workspace and ct.status='published' and (
+              exists(select 1 from jsonb_array_elements(coalesce(ct.composition_snapshot->'assetRefs','[]'::jsonb)) a
+                     where a->>'assetId'=:asset)
+              or exists(select 1 from jsonb_array_elements(coalesce(ct.composition_snapshot->'clips','[]'::jsonb)) clip
+                        where clip->>'assetId'=:asset
+                           or clip->'props'->>'assetId'=:asset
+                           or clip->'props'->>'fontAssetId'=:asset)
+            )
+          )
+    """), {"workspace": row["workspace_id"], "asset": str(asset_id)})
+    if referenced:
+        raise HTTPException(status_code=409, detail="Asset is still referenced by a Brand Kit, saved timeline, or published template")
     await db.execute(text("""
         update public.project_assets set status='deleting' where id=:asset
     """), {"asset": asset_id})

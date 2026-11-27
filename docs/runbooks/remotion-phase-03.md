@@ -95,3 +95,16 @@ Set `RESEND_API_KEY` and `INVITATION_FROM_EMAIL` on the API service only after t
 - Worker retries use the database-persisted `max_attempts` budget, including bounded timeout retries. PostgreSQL remains authoritative for the attempt count.
 - Final output metadata is checked with ffprobe before thumbnail upload. Preview renditions are independently checked for MP4/H.264, expected half-resolution even dimensions, and duration within one frame before the API persists the sidecar.
 - These code changes do not apply database migrations or deploy Railway services. A real render remains blocked until FastAPI is healthy with the dedicated runtime database role and required migrations are applied through the authorized production procedure.
+
+
+## Railway private API connectivity (2026-11-27)
+
+The FastAPI container binds to `PORT` and defaults to 8080 to match the Railway healthcheck. Keep the API private; workers must use the Railway private endpoint and include the versioned API prefix:
+
+```text
+GRAPHYTION_API_BASE_URL=http://graphytionapi.railway.internal:8080/api/v1
+```
+
+Do not use port 8000 or omit `/api/v1`. The worker client appends relative paths such as `internal/workers/heartbeat` and `internal/render-jobs/claim` to this base URL.
+
+If worker claims return 200 but heartbeat returns 500 with PostgreSQL `AmbiguousColumnError: column reference "worker_id" is ambiguous`, verify migration `20261127022404_worker_heartbeat_conflict_target_fix` is applied. It changes the upsert conflict target to the named `worker_heartbeats_pkey` constraint. Confirm both worker types appear as `online` in `public.worker_heartbeats` and inspect API logs for HTTP 200 on heartbeat and recovery calls.

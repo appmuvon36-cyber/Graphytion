@@ -104,13 +104,13 @@ def validate_snapshot(snapshot:dict[str,Any])->str:
   if outgoing and outgoing.get("type")=="crossfade":
    end=clip["startFrame"]+clip["durationFrames"]
    duration=outgoing["durationFrames"]
-   partner=next((next_clip for next_clip in clips if next_clip["id"]!=clip["id"] and next_clip["trackId"]==clip["trackId"] and next_clip["startFrame"]<end and next_clip["startFrame"]>=clip["startFrame"] and next_clip.get("transitionIn",{}).get("type")=="crossfade" and next_clip["transitionIn"]["durationFrames"]==duration and end-next_clip["startFrame"]==duration),None)
+   partner=next((next_clip for next_clip in clips if next_clip["id"]!=clip["id"] and next_clip["trackId"]==clip["trackId"] and next_clip["startFrame"]<end and next_clip["startFrame"]>=clip["startFrame"] and (next_clip.get("transitionIn") or {}).get("type")=="crossfade" and next_clip["transitionIn"]["durationFrames"]==duration and end-next_clip["startFrame"]==duration),None)
    if partner is None:raise HTTPException(422,"Crossfade must pair outgoing and incoming clips with an exact matching overlap")
   incoming=clip.get("transitionIn")
   if incoming and incoming.get("type")=="crossfade":
    start=clip["startFrame"]
    duration=incoming["durationFrames"]
-   partner=next((previous for previous in clips if previous["id"]!=clip["id"] and previous["trackId"]==clip["trackId"] and previous["startFrame"]<start and previous["startFrame"]+previous["durationFrames"]>start and previous.get("transitionOut",{}).get("type")=="crossfade" and previous["transitionOut"]["durationFrames"]==duration and previous["startFrame"]+previous["durationFrames"]-start==duration),None)
+   partner=next((previous for previous in clips if previous["id"]!=clip["id"] and previous["trackId"]==clip["trackId"] and previous["startFrame"]<start and previous["startFrame"]+previous["durationFrames"]>start and (previous.get("transitionOut") or {}).get("type")=="crossfade" and previous["transitionOut"]["durationFrames"]==duration and previous["startFrame"]+previous["durationFrames"]-start==duration),None)
    if partner is None:raise HTTPException(422,"Crossfade incoming clip has no matching outgoing overlap")
  canonical=json.dumps(snapshot,sort_keys=True,separators=(",",":"),ensure_ascii=False)
  return hashlib.sha256(canonical.encode()).hexdigest()

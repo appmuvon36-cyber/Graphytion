@@ -11,7 +11,6 @@ class WorkspaceRole(StrEnum):
     EDITOR = "editor"
     MEMBER = "member"
     VIEWER = "viewer"
-    BILLING = "billing"
 
 
 ROLE_PERMISSIONS: dict[WorkspaceRole, frozenset[str]] = {
@@ -56,7 +55,6 @@ ROLE_PERMISSIONS: dict[WorkspaceRole, frozenset[str]] = {
         {"workspace.read", "member.read", "project.read", "project.create", "project.update"}
     ),
     WorkspaceRole.VIEWER: frozenset({"workspace.read", "project.read"}),
-    WorkspaceRole.BILLING: frozenset({"workspace.read", "billing.read", "billing.manage"}),
 }
 
 

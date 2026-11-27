@@ -295,6 +295,13 @@ async def delete_project_asset(
     if row["status"] not in ("active", "deleting", "delete_failed"):
         raise HTTPException(status_code=409, detail="Project asset is already in a lifecycle transition")
     await _project_workspace(db, row["project_id"], actor, "project.update")
+    reference_tables_ready = await db.scalar(text("""
+        select to_regclass('public.brand_kits') is not null
+           and to_regclass('public.video_timelines') is not null
+           and to_regclass('public.composition_templates') is not null
+    """))
+    if not reference_tables_ready:
+        raise HTTPException(status_code=503, detail="Brand Kit and composition reference migrations must be applied before asset deletion")
     referenced = await db.scalar(text("""
         select
           exists(

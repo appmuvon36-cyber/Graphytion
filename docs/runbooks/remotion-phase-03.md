@@ -125,3 +125,11 @@ If worker claims return 200 but heartbeat returns 500 with PostgreSQL `Ambiguous
 - The only intentionally unapplied migration files are the price-book read policy and Google Agent Platform provider migration. Personal mode has no quota pricing dependency and media generation is pinned to direct Gemini Developer API, so neither migration is required.
 - Render tables and Project Assets exist in production with tenant RLS. The render and project asset storage buckets are private. Five active global render profiles and eight enabled motion components are present.
 - One recent render worker heartbeat and one recent media worker heartbeat are online. No synthetic render jobs or generated assets were created.
+
+
+## Personal-use no-quota policy — 2026-11-27
+
+- Creative runs, voiceover/TTS and Remotion render jobs do not create quota reservations or require model/operation price-book entries. Retry, cancellation, completion and recovery paths remain available without quota checks.
+- Media generation stores a provider-reported cost only when supplied by the provider. It does not estimate provider cost from price tables, calculate operational markup or margin, or debit user quota. Legacy holds are released for compatibility only.
+- Platform admin quota, rate, model price and operational price controls have been removed. Usage diagnostics show token counts and event counts only. The billing workspace role is no longer assignable.
+- Supabase migration `20261127074637_personal_media_no_quota_reconciliation` narrows the pending reconciliation queue to legacy rows with an actual quota reservation. Production has zero quota accounts, reservations, operation-price rows, legacy media holds and media quota debits.

@@ -169,7 +169,7 @@ async def create_media_generation(
         await db.rollback()
         raise
     await notify_worker("media", str(row["id"]))
-    return {"data": {"generation_id": str(row["id"]), "status": row["status"]}}
+    return {"data": {"generation_id": str(row["id"]), "status": row["status"], "billing_mode": "free_personal"}}
 
 
 @router.get("/projects/{project_id}/media-generations")
@@ -181,8 +181,9 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
         select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
                retry_count,max_retries,next_retry_at,last_error,last_error_class,provider_operation_status,
                quota_reconciliation_status,provider_job_id as provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
-               provider_cost_status,provider_cost_microusd,operational_cost_microusd,
-               quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
+               provider_cost_status,provider_cost_microusd,estimated_provider_cost_microusd,
+               operational_cost_microusd,quota_debit_microusd,margin_microusd,
+               economics_status,currency,price_snapshot,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
         order by created_at desc limit 200
         """), {"project": project_id})).mappings().all()
@@ -191,7 +192,7 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
         if _migration_missing(exc):
             raise _migration_required() from exc
         raise
-    return {"data": [dict(row) for row in rows]}
+    return {"data": [{**dict(row), "billing_mode": "free_personal"} for row in rows]}
 
 
 @router.get("/media-generations/{generation_id}")
@@ -234,10 +235,12 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
         "provider_usage": row["provider_usage"],
         "provider_cost_status": row["provider_cost_status"],
         "provider_cost_microusd": row["provider_cost_microusd"],
+        "estimated_provider_cost_microusd": row["estimated_provider_cost_microusd"],
         "operational_cost_microusd": row["operational_cost_microusd"],
         "quota_debit_microusd": row["quota_debit_microusd"],
         "margin_microusd": row["margin_microusd"],
-        "economics_status": row["economics_status"],
+        "economics_status": row["economics_status"], "currency": row["currency"],
+        "price_snapshot": row["price_snapshot"], "billing_mode": "free_personal",
         "created_at": row["created_at"], "completed_at": row["completed_at"],
         "artifact": artifact,
     }}
@@ -281,7 +284,7 @@ async def retry_media_generation(
            "request": request.state.request_id})
     await db.commit()
     await notify_worker("media", str(generation_id))
-    return {"data": {"generation_id": str(generation_id), "status": "queued"}}
+    return {"data": {"generation_id": str(generation_id), "status": "queued", "billing_mode": "free_personal"}}
 
 
 @router.post("/media-generations/{generation_id}/cancel")

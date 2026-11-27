@@ -292,7 +292,8 @@ async def claim_render_job(
         "project_id": str(row["project_id"]), "requested_by": str(row["requested_by"]),
         "composition_id": row["composition_id"], "composition_version": row["composition_version"],
         "timeline_snapshot": row["timeline_snapshot"], "timeline_hash": row["timeline_hash"],
-        "render_config": row["render_config"], "resolved_assets":resolved_assets, "attempt_count": row["attempt_count"],
+        "render_config": row["render_config"], "resolved_assets":resolved_assets,
+        "attempt_count": row["attempt_count"], "max_attempts": row["max_attempts"],
     }}
 
 

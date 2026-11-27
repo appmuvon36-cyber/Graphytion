@@ -88,6 +88,10 @@ class StepInputError(ValueError):
     pass
 
 
+class StepCancelledError(StepInputError):
+    pass
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
@@ -138,7 +142,7 @@ async def _load_envelope(db: AsyncSession, step: dict[str, Any]) -> tuple[StepEn
     if run is None:
         raise StepInputError("Production Run no longer exists")
     if run["status"] in {"cancel_requested", "cancelled"} or run["cancel_requested_at"] is not None:
-        raise StepInputError("Production Run cancellation was requested")
+        raise StepCancelledError("Production Run cancellation was requested")
 
     await set_rls_subject(db, str(run["requested_by"]))
     parents = (await db.execute(
@@ -237,10 +241,13 @@ async def _attach_child(
                    started_at=coalesce(started_at,now()),updated_at=now()
              where id=:step and worker_id=:worker and status='running'
                and child_job_id is null
+               and exists(select 1 from public.production_runs r
+                 where r.id=:run and r.status not in ('cancel_requested','cancelled')
+                   and r.cancel_requested_at is null)
         """),
         {
             "type": child_type, "child": child_id, "output": _canonical(output),
-            "step": step["id"], "worker": WORKER_ID,
+            "step": step["id"], "worker": WORKER_ID, "run": step["production_run_id"],
         },
     )
     if updated.rowcount != 1:
@@ -699,16 +706,19 @@ async def _fail_step(
                    available_at=case when :retry then now()+make_interval(secs=>:delay) else available_at end,
                    error_code=:code,error_message_safe=:message,last_error_class=:class,
                    last_error_at=now(),completed_at=case when :retry then null else now() end,
-                   external_operation_state=case when external_operation_state in ('submitted','reconciling','unknown')
+                   external_operation_state=case when :cancelled then 'failed'
+                     when external_operation_state in ('submitted','reconciling','unknown')
                      then 'unknown' else 'failed' end,updated_at=now()
              where id=:step and worker_id=:worker
         """), {
-            "status": "ready" if retry else "failed", "retry": retry, "delay": delay,
-            "code": "STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED",
-            "message": safe_message, "class": "transient" if retry else "permanent",
+            "status": "cancelled" if cancelled else ("ready" if retry else "failed"),
+            "retry": retry, "delay": delay,
+            "code": "RUN_CANCELLED" if cancelled else ("STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED"),
+            "message": safe_message, "class": "cancelled" if cancelled else ("transient" if retry else "permanent"),
             "step": step["id"], "worker": WORKER_ID,
         })
-        await _append_event(db, current["production_run_id"], "step.retry" if retry else "step.failed", {
+        await _append_event(db, current["production_run_id"],
+            "step.cancelled" if cancelled else ("step.retry" if retry else "step.failed"), {
             "step_id": str(step["id"]), "step_key": step["step_key"],
             "worker_id": WORKER_ID, "retryable": retry, "retry_delay_seconds": delay if retry else None,
             "error_code": "STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED",

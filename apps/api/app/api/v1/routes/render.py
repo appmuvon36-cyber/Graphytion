@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Form, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -355,6 +356,11 @@ async def complete_render_artifact(
     request: Request,
     file: UploadFile,
     worker_id: str = Query(min_length=1, max_length=128),
+    duration_seconds: float = Form(gt=0),
+    width: int = Form(gt=0),
+    height: int = Form(gt=0),
+    video_codec: str = Form(min_length=1, max_length=32),
+    audio_codec: str | None = Form(default=None, max_length=32),
     db: AsyncSession = DbSession,
 ):
     _require_worker(request)
@@ -366,7 +372,7 @@ async def complete_render_artifact(
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
         select id,workspace_id,project_id,requested_by,worker_id,status,render_config,
-               timeline_hash,composition_version,production_run_id,parent_step_id
+               timeline_snapshot,timeline_hash,composition_version,production_run_id,parent_step_id
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:
@@ -381,6 +387,19 @@ async def complete_render_artifact(
     is_webm = len(content)>=4 and content[:4]==bytes.fromhex("1a45dfa3")
     if len(content)<12 or len(content)>max_render_bytes or not ((container=="mp4" and is_mp4) or (container=="webm" and is_webm)):
         raise HTTPException(status_code=415, detail="Render output does not match its persisted container profile")
+    snapshot = row["timeline_snapshot"]
+    expected_duration = float(snapshot["durationFrames"]) / float(snapshot["fps"])
+    expected_codec = {"h264":"h264","h265":"hevc","vp8":"vp8","vp9":"vp9"}.get(row["render_config"].get("codec","h264"))
+    expected_audio = row["render_config"].get("audio_codec","aac")
+    if (
+        not math.isfinite(duration_seconds)
+        or abs(duration_seconds - expected_duration) > (1 / float(snapshot["fps"])) + 0.05
+        or width != int(snapshot["width"]) or height != int(snapshot["height"])
+        or video_codec != expected_codec
+        or (expected_audio == "none" and audio_codec is not None)
+        or (audio_codec is not None and audio_codec != expected_audio)
+    ):
+        raise HTTPException(status_code=415, detail="Render metadata does not match the immutable composition snapshot and render profile")
     mime_type = "video/webm" if container=="webm" else "video/mp4"
     extension = "webm" if container=="webm" else "mp4"
     digest = hashlib.sha256(content).hexdigest()
@@ -395,10 +414,15 @@ async def complete_render_artifact(
         await db.execute(text("""
             update public.render_jobs set status='completed',progress_percent=100,
                 output_bucket=:bucket,output_path=:path,output_size_bytes=:size,output_sha256=:hash,
+                output_duration_seconds=:duration,output_width=:width,output_height=:height,
+                output_video_codec=:video_codec,output_audio_codec=:audio_codec,output_container=:container,
                 completed_at=now(),lease_expires_at=null,worker_id=null
             where id=:job
-        """), {"bucket": RENDER_BUCKET, "path": object_path, "size": len(content), "hash": digest, "job": render_job_id})
-        await db.execute(text("update public.render_attempts set status='completed',ended_at=now(),diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id,"diagnostics":json.dumps({"bytes":len(content),"sha256":digest,"mime_type":mime_type})})
+        """), {"bucket": RENDER_BUCKET, "path": object_path, "size": len(content), "hash": digest,
+               "duration": duration_seconds, "width": width, "height": height,
+               "video_codec": video_codec, "audio_codec": audio_codec, "container": container,
+               "job": render_job_id})
+        await db.execute(text("update public.render_attempts set status='completed',ended_at=now(),diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id,"diagnostics":json.dumps({"bytes":len(content),"sha256":digest,"mime_type":mime_type,"duration_seconds":duration_seconds,"width":width,"height":height,"video_codec":video_codec,"audio_codec":audio_codec,"container":container})})
         # Reuse the separately stored thumbnail as Asset Library preview metadata.
         thumbnail = (await db.execute(text("""
             select storage_bucket,storage_path from public.render_artifacts

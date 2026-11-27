@@ -424,8 +424,6 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
                 )
             if provider_cost is None or operational_cost is None:
                 continue
-            quota_debit = 0
-            margin = None
             snapshot = dict(job["price_snapshot"] or {})
             if provider_price:
                 snapshot["provider"] = {
@@ -455,7 +453,7 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
                 "provider_cost": provider_cost, "estimated_provider_cost": estimated_provider_cost,
                 "provider_price_id": provider_price["id"] if provider_price else None,
                 "operational_cost": operational_cost, "operational_price_id": cost_price["id"] if cost_price else None,
-                "quota_debit": quota_debit, "margin": margin, "snapshot": json.dumps(snapshot), "id": job["id"],
+                "snapshot": json.dumps(snapshot), "id": job["id"],
             })
             reconciled += 1
         await db.commit()
@@ -764,7 +762,7 @@ async def complete_media_generation_artifact(
                    "provider": ({"id": str(provider_price["id"]), "input_microusd_per_million": int(provider_price["input_microusd_per_million"]), "output_microusd_per_million": int(provider_price["output_microusd_per_million"]) } if provider_price else None),
                    "operational": ({"id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]), "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat()} if cost_price else None)
                }),
-               "reconciled": provider_cost is not None and operational_cost is not None})
+               })
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
             values(:actor,:workspace,'media_generation.completed','media_generation',:id,:request,cast(:metadata as jsonb))

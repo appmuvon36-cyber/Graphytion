@@ -38,6 +38,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [timelineSaving,setTimelineSaving]=useState(false);
   const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
+  const [assetPreview,setAssetPreview]=useState<{id:string;url:string;contentType:string;fileName:string}|null>(null);
   const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
   const [mediaGenerations,setMediaGenerations]=useState<MediaGenerationApi[]>([]);
   const [mediaLoadError,setMediaLoadError]=useState('');
@@ -199,6 +200,14 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const result = await call<{data:{signed_url:string}}>('/assets/' + asset.id + '/download');
       window.location.assign(result.data.signed_url);
     } catch (e) { setError(e instanceof Error ? e.message : 'Asset download unavailable'); }
+  }
+
+  async function previewAsset(asset: ProjectAssetApi) {
+    setError('');
+    try {
+      const result = await call<{data:{signed_url:string}}>('/assets/' + asset.id + '/download');
+      setAssetPreview({id:asset.id,url:result.data.signed_url,contentType:asset.content_type,fileName:asset.file_name});
+    } catch (e) { setError(e instanceof Error ? e.message : 'Asset preview unavailable'); }
   }
 
   async function deleteAsset(asset: ProjectAssetApi) {
@@ -578,7 +587,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         <button disabled={busy||!assetFile} style={button}>Upload asset</button>
       </form>
       <p style={{fontSize:12,color:'#68788e'}}>Private Supabase Storage · PNG, JPEG, WebP, sanitized SVG, MP4, MP3, WAV, WOFF2/WOFF/TTF/OTF, PDF · max 50 MB</p>
-      {assets.map(asset=><div key={asset.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{asset.file_name}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{asset.content_type} · {(asset.size_bytes/1024/1024).toFixed(2)} MB · {asset.sha256.slice(0,12)}</p></div><div style={{display:'flex',gap:7}}><button type="button" onClick={()=>void downloadAsset(asset)} style={button}>Download</button><button type="button" disabled={busy} onClick={()=>void deleteAsset(asset)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Delete</button></div></div>)}
+      {assets.map(asset=><div key={asset.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{asset.file_name}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>{asset.content_type} · {(asset.size_bytes/1024/1024).toFixed(2)} MB · {asset.sha256.slice(0,12)}</p></div><div style={{display:'flex',gap:7}}><button type="button" onClick={()=>void previewAsset(asset)} style={button}>Preview</button><button type="button" onClick={()=>void downloadAsset(asset)} style={button}>Download</button><button type="button" disabled={busy} onClick={()=>void deleteAsset(asset)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Delete</button></div></div>)}
+      {assetPreview&&assets.some(asset=>asset.id===assetPreview.id)&&<div style={{border:'1px solid #dce3ed',borderRadius:10,padding:12,marginTop:10,background:'#f7f9fc'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:8}}><strong style={{fontSize:13}}>{assetPreview.fileName}</strong><button type="button" onClick={()=>setAssetPreview(null)} style={{...button,background:'#e6edf5',color:'#173f72'}}>Close preview</button></div>{assetPreview.contentType.startsWith('image/')?<img src={assetPreview.url} alt={assetPreview.fileName} style={{display:'block',maxWidth:'100%',maxHeight:520,objectFit:'contain',margin:'0 auto',borderRadius:8}}/>:assetPreview.contentType.startsWith('video/')?<video controls preload="metadata" src={assetPreview.url} style={{display:'block',width:'100%',maxHeight:520,background:'#101828',borderRadius:8}}/>:assetPreview.contentType.startsWith('audio/')?<audio controls preload="metadata" src={assetPreview.url} style={{width:'100%'}}/>:<a href={assetPreview.url} target="_blank" rel="noreferrer">Open asset preview</a>}</div>}
       {assets.length===0&&<p style={{color:'#68788e'}}>No project assets uploaded.</p>}
     </section>
     <section style={panel}>

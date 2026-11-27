@@ -321,3 +321,15 @@ Latest source implementation after the priority reset:
 - No migration, production DB mutation, deployment, typecheck, or build was performed.
 
 **Latest source HEAD:** `a768477fa74b52ab1f05083c8c71d0a6534aaa1b`. Phase 03 remains OPEN.
+
+
+## Remotion timeline/render hardening — 2026-11-27
+
+- Composition rendering now maps timeline fade/dissolve/crossfade transitions into real audio volume fades for audio clips; visual opacity transitions remain unchanged. This keeps audio transitions deterministic under the same immutable snapshot.
+- FastAPI composition validation now accepts crossfade only when an outgoing and incoming clip are paired on the same track with an exact overlap, matching the shared TypeScript composition runtime. Null transition metadata is handled safely.
+- Project asset resolution now validates image-kind asset references against image MIME types before signing private Storage URLs.
+- Render claim responses now include the persisted `max_attempts` budget. The Node Remotion worker retries timeouts only while attempts remain, rather than hard-coding a three-attempt rule or making all timeouts terminal.
+- The worker now validates the final output with ffprobe before creating/uploading a thumbnail, and validates preview MP4 container, H.264 codec, dimensions and duration before persisting the preview sidecar.
+- Source-only implementation. No production migration, DB mutation, Railway configuration, deployment, or real render job was run. Typecheck/build and runtime rendering are not yet verified in this execution.
+
+**Latest source HEAD:** `55f134bc1443d164c1c2263def1bf1e3ed1a2095`. Phase 03 remains OPEN pending the documented FastAPI runtime/database-role and migration dependencies, followed by a real end-to-end render cycle.

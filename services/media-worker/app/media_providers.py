@@ -27,6 +27,13 @@ class GeminiMediaProvider:
         return bool(self.api_key)
 
     @staticmethod
+    def video_configured() -> bool:
+        return bool(os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()) and bool(
+            os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+            or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+        )
+
+    @staticmethod
     def _google_access_token() -> str:
         inline = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
         if inline:
@@ -81,7 +88,8 @@ class GeminiMediaProvider:
             "model": model,
             "input": [{"type": "text", "text": prompt}],
             "response_format": {
-                "type": "image", "aspect_ratio": aspect_ratio, "image_size": image_size,
+                "type": "image", "mime_type": {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[output_format],
+                "aspect_ratio": aspect_ratio, "image_size": image_size,
             },
             "store": False,
         })

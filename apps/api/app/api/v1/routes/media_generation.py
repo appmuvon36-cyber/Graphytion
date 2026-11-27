@@ -101,7 +101,7 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
         if ratio not in {"16:9", "9:16"} or duration not in range(3, 16):
-            raise HTTPException(422, "Google Omni 1.2 Flash supports 3-15 second videos")
+            raise HTTPException(422, "Gemini Omni 1.2 Flash supports 3-15 second videos")
         resolution = config.get("resolution", "720p")
         if resolution not in {"360p", "720p", "1080p", "4k"}:
             raise HTTPException(422, "Unsupported Gemini Omni 1.2 Flash resolution")
@@ -366,6 +366,7 @@ async def claim_media_generation_job(request: Request, worker_id: str = Query(mi
         "media_type": row["media_type"], "provider_key": row["provider_key"],
         "model_key": row["model_key"], "prompt": row["prompt"],
         "generation_config": row["generation_config"], "attempt_count": row["attempt_count"],
+        "provider_job_id": row["provider_job_id"],
     }}
 
 

@@ -538,7 +538,7 @@ This section supersedes earlier runtime statements above where they conflict wit
 
 ### Supabase production migration verification
 
-Three additive migrations are applied to project `xtjwmezfzexvupbfsdqt`:
+Four additive migrations are applied to project `xtjwmezfzexvupbfsdqt`:
 
 - `20261127180420_persistent_orchestrator_dispatcher.sql`
 - `20261127180559_dispatch_only_executable_production_steps.sql`
@@ -554,7 +554,7 @@ The existing four-service topology remains unchanged:
 
 - API: deployment `e16b1dfa-293a-4016-b291-5e36ac1b0757` — SUCCESS.
 - Media Worker: deployment `66e095a8-b026-4d41-a009-ec9b178fcd7f` — SUCCESS.
-- Web: deployment `92f7f6fc-0288-48c1-b6ac-d5acea6bff1e` — SUCCESS.
+- Web: deployment `cf6ad943-827e-47eb-8d54-aefd0fe81284` — SUCCESS.
 - Render Worker: deployment `59d052b0-a3ca-4492-ade7-6da23e394cea` — SUCCESS.
 
 API startup logs confirm both the creative worker and production orchestrator started. API healthcheck passed. Media Worker logs show successful internal API job-claim, recovery and heartbeat calls. Render Worker startup and render-job claim endpoint are operational. The API and Media Worker environment variable name lists include `GEMINI_API_KEY`; secret values are not exposed by the connected Railway account.

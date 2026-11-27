@@ -78,7 +78,7 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
         config["aspect_ratio"] = ratio
         config["output_format"] = "png"
     else:
-        if payload.model_key not in {"gemini-omni-1.2-flash", "gemini-omni-1.1-flash-preview"}:
+        if payload.model_key not in {"gemini-omni-1.2-flash", "gemini-omni-1.1-flash"}:
             raise HTTPException(422, "Unsupported Gemini video model")
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)

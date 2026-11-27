@@ -521,6 +521,10 @@ async def get_avatar_url(claims: AuthenticatedClaims, db: AsyncSession = Db):
 
 @router.get("/workspaces")
 async def list_workspaces(claims: AuthenticatedClaims, db: AsyncSession = Db):
+    user_id = uid(claims)
+    # Re-apply the authenticated RLS subject in the endpoint's exact DB session.
+    # This keeps workspace visibility deterministic across FastAPI dependency scopes.
+    await set_rls_subject(db, str(user_id))
     rows = (
         (
             await db.execute(
@@ -529,7 +533,7 @@ async def list_workspaces(claims: AuthenticatedClaims, db: AsyncSession = Db):
       from public.workspaces w join public.workspace_members m on m.workspace_id=w.id
       where m.user_id=:user_id and m.status='active' order by w.updated_at desc
     """),
-                {"user_id": uid(claims)},
+                {"user_id": user_id},
             )
         )
         .mappings()
@@ -547,6 +551,8 @@ async def create_workspace(
     db: AsyncSession = Db,
 ):
     user_id = uid(claims)
+    # Workspace owner RLS checks must use this same request-scoped DB session.
+    await set_rls_subject(db, str(user_id))
     try:
         reservation_id, cached = await reserve_idempotency(
             db,

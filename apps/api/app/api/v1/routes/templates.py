@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
+from app.core.database import set_rls_subject
 from app.services.composition_validation import validate_snapshot
 from app.services.brand_kit import apply_brand_tokens
 from app.services.workspace_authorization import WorkspacePermissionResolver
@@ -38,6 +39,7 @@ async def project_scope(db: AsyncSession, project_id: UUID, actor: UUID, permiss
     await permissions.require_permission(
         session=db, user_id=str(actor), workspace_id=str(workspace), permission=permission
     )
+    await set_rls_subject(db, str(actor))
     return workspace
 
 
@@ -123,10 +125,10 @@ async def list_templates(project_id: UUID, claims: AuthenticatedClaims, db: Asyn
     actor = actor_id(claims)
     workspace = await project_scope(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
-        select id,slug,version,name,description,category,tags,aspect_ratios,status,created_at,updated_at
+        select distinct on (slug) id,slug,version,name,description,category,tags,aspect_ratios,status,created_at,updated_at
         from public.composition_templates
         where workspace_id=:workspace and status='published'
-        order by category,name,version desc
+        order by slug,version desc
     """), {"workspace": workspace})).mappings().all()
     return {"data": [dict(row) for row in rows]}
 
@@ -232,9 +234,9 @@ async def list_brand_kits(project_id: UUID, claims: AuthenticatedClaims, db: Asy
     actor = actor_id(claims)
     workspace = await project_scope(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
-        select id,name,version,brand_config,status,created_at,updated_at
+        select distinct on (lower(name)) id,name,version,brand_config,status,created_at,updated_at
         from public.brand_kits where workspace_id=:workspace and status='active'
-        order by name,version desc
+        order by lower(name),version desc
     """), {"workspace": workspace})).mappings().all()
     return {"data": [dict(row) for row in rows]}
 
@@ -278,17 +280,34 @@ async def update_brand_kit(project_id: UUID, brand_kit_id: UUID, payload: BrandK
     config = changes.get("config")
     brand_config = config.model_dump(mode="json") if config else dict(current["brand_config"])
     await validate_logo_asset(db, workspace, brand_config)
+    next_status = changes.get("status") or current["status"]
     row = (await db.execute(text("""
-        update public.brand_kits set name=:name,version=version+1,
-            brand_config=cast(:config as jsonb),status=:status
-        where id=:id and workspace_id=:workspace
+        insert into public.brand_kits(workspace_id,name,version,brand_config,status,created_by)
+        values (:workspace,:name,:version,cast(:config as jsonb),:status,:actor)
         returning id,name,version,brand_config,status,updated_at
-    """), {"name": name, "config": json.dumps(brand_config), "status": changes.get("status") or current["status"],
-           "id": brand_kit_id, "workspace": workspace})).mappings().one()
+    """), {"workspace": workspace, "name": name, "version": int(current["version"])+1,
+           "config": json.dumps(brand_config), "status": next_status, "actor": actor})).mappings().one()
+    await db.execute(text("update public.brand_kits set status='archived' where id=:id and workspace_id=:workspace"),
+                     {"id": brand_kit_id, "workspace": workspace})
+    if next_status == "active":
+        await db.execute(text("""
+            update public.video_projects set brand_kit_id=:new
+            where workspace_id=:workspace and brand_kit_id=:old
+        """), {"new": row["id"], "workspace": workspace, "old": brand_kit_id})
+        await db.execute(text("""
+            update public.project_settings ps set
+              settings=coalesce(ps.settings,'{}'::jsonb)||jsonb_build_object('brand_kit',cast(:snapshot as jsonb)),
+              version=ps.version+1,updated_at=now()
+            from public.video_projects p
+            where p.id=ps.project_id and p.workspace_id=:workspace and p.brand_kit_id=:new
+        """), {"snapshot": json.dumps({**brand_config,"id":str(row["id"]),"name":row["name"],"version":row["version"]}),
+               "workspace": workspace, "new": row["id"]})
     await db.execute(text("""
-        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id)
-        values (:actor,:workspace,'brand_kit.updated','brand_kit',:id)
-    """), {"actor": actor, "workspace": workspace, "id": brand_kit_id})
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,metadata)
+        values (:actor,:workspace,'brand_kit.versioned','brand_kit',:id,
+                jsonb_build_object('previous_version_id',:previous,'version',:version))
+    """), {"actor": actor, "workspace": workspace, "id": row["id"],
+           "previous": brand_kit_id, "version": row["version"]})
     await db.commit()
     return {"data": dict(row)}
 

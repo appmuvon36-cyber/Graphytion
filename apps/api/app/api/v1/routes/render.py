@@ -346,7 +346,8 @@ async def complete_render_artifact(
         raise HTTPException(status_code=409, detail="Render job lease is no longer owned")
     await set_rls_subject(db, str(owner_id))
     row = (await db.execute(text("""
-        select id,workspace_id,project_id,requested_by,worker_id,status,render_config
+        select id,workspace_id,project_id,requested_by,worker_id,status,render_config,
+               timeline_hash,composition_version
         from public.render_jobs where id=:job and worker_id=:worker and status='rendering'
     """), {"job": render_job_id, "worker": worker_id})).mappings().first()
     if row is None:

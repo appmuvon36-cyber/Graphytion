@@ -40,9 +40,7 @@ async def set_rls_runtime_role(session: AsyncSession) -> None:
         )
     ).scalar_one()
     if not has_runtime_role:
-        raise RuntimeError(
-            "Database session is not a member of graphytion_runtime"
-        )
+        raise RuntimeError("Database session is not a member of graphytion_runtime")
     await session.execute(text("SET ROLE graphytion_runtime"))
 
 

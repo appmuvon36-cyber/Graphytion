@@ -411,3 +411,14 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 - New migrations 22408–22413 are committed in the repository. They have NOT been applied to the Graphytion Supabase production database in this continuation. The Graphytion Supabase project is not available through the currently connected Supabase accounts; do not infer that the database schema is current from committed migration files.
 - Railway Media Worker currently has `GEMINI_API_KEY`, but its variable inventory does not include `GOOGLE_CLOUD_PROJECT` or Google service-account credentials. Therefore image provider configuration is present by variable name, but video generation remains credential-blocked until the existing Media Worker receives the required Google Cloud project and service-account/ADC configuration.
 - No migration was executed, no Railway variables were changed, no deployment was run, and no provider/customer/render transaction was executed in this continuation. CI source verification is pending; no runtime success is claimed.
+
+## Gemini Developer API media provider migration — 2026-11-27
+
+- The repository's `AGENTS.md` authorizes production deployment for explicitly requested implementation during this deployment phase. It prohibits staging/preview deployment, not production deployment; no AGENTS.md prohibition needed removal.
+- Media Worker image and video adapters now use the Gemini Developer API REST Interactions endpoint `https://generativelanguage.googleapis.com/v1beta/interactions` and the `x-goog-api-key` header.
+- Image model: `gemini-3.1-flash-image`. Video model: `gemini-omni-1.2-flash`. Video submission uses background execution; interaction IDs are stored in the existing `media_generation_jobs.provider_job_id` field, retrieved with GET polling, and cancellation is requested through the provider cancel endpoint.
+- FastAPI accepts only `provider_key='gemini'` for image and video. Customer Studio now submits that provider key for both media types.
+- Removed the Media Worker `google-auth` dependency and removed Google Cloud/Service Account variables from its environment example. No Google Cloud Project, ADC, Service Account, Vertex AI, Agent Platform OAuth, or GCS download path is required by the source adapter.
+- Migration `20261127022414_gemini_developer_api_only.sql` normalizes any legacy Agent Platform provider labels and constrains media generation to Gemini. It follows existing media migrations 22409–22413 and must be applied before enabling the new API path in production.
+- Provider usage and cost remain unpriced unless returned usage can be reconciled to an active price-book row. No usage or provider cost is fabricated.
+- Source implementation is committed to `main`; no live generation request or synthetic transaction was run. Provider runtime, actual provider cancellation outcome, Supabase migration application, and artifact delivery remain pending production evidence.

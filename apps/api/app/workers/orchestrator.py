@@ -435,7 +435,7 @@ async def _load_snapshot(
 async def _dispatch_timeline(
     db: AsyncSession, step: dict[str, Any], envelope: StepEnvelope, run: dict[str, Any]
 ) -> None:
-    snapshot, existing_id, expected_version = await _load_snapshot(db, step, envelope, run)
+    snapshot, _, expected_version = await _load_snapshot(db, step, envelope, run)
     # Materialize the persisted media/TTS/subtitle outputs into the canonical
     # composition snapshot so the render worker receives the same immutable edit.
     snapshot.setdefault("tracks", [])

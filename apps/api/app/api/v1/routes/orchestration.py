@@ -311,6 +311,32 @@ async def cancel_production_workflow(
         update public.production_run_steps set status='cancelled',completed_at=now(),updated_at=now()
         where production_run_id=:run and status in ('pending','ready','waiting_approval')
     """), {"run": run_id})
+    # Cancel queued children immediately; request cooperative cancellation for
+    # provider/render operations already in flight. Workers retain lease ownership.
+    await db.execute(text("""
+        update public.media_generation_jobs set status='cancelled',completed_at=now(),updated_at=now()
+        where production_run_id=:run and status='queued'
+    """), {"run": run_id})
+    await db.execute(text("""
+        update public.media_generation_jobs set status='cancel_requested',updated_at=now()
+        where production_run_id=:run and status='processing'
+    """), {"run": run_id})
+    await db.execute(text("""
+        update public.audio_generations set status='cancelled',completed_at=now(),updated_at=now()
+        where production_run_id=:run and status='queued'
+    """), {"run": run_id})
+    await db.execute(text("""
+        update public.render_jobs set status='cancelled',completed_at=now(),worker_id=null,lease_expires_at=null
+        where production_run_id=:run and status='queued'
+    """), {"run": run_id})
+    await db.execute(text("""
+        update public.render_jobs set status='cancel_requested',updated_at=now()
+        where production_run_id=:run and status='rendering'
+    """), {"run": run_id})
+    await db.execute(text("""
+        update public.agent_tasks set status='cancelled',completed_at=now(),worker_id=null,lease_expires_at=null
+        where production_run_id=:run and status in ('queued','pending','retry_wait')
+    """), {"run": run_id})
     await db.execute(text("""
         update public.production_runs set status='cancel_requested',cancel_requested_at=coalesce(cancel_requested_at,now())
         where id=:run and status not in ('completed','failed','cancelled')
@@ -320,6 +346,7 @@ async def cancel_production_workflow(
         values(:run,'workflow.cancel_requested',cast(:payload as jsonb),
           (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
     """), {"run": run_id, "payload": json.dumps({"requested_by": str(actor)})})
+    await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": run_id})
     await db.commit()
     return {"data": {"run_id": str(run_id), "status": "cancel_requested"}}
 

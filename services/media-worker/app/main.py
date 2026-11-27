@@ -202,12 +202,12 @@ class Worker:
                 method="POST", params={"worker_id": WORKER_ID},
                 json={"error_code": str(exc)[:120] or "GEMINI_MEDIA_INVALID_REQUEST", "retryable": False},
             )
-        except Exception:
+        except Exception as exc:
             log.exception("media_generation_failed", extra={"generation_id": job_id})
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/failed",
                 method="POST", params={"worker_id": WORKER_ID},
-                json={"error_code": "GEMINI_MEDIA_GENERATION_FAILED", "retryable": True},
+                json={"error_code": str(exc)[:120] or "GEMINI_MEDIA_GENERATION_FAILED", "retryable": True},
             )
         finally:
             cancel_wait.cancel()

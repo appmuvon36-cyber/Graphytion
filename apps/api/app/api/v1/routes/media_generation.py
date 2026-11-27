@@ -259,8 +259,8 @@ async def retry_media_generation(
     await _scope(db, row["project_id"], actor, "project.update")
     if row["status"] != "failed":
         raise HTTPException(409, "Only failed media generation jobs can be retried")
-    if row["provider_job_id"] and row["provider_operation_status"] in {"submitted", "queued", "in_progress", "unknown"}:
-        raise HTTPException(409, "The previous provider operation is still recoverable; resume it instead of creating a new operation")
+    if row["provider_job_id"]:
+        raise HTTPException(409, "The previous provider operation remains linked; resolve its provider cost and reconciliation before starting a new generation")
     operation = "image_generation" if row["media_type"] == "image" else "video_generation"
     resource_type = operation
     reservation = await reserve_fixed_operation(
@@ -437,7 +437,7 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
         raise HTTPException(409, "Media generation lease is no longer owned")
     await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
-        select id,requested_by,workspace_id,media_type,attempt_count,max_attempts,retry_count,max_retries,status,provider_job_id
+        select id,requested_by,workspace_id,media_type,attempt_count,max_attempts,retry_count,max_retries,status,provider_job_id,provider_operation_status
         from public.media_generation_jobs where id=:id and worker_id=:worker for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if row is None:
@@ -460,12 +460,12 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
               last_error_class=case when :error like '%NOT_CONFIGURED%' or :error like '%UNSUPPORTED%' then 'configuration' when :status='queued' then 'transient' else 'permanent' end,
               retry_count=retry_count + case when :status='queued' then 1 else 0 end,
               next_retry_at=case when :status='queued' then now()+make_interval(secs => least(300,(5*power(2,least(attempt_count,6)))::integer)) else null end,
-              provider_operation_status=case when provider_job_id is not null then 'unknown' when :status='failed' then 'failed' else 'not_started' end,
+              provider_operation_status=case when provider_job_id is not null and :error in ('GEMINI_INTERACTION_FAILED','GEMINI_INTERACTION_CANCELLED','GEMINI_VIDEO_FAILED','GEMINI_VIDEO_CANCELLED') then 'failed' when provider_job_id is not null then 'unknown' when :status='failed' then 'failed' else 'not_started' end,
               worker_id=null,lease_expires_at=null,
               completed_at=case when :status='failed' then now() else null end,updated_at=now()
             where id=:id
         """), {"id": generation_id, "status": status, "error": payload.error_code})
-        if status == "failed":
+        if status == "failed" and row["provider_job_id"] is None:
             await release_fixed_operation(
                 db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
                 resource_id=generation_id, reason=payload.error_code)

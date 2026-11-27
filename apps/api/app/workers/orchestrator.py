@@ -411,6 +411,15 @@ async def _dispatch_media(
         "media_type": payload.media_type, "model_key": payload.model_key,
         "idempotency_key": envelope.idempotency_key,
     })
+    await db.execute(text("""
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
+        values(:actor,:workspace,'media_generation.requested','media_generation',:job,:request,cast(:metadata as jsonb))
+    """), {
+        "actor": run["requested_by"], "workspace": run["workspace_id"], "job": child_id,
+        "request": uuid4(),
+        "metadata": _canonical({"media_type": payload.media_type, "provider": "gemini",
+                                "model": payload.model_key, "billing_mode": "free_personal"}),
+    })
     await db.commit()
     await notify_worker("media", str(child_id))
 
@@ -451,6 +460,15 @@ async def _dispatch_voiceover(
     await _attach_child(db, step, "audio_generation", child_id, {
         "provider_key": payload.provider_key, "model_key": payload.model_key,
         "voice_key": payload.voice_key, "idempotency_key": envelope.idempotency_key,
+    })
+    await db.execute(text("""
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
+        values(:actor,:workspace,'voiceover.requested','audio_generation',:job,:request,cast(:metadata as jsonb))
+    """), {
+        "actor": run["requested_by"], "workspace": run["workspace_id"], "job": child_id,
+        "request": uuid4(),
+        "metadata": _canonical({"provider": payload.provider_key, "model": payload.model_key,
+                                "voice": payload.voice_key, "status": "queued"}),
     })
     await db.commit()
     await notify_worker("media", str(child_id))
@@ -757,6 +775,13 @@ async def _dispatch_render(
     await _attach_child(db, step, "render_job", job_id, {
         "render_job_id": str(job_id), "timeline_hash": digest,
         "composition_version": "2.0.0", "idempotency_key": render_idempotency_key,
+    })
+    await db.execute(text("""
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
+        values(:actor,:workspace,'render.queued','render_job',:job,:request)
+    """), {
+        "actor": run["requested_by"], "workspace": run["workspace_id"],
+        "job": job_id, "request": uuid4(),
     })
     await db.commit()
     await notify_worker("render", str(job_id))

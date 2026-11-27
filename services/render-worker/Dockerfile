@@ -7,7 +7,8 @@ COPY apps/remotion-studio ./apps/remotion-studio
 COPY services/render-worker ./services/render-worker
 RUN corepack enable \
     && pnpm install --filter @graphytion/render-worker... --filter @graphytion/remotion-studio... --frozen-lockfile \
-    && pnpm --filter @graphytion/remotion-studio build
+    && pnpm --filter @graphytion/remotion-studio build \
+    && pnpm --filter @graphytion/render-worker build
 ENV REMOTION_SERVE_URL=/workspace/apps/remotion-studio/build
 WORKDIR /workspace/services/render-worker
 CMD ["pnpm","start"]

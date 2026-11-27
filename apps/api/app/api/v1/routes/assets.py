@@ -354,8 +354,18 @@ async def delete_project_asset(
             select exists(select 1 from public.media_generation_jobs
               where asset_id=:asset and status='completed')
         """), {"asset": asset_id})
+    metadata = row["generation_metadata"] or {}
+    render_job_id = metadata.get("render_job_id") if isinstance(metadata, dict) else None
+    if not referenced and render_job_id:
+        referenced = await db.scalar(text("""
+            select exists(
+              select 1 from public.render_jobs
+              where id=cast(:job as uuid) and status='completed'
+                and output_bucket=:bucket and output_path=:path
+            )
+        """), {"job": render_job_id, "bucket": row["bucket"], "path": row["object_path"]})
     if referenced:
-        raise HTTPException(status_code=409, detail="Asset is still referenced by a Brand Kit, saved timeline, published template, or generation history")
+        raise HTTPException(status_code=409, detail="Asset is still referenced by a Brand Kit, saved timeline, published template, generation history, or completed render")
     await db.execute(text("""
         update public.project_assets set status='deleting' where id=:asset
     """), {"asset": asset_id})

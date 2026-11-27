@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
 import { TimelineEditor } from '@graphytion/motion-components';
+import { TemplateBrandPanel } from './template-brand-panel';
 import type {CompositionSnapshot,ResolvedCompositionAssets} from '@graphytion/motion-components';
 import type {
   CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
@@ -435,6 +436,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       <div><a href="/" style={{color:'#47719e',fontSize:13,textDecoration:'none'}}>← Customer Studio</a><p style={{fontSize:11,fontWeight:800,letterSpacing:'.14em',color:'#47719e',marginBottom:4}}>GRAPHYTION · CREATIVE WORKSPACE</p><h1 style={{fontSize:30,margin:'4px 0'}}>{project.name}</h1><p style={{color:'#68788e',margin:0}}>Brief → Script → Storyboard · {project.status}</p></div>
       <button onClick={() => void load()} disabled={busy} style={{...button,background:'#edf3f9',color:'#173f72'}}>Refresh data</button>
     </header>
+    <TemplateBrandPanel projectId={projectId} onApplied={(snapshot,assets,version)=>{setPreviewSnapshot(snapshot);setPreviewResolvedAssets(assets);setTimelineVersion(version);setTimelineDirty(false);void loadTimelineHistory();}} />
     {error && <p role="alert" style={{padding:12,background:'#fff1f0',color:'#b42318',borderRadius:9}}>{error}</p>}
     {notice && <p role="status" style={{padding:12,background:'#ecfdf3',color:'#176b45',borderRadius:9}}>{notice}</p>}
     <section style={panel}>

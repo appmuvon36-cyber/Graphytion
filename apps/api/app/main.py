@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 from time import perf_counter
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from app.core.errors import (
     validation_error_handler,
 )
 from app.core.logging import configure_logging, logger
+from app.workers.creative import run_worker
 
 configure_logging(settings.log_level)
 
@@ -23,8 +25,14 @@ configure_logging(settings.log_level)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("application_starting", environment=settings.app_env)
-    yield
-    await engine.dispose()
+    creative_worker_task = asyncio.create_task(run_worker(), name="graphytion-creative-worker")
+    logger.info("creative_worker_embedded", worker="postgresql-lease-poller")
+    try:
+        yield
+    finally:
+        creative_worker_task.cancel()
+        await asyncio.gather(creative_worker_task, return_exceptions=True)
+        await engine.dispose()
 
 
 app = FastAPI(

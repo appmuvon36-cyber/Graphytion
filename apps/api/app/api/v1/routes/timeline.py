@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims,DbSession
 from app.core.database import set_rls_subject
 from app.services.composition_validation import validate_snapshot
+from app.services.brand_kit import apply_brand_tokens
 from app.services.composition_assets import collect_asset_ids,resolve_project_assets
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
@@ -43,7 +44,11 @@ async def get_latest_timeline(project_id:UUID,claims:AuthenticatedClaims,db:Asyn
 @router.put("/projects/{project_id}/timeline")
 async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_Actor.get(claims);workspace=await _scope(db,project_id,actor,"project.update")
- snapshot=dict(payload.snapshot);snapshot.pop("contentHash",None);digest=validate_snapshot(snapshot);snapshot["contentHash"]=digest
+ brand_row=(await db.execute(text("""select bk.brand_config from public.video_projects p
+ left join public.brand_kits bk on bk.id=p.brand_kit_id and bk.workspace_id=p.workspace_id
+ where p.id=:project and p.workspace_id=:workspace"""),{"project":project_id,"workspace":workspace})).mappings().first()
+ snapshot=apply_brand_tokens(dict(payload.snapshot),dict(brand_row["brand_config"]) if brand_row and brand_row["brand_config"] else None)
+ snapshot.pop("contentHash",None);digest=validate_snapshot(snapshot);snapshot["contentHash"]=digest
  await _component_gate(db,snapshot)
  assets=collect_asset_ids(snapshot)
  resolved_assets=await resolve_project_assets(db,project_id=project_id,workspace_id=workspace,asset_ids=assets,expires_in=300,snapshot=snapshot)

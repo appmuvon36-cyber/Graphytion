@@ -770,7 +770,14 @@ async def _process_creative_run(
             version = (await db.execute(text(
                 "select coalesce(max(version),0)+1 from public.storyboards where project_id=:project"
             ), {"project": project_id})).scalar_one()
-            global_direction = {**output.global_visual_direction, "story_arc": arc.model_dump()}
+            brand_row=(await db.execute(text("""select bk.name,bk.version,bk.brand_config from public.video_projects p
+                left join public.brand_kits bk on bk.id=p.brand_kit_id and bk.workspace_id=p.workspace_id
+                where p.id=:project and p.workspace_id=:workspace"""),
+                {"project":project_id,"workspace":workspace_id})).mappings().first()
+            brand_context=({"name":brand_row["name"],"version":brand_row["version"],"config":dict(brand_row["brand_config"])}
+                if brand_row else None)
+            global_direction = {**output.global_visual_direction, "story_arc": arc.model_dump(),
+                **({"brand_kit":brand_context} if brand_context else {})}
             artifact = (await db.execute(text("""
                 insert into public.storyboards(
                     workspace_id,project_id,script_id,version,global_visual_direction,created_by

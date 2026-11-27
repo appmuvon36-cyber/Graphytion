@@ -356,3 +356,17 @@ This update supersedes the earlier API/worker connectivity blockers where they c
 - No real TTS or render job was submitted: there is no production user/workspace/project, and no synthetic production records were created. The worker claim/heartbeat/recovery connectivity is verified; a complete artifact-producing cycle is not.
 
 **Phase 03 remains OPEN.** API liveness, DB-backed worker control paths, and migration parity are restored; Auth bootstrap, invitation delivery, AI Worker service provisioning, Redis capacity, and one real TTS/render artifact cycle remain release blockers.
+
+
+## Consolidated execution + Templates and Brand Kit vertical slice — 2026-11-27
+
+- Embedded the existing PostgreSQL-backed creative worker loop in the FastAPI application lifespan. The API service now owns creative/AI agent execution without requiring a separate Railway AI Worker service or duplicating the domain worker. It uses the existing atomic PostgreSQL claim, lease, checkpoint, retry, cancellation, and persistence logic. The worker is cancelled cleanly on API shutdown.
+- Added persistent workspace composition_templates and brand_kits registries with tenant RLS, workspace-scoped uniqueness/versioning, category/tags/aspect-ratio metadata, JSON composition snapshots, status, and audit events. Added a composite workspace foreign key from projects to Brand Kits.
+- Added FastAPI endpoints for listing/creating/applying templates and listing/creating/updating/applying Brand Kits. Template creation captures the latest saved composition while removing cross-project private media references. Applying a template creates a new immutable timeline version and validates the allowlisted component registry.
+- Brand Kit tokens are applied to allowlisted timeline props and composition background at timeline save/render snapshot creation. Brand Kit configuration is also included in creative project settings and storyboard visual direction. Logo asset references are validated against active assets in the same workspace.
+- Added Customer Studio controls for saving/applying reusable templates and creating/applying workspace Brand Kits through the same-origin typed API client. Existing editor state is updated from the returned immutable template snapshot.
+- Service consolidation: the API process now handles AI creative execution internally. Keep existing Media Worker and Render Worker for media/Remotion workloads. The Remotion Studio bundle is already built into the Render Worker image and the Player is embedded in Customer Studio; no additional service is required. Existing Railway service deletion is intentionally not performed in this source change.
+- New migration: 20261127022406_template_brand_registry.sql. It is committed only; it has NOT been applied to Production. Apply only after schema review and explicit production migration authorization.
+- No provider calls, user account transactions, TTS/render jobs, staging tests, or production deployments were executed. Railway auto-deploy status must be inspected separately after source push; deployment success is not assumed.
+
+Source-only verification boundary: files are committed after static source review. Typecheck/build and live migration verification remain pending. API/AI worker production execution depends on the existing least-privilege runtime DB configuration; the latest Railway snapshot previously showed API online, but this update does not claim fresh worker execution verification.

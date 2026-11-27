@@ -511,3 +511,58 @@ Existing production services only; no additional service or database was created
 - No production run, media/audio job, timeline, render job, render sidecar or project asset existed at verification time (all corresponding row counts were zero). No synthetic rows were inserted.
 - Per the explicit instruction, no Gemini generation, TTS generation or Remotion rendering was executed. Therefore no real MP4, preview or thumbnail artifact can be certified, and no end-to-end runtime acceptance claim is made.
 - Build/deployment, schema, RLS, FK/index and worker/API connectivity checks are verified; actual media-to-MP4 artifact delivery remains unverified until a permitted real production run is performed.
+
+
+## Superseding production status — 2026-11-28
+
+This section supersedes earlier runtime statements above where they conflict with the current connected production evidence.
+
+**Current source:** branch `main`, HEAD `f01dc8cd495fdd37ce34db2aa70032c1730c1aa2`.  
+**Dispatcher implementation commit:** `8a962bbe233e6e8ca37e3c32e839b382b7e9d441`.  
+**CI:** workflow run `46048353245` completed SUCCESS on the dispatcher source commit. The subsequent HEAD commit only applied formatting to the API lifespan block. Railway rebuilt that final HEAD successfully.
+
+### Persistent Orchestrator Dispatcher
+
+| Area | Current status | Evidence |
+|---|---|---|
+| Embedded dispatcher lifecycle | IMPLEMENTED / DEPLOYED | `apps/api/app/workers/orchestrator.py` is started from the existing FastAPI lifespan; API startup log contains `production_orchestrator_dispatcher_started`. No new Railway service was created. |
+| PostgreSQL DAG claim | IMPLEMENTED / MIGRATED | `private.graphytion_claim_production_step` uses `FOR UPDATE SKIP LOCKED`, dependency readiness, run state, worker identity, attempt count and lease. |
+| Lease heartbeat / recovery | IMPLEMENTED / MIGRATED | `private.graphytion_heartbeat_production_step`; 120-second lease, 30-second heartbeat, expired lease reclaim and configured step timeout handling. |
+| Versioned payload contract | IMPLEMENTED | Strict Pydantic envelope and per-step configuration models; persisted `payload_schema_version`, `payload_contract`, `input_fingerprint`. |
+| Retry and cancellation | IMPLEMENTED | Persisted retry count, next retry, error class and backoff; cancellation of unattached DAG steps is reconciled with Production Run cancellation. |
+| Audit / lineage | INTEGRATED | Claim, start, completion, child attachment, retry, timeout, recovery, cancellation and approval are represented in workflow events; child rows retain Production Run and parent-step references. |
+| Media / TTS / subtitle / timeline / render handlers | IMPLEMENTED / INTEGRATED | Dispatcher creates and attaches idempotent media, audio and render jobs; subtitle track creation uses existing revision helper; timeline composes persisted media, voiceover and subtitle references. |
+| Derived asset/audio/composition/QC/delivery steps | INTEGRATED | Existing `private.graphytion_sync_production_run` remains the deterministic artifact-reconciliation state machine. These nodes are not redundantly claimed by the dispatcher. |
+| Agent Intelligence | INTEGRATED | Existing creative worker, five-agent registry and four-tool registry remain the agent execution path; dispatcher consumes the persisted agent task and enforces the creative approval gate. |
+| MP4 private delivery | INTEGRATED, NOT RUNTIME-VERIFIED | Existing Render Worker, private `render-artifacts` bucket, render metadata, lineage and secure download path remain the final delivery path. No new render was run under the no-generation/no-render instruction. |
+
+### Supabase production migration verification
+
+Three additive migrations are applied to project `xtjwmezfzexvupbfsdqt`:
+
+- `20261127180420_persistent_orchestrator_dispatcher.sql`
+- `20261127180559_dispatch_only_executable_production_steps.sql`
+- `20261127180718_dispatcher_timeout_reconciliation.sql`
+
+Production history contains 48 migrations; all 48 versions have matching repository migration files. The new step lease/payload/retry columns are present, both private claim/heartbeat functions are SECURITY DEFINER with EXECUTE granted to `graphytion_api` and `graphytion_runtime`, and RLS remains enabled on `production_run_steps`.
+
+The five-agent/four-tool registry is retained. Storage buckets `avatars`, `project-assets`, and `render-artifacts` are all private.
+
+### Railway production verification
+
+The existing four-service topology remains unchanged:
+
+- API: deployment `184b9e02-754c-408e-b87b-cfaf38025164` — SUCCESS.
+- Media Worker: deployment `d1b4b4d8-5a41-4b88-ab2b-729eab3dd963` — SUCCESS.
+- Web: deployment `92f7f6fc-0288-48c1-b6ac-d5acea6bff1e` — SUCCESS.
+- Render Worker: deployment `59d052b0-a3ca-4492-ade7-6da23e394cea` — SUCCESS.
+
+API startup logs confirm both the creative worker and production orchestrator started. API healthcheck passed. Media Worker logs show successful internal API job-claim, recovery and heartbeat calls. Render Worker startup and render-job claim endpoint are operational. The API and Media Worker environment variable name lists include `GEMINI_API_KEY`; secret values are not exposed by the connected Railway account.
+
+There is no separate AI Worker service in the existing Railway project. Agent execution remains on the existing embedded creative worker in API; the new dispatcher is embedded in that same API process. No service or queue was added.
+
+### Explicit verification boundary
+
+Production data counts at this inspection were zero for production runs, run steps, agent tasks, media jobs, audio generations, subtitle tracks, timelines, render jobs, render artifacts and project assets. The three private storage buckets contain no objects. This is consistent with the instruction not to execute generation or rendering.
+
+Therefore the dispatcher code, database contracts, migration, build and service startup are verified, but a live DAG claim against an actual Production Run, real Gemini/TTS execution, completed Remotion render and actual MP4 download remain unverified by design. Phase 03 stays OPEN until a separately authorized production acceptance run can verify those external operations and the resulting artifact.

@@ -37,7 +37,9 @@ const ClipFrame:React.FC<{clip:any;track:any;assetUrl?:string;fontUrl?:string}>=
  const scale=keyValue('scale',1),translateX=keyValue('translateX',0),translateY=keyValue('translateY',0),rotate=keyValue('rotate',0);
  transform=`translate(${translateX}px,${translateY}px) rotate(${rotate}deg) scale(${scale}) ${transform}`;
  const clipVolume=Math.max(0,Math.min(1,Number(clip.props.volume??1)*track.volume*keyValue('volume',1)));
- const props={...clip.props,...(clip.crop?{crop:clip.crop}:{}),durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
+ const audioFadeIn=clip.transitionIn&&['fade','dissolve','crossfade'].includes(clip.transitionIn.type)?clip.transitionIn.durationFrames:0;
+ const audioFadeOut=clip.transitionOut&&['fade','dissolve','crossfade'].includes(clip.transitionOut.type)?clip.transitionOut.durationFrames:0;
+ const props={...clip.props,...(clip.crop?{crop:clip.crop}:{}),durationInFrames:clip.durationFrames,trimStartFrames:clip.trimStartFrames??clip.props.trimStartFrames??0,playbackRate:clip.playbackRate??clip.props.playbackRate??1,...(assetUrl?{assetUrl}:{}),...(fontUrl?{fontUrl}:{}),...(definition.category==='audio'?{fadeInFrames:Math.max(Number(clip.props.fadeInFrames)||0,audioFadeIn),fadeOutFrames:Math.max(Number(clip.props.fadeOutFrames)||0,audioFadeOut)}:{}),...(definition.category==='audio'||definition.category==='video'?{volume:track.muted||clip.props.muted?0:clipVolume}:{}),...(definition.category==='video'?{muted:track.muted||Boolean(clip.props.muted)}:{})};
  const Component=definition.component;
  return <AbsoluteFill style={{opacity,transform,clipPath}}><Component {...props}/></AbsoluteFill>;
 };

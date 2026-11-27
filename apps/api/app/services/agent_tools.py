@@ -137,14 +137,20 @@ class AgentToolRegistry:
     async def for_stage(self, *, db: AsyncSession, workspace_id: UUID, stage: str) -> AgentTool:
         if stage not in HANDLER_STAGE.values():
             raise HTTPException(422, "Unsupported creative stage")
-        row = (await db.execute(text("""
-            select id,tool_key,agent_key,stage,handler_key,description,permission_key,
-                   input_schema,configuration,version
-            from public.agent_tool_registry
-            where stage=:stage and is_active=true
-              and (workspace_id=:workspace or workspace_id is null)
-            order by (workspace_id is not null) desc,version desc,created_at desc limit 1
-        """), {"stage": stage, "workspace": workspace_id})).mappings().first()
+        try:
+            row = (await db.execute(text("""
+                select id,tool_key,agent_key,stage,handler_key,description,permission_key,
+                       input_schema,configuration,version
+                from public.agent_tool_registry
+                where stage=:stage and is_active=true
+                  and (workspace_id=:workspace or workspace_id is null)
+                order by (workspace_id is not null) desc,version desc,created_at desc limit 1
+            """), {"stage": stage, "workspace": workspace_id})).mappings().first()
+        except ProgrammingError as exc:
+            message = str(exc).lower()
+            if "agent_tool_registry" in message:
+                raise HTTPException(503, "Dynamic Agent Tool Registry migration 22408 must be applied") from exc
+            raise
         if row is None:
             raise HTTPException(503, "No active tool is registered for this stage")
         return self._tool(row)
@@ -156,13 +162,19 @@ class AgentToolRegistry:
         return payload
 
     async def discover(self, *, db: AsyncSession, actor: UUID, workspace_id: UUID) -> list[dict[str, Any]]:
-        rows = (await db.execute(text("""
-            select id,tool_key,agent_key,stage,handler_key,description,permission_key,
-                   input_schema,configuration,version
-            from public.agent_tool_registry
-            where is_active=true and (workspace_id=:workspace or workspace_id is null)
-            order by stage,(workspace_id is not null) desc,version desc,created_at desc
-        """), {"workspace": workspace_id})).mappings().all()
+        try:
+            rows = (await db.execute(text("""
+                select id,tool_key,agent_key,stage,handler_key,description,permission_key,
+                       input_schema,configuration,version
+                from public.agent_tool_registry
+                where is_active=true and (workspace_id=:workspace or workspace_id is null)
+                order by stage,(workspace_id is not null) desc,version desc,created_at desc
+            """), {"workspace": workspace_id})).mappings().all()
+        except ProgrammingError as exc:
+            message = str(exc).lower()
+            if "agent_tool_registry" in message:
+                raise HTTPException(503, "Dynamic Agent Tool Registry migration 22408 must be applied") from exc
+            raise
         result = {}
         for row in rows:
             tool = self._tool(row)

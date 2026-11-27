@@ -27,7 +27,9 @@ configure_logging(settings.log_level)
 async def lifespan(_: FastAPI):
     logger.info("application_starting", environment=settings.app_env)
     creative_worker_task = asyncio.create_task(run_worker(), name="graphytion-creative-worker")
-    orchestrator_task = asyncio.create_task(run_dispatcher(), name="graphytion-production-orchestrator")
+    orchestrator_task = asyncio.create_task(
+        run_dispatcher(), name="graphytion-production-orchestrator"
+    )
     logger.info("creative_worker_embedded", worker="postgresql-lease-poller")
     logger.info("production_orchestrator_embedded", worker="postgresql-dag-dispatcher")
     try:

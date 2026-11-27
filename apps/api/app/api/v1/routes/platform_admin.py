@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -1033,3 +1033,65 @@ async def reverse_workspace_quota(
     await db.commit()
     return {"data": {"reservation_id": str(reservation_id), "status": "reversed",
                      "amount_microusd": payload.amount_microusd}}
+
+class MediaOperationalCostInput(BaseModel):
+    microusd_per_unit: int = Field(ge=0, le=10**15)
+    unit_name: Literal["image", "second"]
+    notes: str = Field(min_length=1, max_length=500)
+
+
+@router.get("/providers/media-operational-costs")
+async def list_media_operational_cost_prices(
+    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select id,media_type,provider_key,model_key,microusd_per_unit,unit_name,
+               effective_at,is_active,notes,created_at
+        from public.media_operational_cost_prices
+        order by media_type,provider_key,model_key,effective_at desc
+        limit 500
+    """))).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
+@router.put("/providers/media-operational-costs/{media_type}/{provider_key}/{model_key}")
+async def set_media_operational_cost_price(
+    media_type: str, provider_key: str, model_key: str,
+    payload: MediaOperationalCostInput, request: Request,
+    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    media = media_type.strip().lower()
+    provider, model = provider_key.strip().lower(), model_key.strip()
+    if media not in {"image", "video"}:
+        raise HTTPException(422, "Unsupported media type")
+    if payload.unit_name != ("image" if media == "image" else "second"):
+        raise HTTPException(422, "Operational cost unit does not match media type")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
+        raise HTTPException(422, "Invalid provider key")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model):
+        raise HTTPException(422, "Invalid model key")
+    await db.execute(text("""
+        update public.media_operational_cost_prices set is_active=false
+        where media_type=:media and provider_key=:provider and model_key=:model and is_active=true
+    """), {"media": media, "provider": provider, "model": model})
+    row = (await db.execute(text("""
+        insert into public.media_operational_cost_prices(
+          media_type,provider_key,model_key,microusd_per_unit,unit_name,notes,created_by
+        ) values(:media,:provider,:model,:rate,:unit,:notes,:actor)
+        returning id,media_type,provider_key,model_key,microusd_per_unit,unit_name,effective_at,is_active
+    """), {"media": media, "provider": provider, "model": model,
+           "rate": payload.microusd_per_unit, "unit": payload.unit_name,
+           "notes": payload.notes, "actor": actor})).mappings().one()
+    await _audit(db, request, actor, "platform.media_operational_cost.updated",
+                 "media_operational_cost_price", row["id"], {
+                     "media_type": media, "provider_key": provider, "model_key": model,
+                     "microusd_per_unit": payload.microusd_per_unit, "unit_name": payload.unit_name,
+                 })
+    await db.commit()
+    return {"data": dict(row)}
+
+

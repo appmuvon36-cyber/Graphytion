@@ -96,14 +96,16 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
     else:
         if payload.provider_key != "google_agent_platform":
             raise HTTPException(422, "Video generation requires Google Agent Platform OAuth")
-        if payload.model_key != "gemini-omni-flash-preview":
+        if payload.model_key != "gemini-omni-1.2-flash":
             raise HTTPException(422, "Unsupported Google Agent Platform video model")
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
-        if ratio not in {"16:9", "9:16"} or duration not in range(3, 11):
-            raise HTTPException(422, "Google Omni Flash supports 3-10 second videos")
-        config.update({"aspect_ratio": ratio, "duration_seconds": duration})
-        config.pop("resolution", None)
+        if ratio not in {"16:9", "9:16"} or duration not in range(3, 16):
+            raise HTTPException(422, "Google Omni 1.2 Flash supports 3-15 second videos")
+        resolution = config.get("resolution", "720p")
+        if resolution not in {"360p", "720p", "1080p", "4k"}:
+            raise HTTPException(422, "Unsupported Google Omni 1.2 Flash resolution")
+        config.update({"aspect_ratio": ratio, "duration_seconds": duration, "resolution": resolution})
     return config
 
 

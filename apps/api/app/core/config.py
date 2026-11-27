@@ -145,11 +145,14 @@ class Settings(BaseSettings):
         try:
             db_url = make_url(self.database_url_value)
         except Exception as exc:
-            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL is not a valid SQLAlchemy database URL") from exc
+            raise ValueError(
+                "GRAPHYTION_RUNTIME_DATABASE_URL is not a valid SQLAlchemy database URL"
+            ) from exc
 
         direct_database = (
             db_url.host == "db.xtjwmezfzexvupbfsdqt.supabase.co"
-            and db_url.username in {
+            and db_url.username
+            in {
                 "graphytion_api",
                 "graphytion_api.xtjwmezfzexvupbfsdqt",
             }
@@ -158,14 +161,17 @@ class Settings(BaseSettings):
         pooler_database = (
             bool(db_url.host)
             and db_url.host.endswith(".pooler.supabase.com")
-            and db_url.username in {
+            and db_url.username
+            in {
                 "graphytion_api",
                 "graphytion_api.xtjwmezfzexvupbfsdqt",
             }
             and db_url.port in (5432, 6543)
         )
         if db_url.drivername != "postgresql+asyncpg":
-            raise ValueError("GRAPHYTION_RUNTIME_DATABASE_URL must use the postgresql+asyncpg driver")
+            raise ValueError(
+                "GRAPHYTION_RUNTIME_DATABASE_URL must use the postgresql+asyncpg driver"
+            )
         if not (direct_database or pooler_database):
             raise ValueError(
                 "GRAPHYTION_RUNTIME_DATABASE_URL target/login is not an allowed "

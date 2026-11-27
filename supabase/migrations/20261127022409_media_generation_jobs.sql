@@ -99,9 +99,28 @@ create or replace function private.graphytion_heartbeat_media_generation_job(
   returning true;
 $$;
 
+create or replace function private.graphytion_media_generation_owner(
+  p_job_id uuid,p_worker_id text
+) returns uuid language sql security definer set search_path='' as $
+  select requested_by from public.media_generation_jobs
+  where id=p_job_id and worker_id=p_worker_id
+$;
+
+create or replace function private.graphytion_media_generation_status(
+  p_job_id uuid,p_worker_id text
+) returns table(status text,requested_by uuid)
+language sql security definer set search_path='' as $
+  select j.status,j.requested_by from public.media_generation_jobs j
+  where j.id=p_job_id and j.worker_id=p_worker_id
+$;
+
 revoke all on function private.graphytion_claim_media_generation_job(text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_heartbeat_media_generation_job(uuid,text) from public,anon,authenticated,service_role;
+revoke all on function private.graphytion_media_generation_owner(uuid,text) from public,anon,authenticated,service_role;
+revoke all on function private.graphytion_media_generation_status(uuid,text) from public,anon,authenticated,service_role;
 grant execute on function private.graphytion_claim_media_generation_job(text) to graphytion_api;
 grant execute on function private.graphytion_heartbeat_media_generation_job(uuid,text) to graphytion_api;
+grant execute on function private.graphytion_media_generation_owner(uuid,text) to graphytion_api;
+grant execute on function private.graphytion_media_generation_status(uuid,text) to graphytion_api;
 
 commit;

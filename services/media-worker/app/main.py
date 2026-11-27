@@ -152,13 +152,10 @@ class Worker:
                 )
                 log.info("media_generation_cancelled", extra={"generation_id": job_id})
                 return True
+            # If the provider completed before its cancellation request took
+            # effect, persist the real output instead of falsely discarding a
+            # billable completed operation as cancelled.
             content, mime, provenance = await generation_task
-            if cancel_event.is_set():
-                await self.api(
-                    f"/internal/media-generation-jobs/{job_id}/cancelled",
-                    method="POST", params={"worker_id": WORKER_ID},
-                )
-                return True
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/artifact",
                 method="POST",

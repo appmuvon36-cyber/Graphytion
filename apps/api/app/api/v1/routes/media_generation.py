@@ -644,7 +644,7 @@ async def complete_media_generation_artifact(
     await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
         select * from public.media_generation_jobs where id=:id and worker_id=:worker
-          and status='processing' for update
+          and status in ('processing','cancel_requested') for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(409, "Media generation lease is no longer owned")
@@ -719,7 +719,7 @@ async def complete_media_generation_artifact(
               provider_cost_status=case when :provider_cost is null then 'unpriced' else 'priced' end,
               provider_operation_status='completed',provider_operation_last_polled_at=now(),
               completed_at=now(),worker_id=null,lease_expires_at=null,updated_at=now()
-            where id=:id and status='processing' and worker_id=:worker
+            where id=:id and status in ('processing','cancel_requested') and worker_id=:worker
         """), {"asset": asset_id, "mime": mime, "size": len(content), "sha": digest,
                "provenance": json.dumps(provenance), "usage": json.dumps(usage) if usage else None,
                "provider_cost": provider_cost, "estimated_provider_cost": estimated_provider_cost,

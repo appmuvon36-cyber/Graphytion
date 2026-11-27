@@ -45,6 +45,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [mediaType,setMediaType]=useState<'image'|'video'>('image');
   const [mediaAspectRatio,setMediaAspectRatio]=useState('1:1');
   const [mediaDurationSeconds,setMediaDurationSeconds]=useState(8);
+  const [mediaResolution,setMediaResolution]=useState('720p');
   const [mediaImageSize,setMediaImageSize]=useState('1K');
   const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
   const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});

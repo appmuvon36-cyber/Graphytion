@@ -11,7 +11,7 @@ async def resolve_project_assets(db:AsyncSession,*,project_id:UUID,workspace_id:
  ids=list(dict.fromkeys(asset_ids))
  if len(ids)>500:raise HTTPException(422,"Composition references too many assets")
  if not ids:return {}
- rows=(await db.execute(text("""select id,bucket,object_path,content_type,status from public.project_assets where id=any(cast(:ids as uuid[])) and project_id=:project and workspace_id=:workspace"""),{"ids":ids,"project":project_id,"workspace":workspace_id})).mappings().all()
+ rows=(await db.execute(text("""select id,bucket,object_path,content_type,status from public.project_assets where id=any(cast(:ids as uuid[])) and workspace_id=:workspace"""),{"ids":ids,"project":project_id,"workspace":workspace_id})).mappings().all()
  indexed={str(r["id"]):r for r in rows}
  if len(indexed)!=len(ids):raise HTTPException(422,"Composition references an asset outside this project")
  if snapshot:

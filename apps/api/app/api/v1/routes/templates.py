@@ -86,11 +86,16 @@ class BrandKitUpdate(BaseModel):
 
 async def validate_logo_asset(db: AsyncSession, workspace_id: UUID, config: dict[str, Any]) -> None:
     asset_id = config.get("logo_asset_id")
-    if asset_id and await db.scalar(text("""
-        select id from public.project_assets
+    if not asset_id:
+        return
+    asset = (await db.execute(text("""
+        select id,content_type from public.project_assets
         where id=:asset and workspace_id=:workspace and status='active'
-    """), {"asset": asset_id, "workspace": workspace_id}) is None:
-        raise HTTPException(422, "Logo asset must be a ready asset owned by this workspace")
+    """), {"asset": asset_id, "workspace": workspace_id})).mappings().first()
+    if asset is None:
+        raise HTTPException(422, "Logo asset must be an active asset owned by this workspace")
+    if asset["content_type"] not in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}:
+        raise HTTPException(422, "Brand Kit logo must be a supported image asset")
 
 
 def slugify(value: str) -> str:

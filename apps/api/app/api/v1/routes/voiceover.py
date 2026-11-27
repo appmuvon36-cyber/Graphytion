@@ -12,6 +12,7 @@ from app.core.database import set_rls_subject
 from app.services.supabase_storage import SupabaseStorage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.queue_notifications import notify_worker
+from app.services.quota import reserve_fixed_operation, reconcile_fixed_operation, release_fixed_operation
 
 router=APIRouter();permissions=WorkspacePermissionResolver()
 BUCKET="project-assets";MAX_AUDIO_BYTES=50*1024*1024
@@ -66,6 +67,10 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  row=(await db.execute(text("""insert into public.audio_generations(workspace_id,project_id,scene_id,subtitle_segment_id,requested_by,provider_key,model_key,voice_key,input_text,language,generation_config,status,idempotency_key)
  values(:workspace,:project,:scene,:segment,:actor,:provider,:model,:voice,:input,:language,cast(:config as jsonb),:status,:key)
  on conflict(workspace_id,idempotency_key) do nothing returning id,status"""),{"workspace":workspace,"project":project_id,"scene":payload.scene_id,"segment":payload.subtitle_segment_id,"actor":actor,"provider":payload.provider_key,"model":payload.model_key,"voice":payload.voice_key,"input":payload.text,"language":payload.language,"config":json.dumps(payload.generation_config),"status":status,"key":idempotency_key})).mappings().first()
+ if row is not None:
+  await reserve_fixed_operation(db,workspace_id=workspace,project_id=project_id,resource_type="voiceover",
+   resource_id=row["id"],operation_key="voiceover_per_1000_chars",
+   units=max(1,(len(payload.text)+999)//1000),idempotency_key="voiceover:"+str(row["id"])+":attempt:1")
  if row is None:
   old=(await db.execute(text("select id,status,input_text,provider_key,voice_key,model_key,subtitle_segment_id,language,scene_id,generation_config from public.audio_generations where workspace_id=:workspace and idempotency_key=:key"),{"workspace":workspace,"key":idempotency_key})).mappings().first()
   if (not old or old["input_text"]!=payload.text or old["provider_key"]!=payload.provider_key or old["voice_key"]!=payload.voice_key or old["model_key"]!=payload.model_key or old["subtitle_segment_id"]!=payload.subtitle_segment_id or old["language"]!=payload.language or old["scene_id"]!=payload.scene_id or old["generation_config"]!=(payload.generation_config or {})):raise HTTPException(409,"Idempotency key was used for a different voiceover request")
@@ -94,15 +99,35 @@ async def get_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncSes
 @router.post("/voiceovers/{voiceover_id}/retry",status_code=202)
 async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_actor(claims)
- row=(await db.execute(text("select id,project_id,workspace_id,status from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
+ row=(await db.execute(text("select id,project_id,workspace_id,status,input_text from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
  if not row:raise HTTPException(404,"Voiceover job not found")
  await _scope(db,row["project_id"],actor,"project.update")
  if row["status"] not in {"provider_unavailable","failed"}:raise HTTPException(409,"Only unavailable or failed voiceover jobs can be retried")
  await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null where id=:id"),{"id":voiceover_id})
+ await reserve_fixed_operation(db,workspace_id=row["workspace_id"],project_id=row["project_id"],resource_type="voiceover",
+  resource_id=voiceover_id,operation_key="voiceover_per_1000_chars",
+  units=max(1,(len(row["input_text"])+999)//1000),idempotency_key="voiceover:"+str(voiceover_id)+":retry:"+str(uuid4()))
  await db.commit()
  await notify_worker("media", str(voiceover_id))
  # PostgreSQL remains durable; Redis is a best-effort wake-up signal.
  return {"data":{"voiceover_id":str(voiceover_id),"status":"queued"}}
+
+
+@router.post("/voiceovers/{voiceover_id}/cancel")
+async def cancel_voiceover(voiceover_id:UUID,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
+ actor=_actor(claims)
+ row=(await db.execute(text("select id,project_id,workspace_id,status from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
+ if row is None:raise HTTPException(404,"Voiceover job not found")
+ await _scope(db,row["project_id"],actor,"project.update")
+ if row["status"]!="queued":
+  raise HTTPException(409,"Only queued voiceover jobs can be cancelled; running provider requests are not interrupted")
+ await db.execute(text("update public.audio_generations set status='cancelled',completed_at=now() where id=:id and status='queued'"),{"id":voiceover_id})
+ await release_fixed_operation(db,resource_type="voiceover",resource_id=voiceover_id,reason="user_cancelled_before_execution")
+ await db.execute(text("""insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
+  values(:actor,:workspace,'voiceover.cancelled','audio_generation',:id,:request_id)"""),
+  {"actor":actor,"workspace":row["workspace_id"],"id":voiceover_id,"request_id":request.state.request_id})
+ await db.commit()
+ return {"data":{"voiceover_id":str(voiceover_id),"status":"cancelled"}}
 
 
 @router.post("/internal/media-jobs/claim")
@@ -173,6 +198,8 @@ async def complete_media_artifact(generation_id:UUID,request:Request,file:Upload
       alignment_metadata=cast(:metadata as jsonb),version=version+1,updated_at=now() where id=:id"""),{"asset":asset_id,"words":json.dumps(aligned),"metadata":json.dumps(snapshot["alignment_metadata"]),"id":segment_id})
      await db.execute(text("""insert into public.subtitle_segment_revisions(track_id,segment_id,revision,operation,snapshot,actor_user_id,request_id)
       values(:track,:segment,:revision,'regenerated',cast(:snapshot as jsonb),:actor,:request)"""),{"track":segment["track_id"],"segment":segment_id,"revision":revision,"snapshot":json.dumps(snapshot),"actor":row["requested_by"],"request":request.state.request_id})
+  await reconcile_fixed_operation(db,resource_type="voiceover",resource_id=generation_id)
+  await reconcile_fixed_operation(db,resource_type="voiceover",resource_id=generation_id)
   await db.commit()
  except Exception as exc:
   await db.rollback()
@@ -191,6 +218,8 @@ async def fail_media_job(generation_id:UUID,payload:VoiceoverFailure,request:Req
  if not row:raise HTTPException(409,"Media job lease is no longer owned")
  retry=payload.retryable and row["attempt_count"]<row["max_attempts"]
  await db.execute(text("update public.audio_generations set status=:status,error_code=:code,worker_id=null,lease_expires_at=null where id=:id"),{"status":"queued" if retry else "failed","code":payload.error_code[:100],"id":generation_id})
+ if not retry:
+  await release_fixed_operation(db,resource_type="voiceover",resource_id=generation_id,reason=payload.error_code)
  await db.commit()
  # The worker discovers retryable rows through PostgreSQL polling.
  return {"data":{"generation_id":str(generation_id),"status":"queued" if retry else "failed"}}
@@ -198,6 +227,12 @@ async def fail_media_job(generation_id:UUID,payload:VoiceoverFailure,request:Req
 async def recover_media_jobs(request:Request,db:AsyncSession=DbSession):
  _require_worker(request)
  rows=(await db.execute(text("select private.graphytion_recover_audio_generations()"))).scalars().all()
+ terminal=(await db.execute(text("""select q.id,a.requested_by from public.quota_reservations q
+  join public.audio_generations a on a.id=q.resource_id
+  where q.resource_type='voiceover' and q.status='reserved' and a.status in ('failed','cancelled')"""))).mappings().all()
+ for item in terminal:
+  await set_rls_subject(db,str(item["requested_by"]))
+  await db.execute(text("select private.graphytion_release_quota(:id,'media_recovery_terminal')"),{"id":item["id"]})
  await db.commit()
  # Recovered queued rows are discovered by the worker on its next poll.
  return {"data":{"recovered_jobs":len(rows)}}

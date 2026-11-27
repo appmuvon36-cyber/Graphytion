@@ -370,3 +370,14 @@ This update supersedes the earlier API/worker connectivity blockers where they c
 - No provider calls, user account transactions, TTS/render jobs, staging tests, or production deployments were executed. Railway auto-deploy status must be inspected separately after source push; deployment success is not assumed.
 
 Source-only verification boundary: files are committed after static source review. Typecheck/build and live migration verification remain pending. API/AI worker production execution depends on the existing least-privilege runtime DB configuration; the latest Railway snapshot previously showed API online, but this update does not claim fresh worker execution verification.
+
+
+## Quota economics vertical integration — 2026-11-27
+
+- Added micro-USD quota accounts, idempotent reservations, usage ledger entries, reconciliation, release, and partial reversal database functions. Reservations are transactionally locked against workspace quota availability; actual provider costs above the estimate are recorded as overage rather than silently discarded.
+- Added super-admin APIs for workspace quota provisioning/period rollover, operation price-book management, usage ledger inspection, and idempotent reversals. Added corresponding Admin controls for quota limits and configured TTS/render rates. No rates or quota balances were seeded with invented values.
+- Integrated creative-run reservations using the configured provider/model price book and a bounded stage token estimate. Successful runs reconcile against actual token-cost events; terminal failures and cancellations release reservations; recovery cleanup releases reservations for terminal jobs.
+- Integrated fixed-rate reservations for voiceover (per 1,000 characters) and Remotion rendering (per second). Completion reconciles the configured operation rate; terminal failure/cancellation releases the reservation; retries receive a fresh reservation key; recovery cleanup handles terminal jobs.
+- Voiceover queued cancellation now releases its reservation. Running TTS provider calls are not force-interrupted; cancellation is explicitly rejected while a provider call is running to avoid reporting cancellation while incurring an untracked provider cost.
+- New migration: 20261127022407_quota_economics.sql. Migration is committed but not yet applied. Existing 20261127022405 (AI model price book) and 20261127022406 (template/brand registry) are applied and schema-verified in the Graphytion Supabase project. No provider rates or workspace quotas have been configured; creative, voiceover and render submissions will require these explicit super-admin settings before quota-enforced execution can begin.
+- Verification boundary: no customer accounts, provider calls, render jobs or test transactions were run. Static source review completed; API/web build and runtime checks will be read from Railway after the commit. The migration will be applied only after a final schema review.

@@ -52,6 +52,13 @@ export default function PlatformAdmin() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
+  const [quotaLimit,setQuotaLimit]=useState('');
+  const [quotaStart,setQuotaStart]=useState('');
+  const [quotaEnd,setQuotaEnd]=useState('');
+  const [quotaStatus,setQuotaStatus]=useState<'active'|'paused'>('active');
+  const [quotaSummary,setQuotaSummary]=useState<{consumed_microusd:number;reserved_microusd:number;available_microusd:number}|null>(null);
+  const [voiceoverRate,setVoiceoverRate]=useState('');
+  const [renderRate,setRenderRate]=useState('');
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminRecord[]>([]);
   const [newAdminUserId, setNewAdminUserId] = useState('');
@@ -133,6 +140,40 @@ export default function PlatformAdmin() {
       const result = await request<{data: Member[]}>('/admin/workspaces/' + workspaceId + '/members');
       setMembers(result.data);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Gagal memuat membership'); }
+  }
+
+  async function loadQuota(workspaceId:string) {
+    setSelectedWorkspace(workspaceId); setError('');
+    try {
+      const result=await request<{data:{quota_limit_microusd:number;period_start:string;period_end:string;status:'active'|'paused';consumed_microusd:number;reserved_microusd:number;available_microusd:number}}>('/admin/workspaces/'+workspaceId+'/quota');
+      setQuotaLimit(String(result.data.quota_limit_microusd));
+      setQuotaStart(new Date(result.data.period_start).toISOString().slice(0,16));
+      setQuotaEnd(new Date(result.data.period_end).toISOString().slice(0,16));
+      setQuotaStatus(result.data.status);
+      setQuotaSummary({consumed_microusd:result.data.consumed_microusd,reserved_microusd:result.data.reserved_microusd,available_microusd:result.data.available_microusd});
+    } catch (cause) { const start=new Date(); const end=new Date(start.getTime()+30*24*60*60*1000); setQuotaLimit(''); setQuotaStart(start.toISOString().slice(0,16)); setQuotaEnd(end.toISOString().slice(0,16)); setQuotaStatus('active'); setQuotaSummary(null); setNotice(cause instanceof Error?cause.message:'Quota account belum dikonfigurasi.'); }
+  }
+
+  async function saveQuota(event:React.FormEvent) {
+    event.preventDefault(); if(!selectedWorkspace)return;
+    setBusy(true);setError('');
+    try {
+      const result=await request<{data:{consumed_microusd:number;reserved_microusd:number;quota_limit_microusd:number;period_start:string;period_end:string;status:'active'|'paused'}}>('/admin/workspaces/'+selectedWorkspace+'/quota',{
+        method:'PUT',body:JSON.stringify({quota_limit_microusd:Number(quotaLimit),period_start:new Date(quotaStart).toISOString(),period_end:new Date(quotaEnd).toISOString(),status:quotaStatus})
+      });
+      setQuotaSummary({consumed_microusd:result.data.consumed_microusd,reserved_microusd:result.data.reserved_microusd,available_microusd:result.data.quota_limit_microusd-result.data.consumed_microusd-result.data.reserved_microusd});
+      setNotice('Workspace quota account saved.');
+    } catch(cause){setError(cause instanceof Error?cause.message:'Quota update failed');}
+    finally{setBusy(false);}
+  }
+
+  async function saveQuotaRate(operation:string,rate:string,unit:string) {
+    setBusy(true);setError('');
+    try {
+      await request('/admin/quota/operation-prices/'+operation,{method:'PUT',body:JSON.stringify({microusd_per_unit:Number(rate),unit_name:unit,notes:'Configured through Graphytion platform admin'})});
+      setNotice('Quota operation rate saved: '+operation);
+    } catch(cause){setError(cause instanceof Error?cause.message:'Quota operation rate update failed');}
+    finally{setBusy(false);}
   }
 
   async function updateMemberRole(member: Member, role: string) {
@@ -423,8 +464,8 @@ export default function PlatformAdmin() {
           <div><div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'queued'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>{job.status==='failed'&&<button disabled={busy} onClick={()=>void retryOperationalJob('render',job.id)} style={{...button,marginTop:6}}>Retry job</button>}</div>
         </div>)}
       </section>
-      <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div>)}
-        {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
+      <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button><button onClick={() => void loadQuota(workspace.id)} style={{...button,background:'#eaf3ff',color:'#173f72'}}>Quota</button></div></div>)}
+        {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{quotaStart&&quotaEnd&&<div style={{marginTop:16,paddingTop:14,borderTop:'1px solid #dce3ed'}}><h3>Quota · {workspaces.find(w=>w.id===selectedWorkspace)?.name}</h3>{quotaSummary&&<p style={{fontSize:12,color:'#68788e'}}>Consumed: {quotaSummary.consumed_microusd} µUSD · Reserved: {quotaSummary.reserved_microusd} µUSD · Available: {quotaSummary.available_microusd} µUSD</p>}<form onSubmit={saveQuota} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:8}}><label style={{fontSize:12}}>Quota limit (µUSD)<input value={quotaLimit} onChange={e=>setQuotaLimit(e.target.value)} type="number" min="1" required style={input}/></label><label style={{fontSize:12}}>Period start<input value={quotaStart} onChange={e=>setQuotaStart(e.target.value)} type="datetime-local" required style={input}/></label><label style={{fontSize:12}}>Period end<input value={quotaEnd} onChange={e=>setQuotaEnd(e.target.value)} type="datetime-local" required style={input}/></label><label style={{fontSize:12}}>Status<select value={quotaStatus} onChange={e=>setQuotaStatus(e.target.value as 'active'|'paused')} style={input}><option value="active">Active</option><option value="paused">Paused</option></select></label><button disabled={busy} style={button}>Save quota account</button></form><div style={{marginTop:14,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:8}}><label style={{fontSize:12}}>TTS rate / 1,000 chars (µUSD)<input type="number" min="1" value={voiceoverRate} onChange={e=>setVoiceoverRate(e.target.value)} style={input}/><button type="button" disabled={busy} onClick={()=>void saveQuotaRate('voiceover_per_1000_chars',voiceoverRate,'1000 characters')} style={{...button,marginTop:6}}>Save TTS rate</button></label><label style={{fontSize:12}}>Render rate / second (µUSD)<input type="number" min="1" value={renderRate} onChange={e=>setRenderRate(e.target.value)} style={input}/><button type="button" disabled={busy} onClick={()=>void saveQuotaRate('render_per_second',renderRate,'second')} style={{...button,marginTop:6}}>Save render rate</button></label></div></div>}{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>
       <section style={panel}><h2>Invitation administration</h2>{invitations.filter(inv => !inv.accepted_at && !inv.cancelled_at).map(invitation => <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{invitation.email}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{invitation.workspace_name} · {invitation.role} · {invitation.delivery_status} · expires {new Date(invitation.expires_at).toLocaleString()}</div></div><button disabled={busy} onClick={() => void cancelInvitation(invitation)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Cancel</button></div>)}</section>
       <section style={panel}><h2>Project oversight</h2>{projects.map(project => <div key={project.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{project.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{project.workspace_name} · {project.production_mode} · {project.status}</div></div>{project.status === 'archived' ? <button disabled={busy} onClick={() => void updateProjectStatus(project, 'draft')} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Restore</button> : <button disabled={busy || project.status === 'deleted'} onClick={() => void updateProjectStatus(project, 'archived')} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Archive</button>}</div>)}</section>

@@ -54,6 +54,13 @@ async def _heartbeat(run_id: str, actor_id: str, task_id: str) -> None:
 async def _claim_and_execute(run_id: str | None = None) -> bool:
     async with SessionLocal() as db:
         await db.execute(text("select private.graphytion_finalize_creative_runs()"))
+        terminal=(await db.execute(text("""select q.id,p.requested_by from public.quota_reservations q
+            join public.production_runs p on p.id=q.resource_id
+            where q.resource_type='creative_run' and q.status='reserved'
+              and p.status in ('failed','cancelled')"""))).mappings().all()
+        for item in terminal:
+            await set_rls_subject(db,str(item["requested_by"]))
+            await db.execute(text("select private.graphytion_release_quota(:id,'creative_recovery_terminal')"),{"id":item["id"]})
         await db.commit()
         claimed = (await db.execute(text("""
             select * from private.graphytion_claim_creative_run(
@@ -137,6 +144,11 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
                             lease_expires_at=null
                         where id=:task and worker_id=:worker
                     """), {"task": task_id, "worker": WORKER_ID})
+                    await db.execute(text("""
+                        select private.graphytion_release_quota(q.id,'worker_cancelled')
+                        from public.quota_reservations q
+                        where q.resource_type='creative_run' and q.resource_id=:run
+                    """), {"run": claimed["run_id"]})
                     await db.execute(text("""
                         insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
                         values (:run,'stage.cancelled','{}'::jsonb,

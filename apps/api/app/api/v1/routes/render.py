@@ -19,6 +19,7 @@ from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.composition_validation import validate_snapshot
 from app.services.composition_assets import collect_asset_ids, resolve_project_assets
 from app.services.queue_notifications import notify_worker
+from app.services.quota import reserve_fixed_operation, reconcile_fixed_operation, release_fixed_operation
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()
@@ -141,6 +142,12 @@ async def create_render(
             raise HTTPException(409, detail="Idempotency-Key was used for a different render request")
         await db.rollback()
         return {"data":{"render_job_id":str(existing["id"]),"status":existing["status"],"replayed":True}}
+    await reserve_fixed_operation(
+        db,workspace_id=workspace_id,project_id=project_id,resource_type="render_job",
+        resource_id=row["id"],operation_key="render_per_second",
+        units=max(1,(snapshot["durationFrames"]+snapshot["fps"]-1)//snapshot["fps"]),
+        idempotency_key="render:"+str(row["id"])+":attempt:1",
+    )
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values (:actor,:workspace,'render.queued','render_job',:job,:request_id)
@@ -250,6 +257,15 @@ async def recover_render_jobs(
 ):
     _require_worker(request)
     finalized = await db.scalar(text("select private.graphytion_finalize_render_jobs()"))
+    terminal = (await db.execute(text("""
+        select q.id,r.requested_by from public.quota_reservations q
+        join public.render_jobs r on r.id=q.resource_id
+        where q.resource_type='render_job' and q.status='reserved'
+          and r.status in ('failed','cancelled')
+    """))).mappings().all()
+    for item in terminal:
+        await set_rls_subject(db,str(item["requested_by"]))
+        await db.execute(text("select private.graphytion_release_quota(:id,'render_recovery_terminal')"),{"id":item["id"]})
     await db.commit()
     return {"data": {"finalized_jobs": int(finalized or 0)}}
 
@@ -378,6 +394,7 @@ async def complete_render_artifact(
         where id=:job
     """), {"bucket": RENDER_BUCKET, "path": object_path, "size": len(content), "hash": digest, "job": render_job_id})
     await db.execute(text("update public.render_attempts set status='completed',ended_at=now(),diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id,"diagnostics":json.dumps({"bytes":len(content),"sha256":digest,"mime_type":mime_type})})
+    await reconcile_fixed_operation(db,resource_type="render_job",resource_id=render_job_id)
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values (:actor,:workspace,'render.completed','render_job',:job,:request_id)
@@ -480,6 +497,7 @@ async def fail_render_job(
             where id=:job and worker_id=:worker
         """), {"job": render_job_id, "worker": worker_id})
         await db.execute(text("update public.render_attempts set status='cancelled',ended_at=now() where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"job":render_job_id})
+        await release_fixed_operation(db,resource_type="render_job",resource_id=render_job_id,reason="render_cancelled")
         await db.commit()
         return {"data": {"render_job_id": str(render_job_id), "status": "cancelled"}}
     retry = payload.retryable and row["attempt_count"] < row["max_attempts"]
@@ -490,6 +508,8 @@ async def fail_render_job(
     """), {"status": "queued" if retry else "failed", "code": payload.error_code,
            "message": payload.error_message, "retry": retry, "job": render_job_id})
     await db.execute(text("update public.render_attempts set status='failed',ended_at=now(),error_code=:code,diagnostics=cast(:diagnostics as jsonb) where render_job_id=:job and attempt_number=(select attempt_count from public.render_jobs where id=:job)"), {"code":payload.error_code,"diagnostics":json.dumps({"message":payload.error_message,"retryable":payload.retryable}),"job":render_job_id})
+    if not retry:
+        await release_fixed_operation(db,resource_type="render_job",resource_id=render_job_id,reason=payload.error_code)
     await db.commit()
     # PostgreSQL polling discovers retryable jobs after the failure transaction commits.
     return {"data": {"render_job_id": str(render_job_id), "status": "queued" if retry else "failed"}}
@@ -576,6 +596,7 @@ async def cancel_queued_render(
                 worker_id=null,lease_expires_at=null
             where id=:job and status='queued'
         """), {"job": render_job_id})
+        await release_fixed_operation(db,resource_type="render_job",resource_id=render_job_id,reason="user_cancelled_before_render")
     elif row["status"] == "rendering":
         next_status = "cancel_requested"
         await db.execute(text("""

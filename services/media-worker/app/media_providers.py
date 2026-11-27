@@ -172,9 +172,12 @@ class GeminiMediaProvider:
             "model": self.VIDEO_MODEL,
             "input": [{"type": "text", "text": prompt}],
             "response_format": [{
-                "type": "video", "aspect_ratio": aspect_ratio,
-                "duration": f"{duration_seconds}s",
+                "type": "video", "delivery": "inline",
+                "aspect_ratio": aspect_ratio, "duration": f"{duration_seconds}s",
             }],
+            "background": False,
+            "store": True,
+            "stream": False,
             "generation_config": {"video_config": {"task": "text_to_video"}},
         })
         video_block = next((item for item in self._output_blocks(body) if item.get("type") == "video"), None)

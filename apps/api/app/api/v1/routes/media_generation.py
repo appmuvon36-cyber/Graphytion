@@ -270,7 +270,7 @@ async def retry_media_generation(
     await db.execute(text("""
         update public.media_generation_jobs set status='queued',error_code=null,
           attempt_count=0,max_attempts=3,worker_id=null,lease_expires_at=null,
-          quota_reservation_id=:reservation,completed_at=null,updated_at=now()
+          quota_reservation_id=:reservation,provider_operation_id=null,completed_at=null,updated_at=now()
         where id=:id and status='failed'
     """), {"id": generation_id, "reservation": reservation})
     await db.execute(text("""

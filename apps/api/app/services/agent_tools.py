@@ -49,6 +49,11 @@ def _validate(schema: dict[str, Any], value: Any, path: str = "$") -> str | None
         return f"{path}: value is not in enum"
     if kind == "string" and not int(schema.get("minLength", 0)) <= len(value) <= int(schema.get("maxLength", 20000)):
         return f"{path}: string length outside limits"
+    if kind == "string" and schema.get("format") == "uuid":
+        try:
+            UUID(value)
+        except (ValueError, TypeError):
+            return f"{path}: expected UUID"
     if kind in {"integer", "number"}:
         if "minimum" in schema and value < schema["minimum"]:
             return f"{path}: below minimum"
@@ -175,7 +180,9 @@ class AgentToolRegistry:
     async def authorize(self, *, db: AsyncSession, actor: UUID, workspace_id: UUID,
                         project_id: UUID, stage: str, payload: dict[str, Any]) -> AgentTool:
         tool = await self.for_stage(db=db, workspace_id=workspace_id, stage=stage)
-        self.validate(tool, payload)
+        schema_properties = tool.input_schema.get("properties", {})
+        tool_payload = {key: value for key, value in payload.items() if key in schema_properties}
+        self.validate(tool, tool_payload)
         project_workspace = await db.scalar(text("""
             select workspace_id from public.video_projects
             where id=:project and status<>'deleted'

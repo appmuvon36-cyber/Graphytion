@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import UUID
 
@@ -770,3 +771,91 @@ async def admin_retry_media_job(
     await notify_worker("media", str(generation_id))
     return {"data": {"generation_id": str(generation_id), "status": "queued"}}
 
+
+
+class ModelPriceInput(BaseModel):
+    input_microusd_per_million: int = Field(ge=0, le=100_000_000_000)
+    output_microusd_per_million: int = Field(ge=0, le=100_000_000_000)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/providers/model-prices")
+async def list_model_prices(claims: AuthenticatedClaims, db: AsyncSession = DbSession):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    rows = (await db.execute(text("""
+        select id,provider_key,model_key,input_microusd_per_million,
+               output_microusd_per_million,effective_at,is_active,notes,created_at
+        from public.ai_model_prices order by provider_key,model_key,effective_at desc limit 500
+    """))).mappings().all()
+    return {"data": [dict(row) for row in rows]}
+
+
+@router.put("/providers/model-prices/{provider_key}/{model_key}")
+async def set_model_price(
+    provider_key: str, model_key: str, payload: ModelPriceInput, request: Request,
+    claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_super_admin(db, actor)
+    provider, model = provider_key.strip().lower(), model_key.strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", provider):
+        raise HTTPException(status_code=422, detail="Invalid provider key")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model):
+        raise HTTPException(status_code=422, detail="Invalid model key")
+    await db.execute(text("""
+        update public.ai_model_prices set is_active=false
+        where provider_key=:provider and model_key=:model and is_active=true
+    """), {"provider": provider, "model": model})
+    row = (await db.execute(text("""
+        insert into public.ai_model_prices(
+            provider_key,model_key,input_microusd_per_million,
+            output_microusd_per_million,notes,created_by
+        ) values (:provider,:model,:input_rate,:output_rate,:notes,:actor)
+        returning id,provider_key,model_key,input_microusd_per_million,
+                  output_microusd_per_million,effective_at,is_active,notes,created_at
+    """), {
+        "provider": provider, "model": model,
+        "input_rate": payload.input_microusd_per_million,
+        "output_rate": payload.output_microusd_per_million,
+        "notes": payload.notes, "actor": actor,
+    })).mappings().one()
+    await _audit(db, request, actor, "platform.ai_model_price.updated",
+        "ai_model_price", row["id"], {
+            "provider_key": provider, "model_key": model,
+            "input_microusd_per_million": payload.input_microusd_per_million,
+            "output_microusd_per_million": payload.output_microusd_per_million,
+        })
+    await db.commit()
+    return {"data": dict(row)}
+
+
+@router.get("/usage")
+async def platform_usage(
+    claims: AuthenticatedClaims, days: int = Query(default=30, ge=1, le=90),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _require_platform_admin(db, actor)
+    totals = (await db.execute(text("""
+        select coalesce(sum(input_tokens),0)::bigint as input_tokens,
+          coalesce(sum(output_tokens),0)::bigint as output_tokens,
+          coalesce(sum(total_cost_microusd),0)::bigint as priced_cost_microusd,
+          count(*) filter (where cost_status='priced')::bigint as priced_events,
+          count(*) filter (where cost_status='unpriced')::bigint as unpriced_events
+        from public.ai_usage_events
+        where created_at >= now()-make_interval(days => :days)
+    """), {"days": days})).mappings().one()
+    breakdown = (await db.execute(text("""
+        select provider_key,model_key,
+          coalesce(sum(input_tokens),0)::bigint as input_tokens,
+          coalesce(sum(output_tokens),0)::bigint as output_tokens,
+          coalesce(sum(total_cost_microusd),0)::bigint as cost_microusd,
+          count(*)::bigint as events
+        from public.ai_usage_events
+        where created_at >= now()-make_interval(days => :days)
+        group by provider_key,model_key
+        order by cost_microusd desc,events desc limit 100
+    """), {"days": days})).mappings().all()
+    return {"data": {"period_days": days, "totals": dict(totals),
+                     "by_provider_model": [dict(row) for row in breakdown]}}

@@ -32,6 +32,9 @@ export default function PlatformAdmin() {
   const [password, setPassword] = useState('');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
+  const [modelPrices,setModelPrices]=useState<ModelPrice[]>([]);
+  const [usageSummary,setUsageSummary]=useState<UsageSummary|null>(null);
+  const [priceDraft,setPriceDraft]=useState({provider_key:'openai',model_key:'gpt-4.1-mini',input_microusd_per_million:0,output_microusd_per_million:0,notes:''});
   const [renderProfiles,setRenderProfiles]=useState<RenderProfile[]>([]);
   const [renderSettings,setRenderSettings]=useState<RenderSettings>({max_concurrent_jobs:2,lease_seconds:300,max_attempts:3,max_output_bytes:536870912});
   const [motionComponents,setMotionComponents]=useState<MotionControl[]>([]);
@@ -69,7 +72,7 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj, wk] = await Promise.all([
+      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj, wk, mp, us] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
@@ -84,8 +87,10 @@ export default function PlatformAdmin() {
         request<Page<AdminRenderJob>>('/admin/render-jobs?page=1&per_page=50'),
         request<Page<AdminMediaJob>>('/admin/media-jobs?page=1&per_page=50'),
         request<{data:WorkerStatus[]}>('/admin/workers'),
+        request<{data:ModelPrice[]}>('/admin/providers/model-prices'),
+        request<{data:UsageSummary}>('/admin/usage?days=30'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data); setModelPrices(mp.data); setUsageSummary(us.data);
       setDenied(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
@@ -253,6 +258,23 @@ export default function PlatformAdmin() {
     finally{setBusy(false);}
   }
 
+
+  async function saveModelPrice(event:React.FormEvent) {
+    event.preventDefault();setBusy(true);setError('');setNotice('');
+    try {
+      await request('/admin/providers/model-prices/'+encodeURIComponent(priceDraft.provider_key)+'/'+encodeURIComponent(priceDraft.model_key),{
+        method:'PUT',body:JSON.stringify({
+          input_microusd_per_million:priceDraft.input_microusd_per_million,
+          output_microusd_per_million:priceDraft.output_microusd_per_million,
+          notes:priceDraft.notes.trim()||null
+        })
+      });
+      setNotice('Provider model price version saved and audited.');
+      await load();
+    } catch(cause) { setError(cause instanceof Error?cause.message:'Provider model price update failed'); }
+    finally { setBusy(false); }
+  }
+
   async function logout() {
     try { await api.request('/auth/logout', { method: 'POST' }); } catch { /* session may already be expired */ }
     setAuthenticated(false); setOverview(null); setUsers([]); setWorkspaces([]); setProjects([]); setAudit([]);
@@ -280,6 +302,35 @@ export default function PlatformAdmin() {
     {busy && <p role="status">Memuat data platform…</p>}
     {overview && <>
       <section style={panel}><h2 style={{marginTop:0}}>AI provider configuration</h2>{llmStatus&&<div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}><div><strong>{llmStatus.generation_ready?'Generation provider ready':'Provider configuration required'}</strong><p style={{fontSize:12,color:'#68788e',margin:'4px 0'}}>Model: {llmStatus.configured_model} · Available providers: {llmStatus.available_providers.join(', ')||'none'}</p></div><span style={{fontSize:12,color:llmStatus.generation_ready?'#176b45':'#a15b00'}}>{llmStatus.openai_credential_configured?'OPENAI_API_KEY configured':'OPENAI_API_KEY missing'}</span></div>}</section>
+
+      <section style={panel}>
+        <h2>AI usage economics · actual provider usage</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>Biaya dihitung dari token aktual provider dan price book versi efektif. Event tanpa harga atau metadata token lengkap tetap ditandai unpriced, bukan dianggap gratis.</p>
+        {usageSummary&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
+          <div><strong>{usageSummary.totals.input_tokens.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Input tokens · 30 hari</div></div>
+          <div><strong>{usageSummary.totals.output_tokens.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Output tokens · 30 hari</div></div>
+          <div><strong>USD {(usageSummary.totals.priced_cost_microusd/1000000).toFixed(6)}</strong><div style={{fontSize:11,color:'#68788e'}}>Priced provider cost</div></div>
+          <div><strong>{usageSummary.totals.unpriced_events}</strong><div style={{fontSize:11,color:'#68788e'}}>Unpriced events · {usageSummary.totals.priced_events} priced</div></div>
+        </div>}
+        <h3>Versioned provider price book</h3>
+        <form onSubmit={saveModelPrice} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
+          <input aria-label="Provider key" value={priceDraft.provider_key} onChange={e=>setPriceDraft(v=>({...v,provider_key:e.target.value}))} placeholder="openai" style={input}/>
+          <input aria-label="Model key" value={priceDraft.model_key} onChange={e=>setPriceDraft(v=>({...v,model_key:e.target.value}))} placeholder="gpt-4.1-mini" style={input}/>
+          <label style={{fontSize:11}}>Input micro-USD / 1M tokens<input aria-label="Input micro USD per million tokens" type="number" min={0} step={1} value={priceDraft.input_microusd_per_million} onChange={e=>setPriceDraft(v=>({...v,input_microusd_per_million:Number(e.target.value)}))} style={input}/></label>
+          <label style={{fontSize:11}}>Output micro-USD / 1M tokens<input aria-label="Output micro USD per million tokens" type="number" min={0} step={1} value={priceDraft.output_microusd_per_million} onChange={e=>setPriceDraft(v=>({...v,output_microusd_per_million:Number(e.target.value)}))} style={input}/></label>
+          <input aria-label="Price notes" value={priceDraft.notes} onChange={e=>setPriceDraft(v=>({...v,notes:e.target.value}))} placeholder="Pricing source / terms" style={input}/>
+          <button disabled={busy||!priceDraft.provider_key.trim()||!priceDraft.model_key.trim()} style={button}>Save price version</button>
+        </form>
+        <p style={{fontSize:11,color:'#68788e'}}>1 USD = 1,000,000 micro-USD. A new rate creates a version; prior usage retains its price snapshot.</p>
+        {modelPrices.map(price=><div key={price.id} style={{padding:'7px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+          <strong>{price.provider_key}/{price.model_key} · {price.is_active?'active':'inactive'}</strong>
+          <span style={{fontSize:12,color:'#68788e'}}>In {price.input_microusd_per_million.toLocaleString()} · Out {price.output_microusd_per_million.toLocaleString()} micro-USD/1M · {new Date(price.effective_at).toLocaleString()}</span>
+        </div>)}
+        {usageSummary?.by_provider_model.map(item=><div key={item.provider_key+'/'+item.model_key} style={{padding:'7px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
+          <span>{item.provider_key}/{item.model_key} · {item.events} events</span>
+          <strong>USD {(item.cost_microusd/1000000).toFixed(6)}</strong>
+        </div>)}
+      </section>
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(145px,1fr))', gap: 10, margin: '18px 0' }}>
         {Object.entries({ Users: overview.users, Workspaces: overview.workspaces, 'Active members': overview.active_memberships, Projects: overview.projects, 'Audit 24h': overview.audit_events_24h, 'Active AI runs': overview.active_creative_runs, 'Active renders': overview.active_render_jobs, 'Input tokens 24h': overview.input_tokens_24h, 'Output tokens 24h': overview.output_tokens_24h }).map(([label, value]) =>
           <article key={label} style={panel}><div style={{ fontSize: 12, color: '#68788e' }}>{label}</div><strong style={{ fontSize: 25 }}>{value}</strong></article>)}

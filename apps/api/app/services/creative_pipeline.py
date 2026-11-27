@@ -132,11 +132,12 @@ class CreativePipeline:
     async def interpret_prompt(
         self, *, input_prompt: str, project_settings: dict[str, Any],
         source_material: list[dict[str, Any]] | None, idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None, route_agent_key: str | None = None,
     ) -> tuple[CreativeBriefOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "prompt_interpreter", CreativeBriefOutput,
             {"input_prompt": input_prompt, "project_settings": project_settings,
-             "source_material": source_material or []}, idempotency_key,
+             "source_material": source_material or []}, idempotency_key, provider_key=provider_key, model_key=model_key, route_agent_key=route_agent_key,
         )
         return output, {
             "agent_key": "prompt_interpreter", "prompt_version": version,
@@ -203,6 +204,7 @@ class CreativePipeline:
     async def regenerate_scene(
         self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
         current_scene: dict[str, Any], revision_instruction: str, idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None, route_agent_key: str | None = None,
     ) -> tuple[StoryboardSceneOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "scene_regenerator", StoryboardSceneOutput,

@@ -236,7 +236,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const result = await api.createMediaGeneration(projectId, {
         media_type: mediaType,
         provider_key: 'gemini',
-        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.1-flash',
+        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
         prompt: mediaPrompt.trim(),
         generation_config: mediaType === 'image'
           ? { aspect_ratio: mediaAspectRatio, image_size: mediaImageSize }

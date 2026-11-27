@@ -6,8 +6,20 @@ export type MediaGenerationApi = {
   model_key: string;
   status: 'queued' | 'processing' | 'cancel_requested' | 'completed' | 'failed' | 'cancelled';
   provider_operation_id?: string | null;
+  provider_operation_status?: 'not_started' | 'submitted' | 'queued' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'unknown';
   error_code?: string | null;
   attempt_count: number;
+  retry_count?: number;
+  max_retries?: number;
+  next_retry_at?: string | null;
+  last_error?: string | null;
+  last_error_class?: string | null;
+  quota_reconciliation_status?: 'pending' | 'complete' | 'reversed' | 'not_required' | 'failed';
+  estimated_provider_cost_microusd?: number | null;
+  operational_cost_microusd?: number | null;
+  quota_debit_microusd?: number | null;
+  economics_status?: 'complete' | 'partial' | 'unpriced';
+  billing_mode?: 'free_personal';
   generation_config?: Record<string, unknown>;
   provider_provenance?: Record<string, unknown>;
   provider_usage?: Record<string, unknown> | null;
@@ -149,7 +161,7 @@ export function createApiClient(options: ApiClientOptions) {
     cancelMediaGeneration: (id: string) =>
       request<{ data: { generation_id: string; status: string } }>(`media-generations/${id}/cancel`, { method: 'POST' }),
     retryMediaGeneration: (id: string, key: string) =>
-      request<{ data: { generation_id: string; status: string } }>(
+      request<{ data: { generation_id: string; status: string; replayed?: boolean; billing_mode?: 'free_personal' } }>(
         `media-generations/${id}/retry`,
         { method: 'POST', headers: { 'Idempotency-Key': key } },
       ),

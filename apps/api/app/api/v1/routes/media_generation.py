@@ -562,7 +562,13 @@ async def save_media_provider_operation(
     await set_rls_subject(db, str(owner))
     result = await db.execute(text("""
         update public.media_generation_jobs
-        set provider_job_id=:operation,provider_operation_status='submitted',updated_at=now()
+        set provider_operation_history=case
+              when provider_job_id is distinct from :operation then
+                provider_operation_history || jsonb_build_array(jsonb_build_object(
+                  'operation_id',:operation,'status','submitted','submitted_at',now()))
+              else provider_operation_history end,
+            provider_job_id=:operation,provider_operation_status='submitted',
+            provider_operation_last_polled_at=null,provider_operation_poll_count=0,updated_at=now()
         where id=:id and worker_id=:worker and status in ('processing','cancel_requested')
           and provider_key='gemini'
         returning id

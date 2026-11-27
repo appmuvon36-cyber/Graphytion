@@ -114,13 +114,39 @@ language sql security definer set search_path='' as $
   where j.id=p_job_id and j.worker_id=p_worker_id
 $;
 
+create or replace function private.graphytion_recover_media_generation_jobs()
+returns table(job_id uuid,job_status text)
+language plpgsql security definer set search_path='' as $
+begin
+  return query
+  update public.media_generation_jobs j set
+    status=case
+      when j.status='cancel_requested' then 'cancelled'
+      when j.attempt_count>=j.max_attempts then 'failed'
+      else 'queued'
+    end,
+    error_code=case
+      when j.status='cancel_requested' then 'CANCELLED_AFTER_WORKER_LEASE_EXPIRED'
+      when j.attempt_count>=j.max_attempts then 'MEDIA_WORKER_LETRIES_EXHAUSTED'
+      else 'MEDIA_WORKER_LEASE_EXPIRED'
+    end,
+    worker_id=null,lease_expires_at=null,
+    completed_at=case when j.status='cancel_requested' or j.attempt_count>=j.max_attempts then now() else null end,
+    updated_at=now()
+  where j.status in ('processing','cancel_requested')
+    and j.lease_expires_at < now()
+  returning j.id,j.status;
+end $;
+
 revoke all on function private.graphytion_claim_media_generation_job(text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_heartbeat_media_generation_job(uuid,text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_media_generation_owner(uuid,text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_media_generation_status(uuid,text) from public,anon,authenticated,service_role;
+revoke all on function private.graphytion_recover_media_generation_jobs() from public,anon,authenticated,service_role;
 grant execute on function private.graphytion_claim_media_generation_job(text) to graphytion_api;
 grant execute on function private.graphytion_heartbeat_media_generation_job(uuid,text) to graphytion_api;
 grant execute on function private.graphytion_media_generation_owner(uuid,text) to graphytion_api;
 grant execute on function private.graphytion_media_generation_status(uuid,text) to graphytion_api;
+grant execute on function private.graphytion_recover_media_generation_jobs() to graphytion_api;
 
 commit;

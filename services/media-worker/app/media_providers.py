@@ -79,15 +79,14 @@ class GeminiMediaProvider:
             timeout=httpx.Timeout(60, connect=15),
         ) as client:
             while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    await self.cancel_interaction(interaction_id)
-                    raise asyncio.CancelledError("GEMINI_INTERACTION_CANCELLED")
                 if asyncio.get_running_loop().time() >= deadline:
                     try:
                         await self.cancel_interaction(interaction_id)
                     except Exception:
                         pass
                     raise TimeoutError("GEMINI_INTERACTION_TIMEOUT")
+                # Read provider state before honoring cancellation so a provider
+                # completion that won the race is preserved as a real artifact.
                 body = await self._get_interaction(interaction_id, client)
                 status = str(body.get("status", "")).lower()
                 if status in self.TERMINAL_STATUSES:
@@ -96,6 +95,21 @@ class GeminiMediaProvider:
                         code = error.get("code") or status.upper()
                         raise RuntimeError(f"GEMINI_INTERACTION_{code}")
                     return body
+                if cancel_event is not None and cancel_event.is_set():
+                    try:
+                        await self.cancel_interaction(interaction_id)
+                    except Exception:
+                        pass
+                    # Cancellation may race with completion. Re-read once before
+                    # reporting cancellation; never discard a completed output.
+                    try:
+                        final_body = await self._get_interaction(interaction_id, client)
+                        final_status = str(final_body.get("status", "")).lower()
+                        if final_status == "completed":
+                            return final_body
+                    except Exception:
+                        pass
+                    raise asyncio.CancelledError("GEMINI_INTERACTION_CANCELLED")
                 if status not in {"in_progress", "queued", "running"}:
                     raise RuntimeError("GEMINI_INTERACTION_STATUS_UNKNOWN")
                 await asyncio.sleep(self.poll_interval)

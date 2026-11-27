@@ -196,12 +196,13 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await api.createMediaGeneration(projectId, {
-        media_type: mediaType, provider_key: 'gemini',
-        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
+        media_type: mediaType,
+        provider_key: mediaType === 'image' ? 'gemini' : 'google_agent_platform',
+        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-flash-preview',
         prompt: mediaPrompt.trim(),
         generation_config: mediaType === 'image'
-          ? { aspect_ratio: mediaAspectRatio }
-          : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds, resolution: mediaResolution },
+          ? { aspect_ratio: mediaAspectRatio, image_size: mediaImageSize }
+          : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds },
       }, crypto.randomUUID());
       setNotice('Media generation ' + result.data.generation_id + ' diterima · ' + result.data.status);
       setMediaPrompt(''); await load();

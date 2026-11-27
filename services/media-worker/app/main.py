@@ -26,8 +26,8 @@ POLL_INTERVAL_SECONDS = max(1, int(os.environ.get("WORKER_POLL_INTERVAL_SECONDS"
 
 async def create_video_thumbnail(video_bytes: bytes) -> bytes:
     process = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1",
-        "-i", "pipe:0", "-frames:v", "1", "-vf", "scale='min(640,iw)':-2",
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0", "-ss", "1", "-frames:v", "1", "-vf", "scale='min(640,iw)':-2",
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

@@ -28,18 +28,43 @@ const redisQueueKey = 'graphytion:render:jobs';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, {connectTimeout: 1500, maxRetriesPerRequest: 1, retryStrategy: (times) => Math.min(times * 500, 5000)}) : null;
 redis?.on('error', (error) => console.warn('render_redis_unavailable_postgres_poll_remains_active', error.message));
 
+function isConnectionRefused(error: unknown, depth = 0): boolean {
+  if (depth > 5 || !error || typeof error !== 'object') return false;
+  const value = error as {code?: unknown; cause?: unknown; errors?: unknown};
+  if (value.code === 'ECONNREFUSED') return true;
+  if (Array.isArray(value.errors) && value.errors.some(item => isConnectionRefused(item, depth + 1))) return true;
+  return isConnectionRefused(value.cause, depth + 1);
+}
+
+const delay = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${workerToken}`);
   if (init.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(new URL(path, apiBaseUrl.endsWith('/') ? apiBaseUrl : apiBaseUrl + '/'), {
-    ...init,
-    headers,
-    cache: 'no-store',
-    signal: init.signal ?? AbortSignal.timeout(30000),
-  });
+  const url = new URL(path, apiBaseUrl.endsWith('/') ? apiBaseUrl : apiBaseUrl + '/');
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        cache: 'no-store',
+        signal: init.signal ?? AbortSignal.timeout(30000),
+      });
+      break;
+    } catch (error) {
+      // ECONNREFUSED means no HTTP server accepted the request. Retry this
+      // transport-only failure; never retry HTTP errors or ambiguous timeouts.
+      if (!isConnectionRefused(error) || attempt === 3) throw error;
+      const waitMs = 250 * (2 ** attempt);
+      console.warn('render_api_connection_refused_retry', {path, attempt: attempt + 1, wait_ms: waitMs});
+      await delay(waitMs);
+    }
+  }
+  if (!response) throw new Error('Graphytion API request did not produce a response');
   const body = await response.json().catch(() => null) as {detail?: string; data?: T} | null;
   if (!response.ok) throw new Error(body?.detail ?? `Graphytion API returned HTTP ${response.status}`);
   return (body && typeof body === 'object' && 'data' in body ? body.data : body) as T;

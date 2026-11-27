@@ -384,3 +384,18 @@ Source-only verification boundary: files are committed after static source revie
 
 
 Runtime verification after quota integration: Railway reports the four remaining services online (Web, API, Media Worker, Render Worker). API deployment fa094f34-c6e9-4351-9184-b904488ec5fa passed its health check. Logs confirm the API-embedded creative worker started, Media Worker and Render Worker heartbeat/claim/recovery endpoints return HTTP 200, and no generation/render jobs were created for verification. This confirms service startup and queue polling, not successful provider generation or completed rendering.
+
+
+## Remaining product blockers — 2026-11-27
+
+The following are deliberately NOT marked complete:
+
+- Image and video generation: the existing project asset lifecycle supports upload, private Storage, signed download, and deletion; voiceover/TTS generation has a worker lifecycle. Dedicated image/video generation provider adapters and persisted generation-job workflows are still missing.
+- Dynamic Agent Tool Registry: the allowlisted creative tool registry and scoped authorization are present in code, but a persistent admin-managed registration/publication lifecycle for arbitrary tools is not complete. No model-generated executable code is allowed.
+- Brand Kit logo rendering: logo asset ownership validation exists, and color/typography/background tokens are applied to supported composition props. The logo asset is not yet injected as a rendered composition clip. Template snapshots deliberately omit project-private media-bound clips so they can be reused without leaking another project's asset IDs.
+- TTS cancellation: queued voiceover jobs can be cancelled and their quota released. A running external TTS provider request is not forcibly interrupted; the API rejects cancellation while it is running to avoid a false cancelled state with provider cost incurred.
+- Quota provisioning: migration and accounting functions are deployed, but Supabase currently contains zero workspaces, zero quota accounts and zero TTS/render operation rates. No customer workspace can be provisioned until actual workspace records exist and Super Admin configures the applicable operational rates.
+- The current API default model is gpt-4.1-mini. OpenAI's current model documentation marks it deprecated. The price-book entry is present for compatibility, but a supported model migration and matching provider configuration remain required before long-term production use.
+- Runtime evidence covers successful service startup, API-embedded creative worker startup, and Media/Render Worker heartbeat/claim/recovery polling. No actual user generation, TTS, image/video, or render job was executed, per the no-customer/no-external-test instruction.
+
+These blockers prevent declaring Graphytion fully complete. Continue implementation in the existing four-service architecture; do not add services or databases to close them.

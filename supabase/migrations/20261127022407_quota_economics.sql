@@ -27,7 +27,7 @@ create table if not exists public.quota_reservations (
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique(workspace_id,idempotency_key),
+  unique(workspace_id,idempotency_key)
 );
 create index if not exists quota_reservations_resource_idx
   on public.quota_reservations(resource_type,resource_id,created_at desc);

@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
@@ -257,27 +257,49 @@ async def retry_media_generation(
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
     row = (await db.execute(text("""
-        select id,project_id,workspace_id,media_type,status,provider_job_id,provider_operation_status,quota_reservation_id
+        select id,project_id,workspace_id,media_type,status,provider_job_id,provider_operation_status,
+               quota_reservation_id,idempotency_key
         from public.media_generation_jobs where id=:id for update
     """), {"id": generation_id})).mappings().first()
     if row is None:
         raise HTTPException(404, "Media generation not found")
     await _scope(db, row["project_id"], actor, "project.update")
+    # The job's existing idempotency key is rotated to the retry request key.
+    # A repeated request therefore replays the same job even after it has
+    # moved from queued to processing/completed.
+    if row["idempotency_key"] == idempotency_key:
+        return {"data": {"generation_id": str(generation_id), "status": row["status"],
+                         "replayed": True, "billing_mode": "free_personal"}}
     if row["status"] != "failed":
         raise HTTPException(409, "Only failed media generation jobs can be retried")
-    if row["provider_job_id"]:
-        raise HTTPException(409, "The previous provider operation remains linked; resolve its provider cost and reconciliation before starting a new generation")
+    if row["provider_job_id"] and row["provider_operation_status"] not in {"failed", "cancelled"}:
+        raise HTTPException(409, "The previous provider operation is not confirmed terminal; retry is blocked to prevent duplicate generation")
+    existing_key = await db.scalar(text("""
+        select id from public.media_generation_jobs
+        where workspace_id=:workspace and idempotency_key=:key and id<>:id
+    """), {"workspace": row["workspace_id"], "key": idempotency_key, "id": generation_id})
+    if existing_key is not None:
+        raise HTTPException(409, "Idempotency-Key has already been used by another media generation")
     # Free personal mode never creates a new quota reservation. Preserve a
     # pre-existing reservation reference only for legacy jobs pending cost resolution.
     reservation = row["quota_reservation_id"]
-    await db.execute(text("""
-        update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
-          attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
-          quota_reservation_id=:reservation,quota_debit_microusd=case when :reservation is null then 0 else quota_debit_microusd end,
-          quota_reconciliation_status=case when :reservation is null then 'not_required' else 'pending' end,
-          provider_operation_status='not_started',completed_at=null,updated_at=now()
-        where id=:id and status='failed'
-    """), {"id": generation_id, "reservation": reservation})
+    try:
+        await db.execute(text("""
+            update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
+              attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
+              quota_reservation_id=:reservation,quota_debit_microusd=case when :reservation is null then 0 else quota_debit_microusd end,
+              quota_reconciliation_status=case when :reservation is null then 'not_required' else 'pending' end,
+              provider_operation_history=provider_operation_history || case when provider_job_id is null then '[]'::jsonb
+                else jsonb_build_array(jsonb_build_object('operation_id',provider_job_id,
+                  'terminal_status',provider_operation_status,'archived_at',now())) end,
+              provider_job_id=null,provider_operation_status='not_started',
+              provider_operation_last_polled_at=null,provider_operation_poll_count=0,
+              idempotency_key=:key,completed_at=null,updated_at=now()
+            where id=:id and status='failed'
+        """), {"id": generation_id, "reservation": reservation, "key": idempotency_key})
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "Idempotency-Key has already been used by another media generation") from exc
     await db.execute(text("""
         insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
         values(:actor,:workspace,'media_generation.retried','media_generation',:id,:request)
@@ -510,7 +532,8 @@ async def heartbeat_media_generation_job(generation_id: UUID, request: Request,
                          {"id": generation_id, "worker": worker_id})
         await db.execute(text("""
             update public.media_generation_jobs
-            set provider_operation_last_polled_at=case when provider_job_id is not null then now() else provider_operation_last_polled_at end,
+            set provider_operation_status=case when provider_job_id is not null then 'in_progress' else provider_operation_status end,
+                provider_operation_last_polled_at=case when provider_job_id is not null then now() else provider_operation_last_polled_at end,
                 provider_operation_poll_count=provider_operation_poll_count + case when provider_job_id is not null then 1 else 0 end,
                 updated_at=now()
             where id=:id and worker_id=:worker
@@ -617,8 +640,10 @@ async def complete_media_generation_cancel(generation_id: UUID, request: Request
     if row is None or row["status"] != "cancel_requested":
         raise HTTPException(409, "Media cancellation is no longer pending")
     await db.execute(text("""
-        update public.media_generation_jobs set status='cancelled',completed_at=now(),
-          worker_id=null,lease_expires_at=null,updated_at=now() where id=:id
+        update public.media_generation_jobs set status='cancelled',provider_operation_status=case
+            when provider_job_id is not null then 'cancelled' else provider_operation_status end,
+          provider_operation_last_polled_at=case when provider_job_id is not null then now() else provider_operation_last_polled_at end,
+          completed_at=now(),worker_id=null,lease_expires_at=null,updated_at=now() where id=:id
     """), {"id": generation_id})
     # Keep the reservation open: the provider may continue processing after the
     # client connection is cancelled, so its billable outcome is not yet known.

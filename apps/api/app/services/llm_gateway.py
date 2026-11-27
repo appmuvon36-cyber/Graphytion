@@ -110,10 +110,22 @@ class OpenAIChatCompletionsAdapter:
                         headers=headers,
                         json=body,
                     )
-                if response.status_code == 429 or response.status_code >= 500:
+                if response.status_code in {408, 425, 429} or response.status_code >= 500:
                     if attempt < 2:
-                        await asyncio.sleep(0.5 * (2**attempt))
+                        retry_after = response.headers.get("Retry-After", "").strip()
+                        try:
+                            delay = min(max(float(retry_after), 0.0), 30.0) if retry_after else 0.5 * (2**attempt)
+                        except ValueError:
+                            delay = 0.5 * (2**attempt)
+                        await asyncio.sleep(delay)
                         continue
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "code": "LLM_PROVIDER_TEMPORARILY_UNAVAILABLE",
+                            "message": f"LLM provider remained unavailable after bounded retries (HTTP {response.status_code}).",
+                        },
+                    )
                 if response.is_error:
                     raise HTTPException(
                         status_code=502,

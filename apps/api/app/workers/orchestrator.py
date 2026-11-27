@@ -208,7 +208,7 @@ async def _load_envelope(db: AsyncSession, step: dict[str, Any]) -> tuple[StepEn
 async def _finish_without_child(
     db: AsyncSession, step: dict[str, Any], outputs: dict[str, Any]
 ) -> None:
-    await db.execute(
+    updated = await db.execute(
         text("""
             update public.production_run_steps
                set status='completed',output_refs=cast(:outputs as jsonb),
@@ -222,6 +222,8 @@ async def _finish_without_child(
         {"outputs": _canonical(outputs), "step": step["id"], "worker": WORKER_ID,
          "run": step["production_run_id"]},
     )
+    if updated.rowcount != 1:
+        raise StepCancelledError("Production Run was cancelled or dispatcher lease was lost")
     await _append_event(
         db, step["production_run_id"], "step.completed",
         {"step_id": str(step["id"]), "step_key": step["step_key"], "output_refs": outputs},
@@ -711,7 +713,7 @@ async def _fail_step(
                    available_at=case when :retry then now()+make_interval(secs=>:delay) else available_at end,
                    error_code=:code,error_message_safe=:message,last_error_class=:class,
                    last_error_at=now(),completed_at=case when :retry then null else now() end,
-                   external_operation_state=case when :cancelled then 'failed'
+                   external_operation_state=case when :cancelled then 'not_started'
                      when external_operation_state in ('submitted','reconciling','unknown')
                      then 'unknown' else 'failed' end,updated_at=now()
              where id=:step and worker_id=:worker
@@ -720,7 +722,7 @@ async def _fail_step(
             "retry": retry, "delay": delay,
             "code": "RUN_CANCELLED" if cancelled else ("STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED"),
             "message": safe_message, "class": "cancelled" if cancelled else ("transient" if retry else "permanent"),
-            "step": step["id"], "worker": WORKER_ID,
+            "step": step["id"], "worker": WORKER_ID, "cancelled": cancelled,
         })
         await _append_event(db, current["production_run_id"],
             "step.cancelled" if cancelled else ("step.retry" if retry else "step.failed"), {

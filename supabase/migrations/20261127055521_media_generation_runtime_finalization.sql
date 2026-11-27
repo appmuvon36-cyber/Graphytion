@@ -229,7 +229,7 @@ end $$;
 
 create or replace function private.graphytion_pending_media_reconciliation_jobs(p_limit integer default 50)
 returns setof public.media_generation_jobs
-language sql security definer set search_path='' as $
+language sql security definer set search_path='' as $$
   select j.* from public.media_generation_jobs j
   where j.status in ('completed','failed','cancelled') and j.economics_status in ('partial','unpriced')
   order by j.completed_at asc

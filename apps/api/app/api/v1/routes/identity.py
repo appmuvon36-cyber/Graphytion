@@ -296,9 +296,12 @@ async def signup(payload: AuthSignup, request: Request, db: AsyncSession = Db):
 
 @router.post("/auth/login", dependencies=[Depends(auth_rate_limit), Depends(require_bff)])
 async def login(payload: AuthLogin, request: Request, db: AsyncSession = Db):
+    # Authenticate with Supabase first; only then establish the verified subject
+    # and runtime RLS role before writing the successful-login audit event.
     result = await supabase_auth.login(payload.email, payload.password)
     auth_user = result.get("user") or {}
     if auth_user.get("id"):
+        await set_rls_subject(db, str(auth_user["id"]))
         await db.execute(
             text("""
                 insert into public.audit_logs(

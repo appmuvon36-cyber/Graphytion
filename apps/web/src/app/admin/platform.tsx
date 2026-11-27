@@ -18,8 +18,7 @@ type RenderSettings={max_concurrent_jobs:number;lease_seconds:number;max_attempt
 type MotionControl={component_key:string;component_version:string;category:string;enabled:boolean;reason?:string|null};
 type AdminRenderJob={id:string;project_name:string;workspace_name:string;status:string;progress_percent:number;worker_id?:string|null;lease_expires_at?:string|null;render_profile?:string|null;attempt_count:number;latest_attempt_status?:string|null};
 type AdminMediaJob={id:string;project_name:string;workspace_name:string;status:string;provider_key:string;model_key:string;voice_key:string;worker_id?:string|null;lease_expires_at?:string|null;attempt_count:number;max_attempts:number;error_code?:string|null;asset_id?:string|null};
-type ModelPrice = { id:string; provider_key:string; model_key:string; input_microusd_per_million:number; output_microusd_per_million:number; effective_at:string; is_active:boolean; notes?:string|null };
-type UsageSummary = { period_days:number; totals:{input_tokens:number;output_tokens:number;priced_cost_microusd:number;priced_events:number;unpriced_events:number}; by_provider_model:Array<{provider_key:string;model_key:string;input_tokens:number;output_tokens:number;cost_microusd:number;events:number}> };
+type UsageSummary = { period_days:number; totals:{input_tokens:number;output_tokens:number;events:number}; by_provider_model:Array<{provider_key:string;model_key:string;input_tokens:number;output_tokens:number;events:number}> };
 type WorkerStatus={worker_id:string;worker_type:'media'|'render';hostname:string;version?:string|null;status:string;runtime_status:'online'|'stale';last_seen_at:string;metadata?:Record<string,unknown>};
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3001/api';
@@ -34,10 +33,7 @@ export default function PlatformAdmin() {
   const [password, setPassword] = useState('');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
-  const [modelPrices,setModelPrices]=useState<ModelPrice[]>([]);
   const [usageSummary,setUsageSummary]=useState<UsageSummary|null>(null);
-  const [pricingError,setPricingError]=useState('');
-  const [priceDraft,setPriceDraft]=useState({provider_key:'openai',model_key:'gpt-4.1-mini',input_microusd_per_million:0,output_microusd_per_million:0,notes:''});
   const [renderProfiles,setRenderProfiles]=useState<RenderProfile[]>([]);
   const [renderSettings,setRenderSettings]=useState<RenderSettings>({max_concurrent_jobs:2,lease_seconds:300,max_attempts:3,max_output_bytes:536870912});
   const [motionComponents,setMotionComponents]=useState<MotionControl[]>([]);
@@ -52,13 +48,6 @@ export default function PlatformAdmin() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
-  const [quotaLimit,setQuotaLimit]=useState('');
-  const [quotaStart,setQuotaStart]=useState('');
-  const [quotaEnd,setQuotaEnd]=useState('');
-  const [quotaStatus,setQuotaStatus]=useState<'active'|'paused'>('active');
-  const [quotaSummary,setQuotaSummary]=useState<{consumed_microusd:number;reserved_microusd:number;available_microusd:number}|null>(null);
-  const [voiceoverRate,setVoiceoverRate]=useState('');
-  const [renderRate,setRenderRate]=useState('');
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminRecord[]>([]);
   const [newAdminUserId, setNewAdminUserId] = useState('');
@@ -100,14 +89,10 @@ export default function PlatformAdmin() {
       ]);
       setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data);
       setDenied(false);
-      const [pricesResult, usageResult] = await Promise.allSettled([
-        request<{data:ModelPrice[]}>('/admin/providers/model-prices'),
-        request<{data:UsageSummary}>('/admin/usage?days=30'),
-      ]);
-      if (pricesResult.status === 'fulfilled') { setModelPrices(pricesResult.value.data); setPricingError(''); }
-      else { setModelPrices([]); setPricingError('Usage economics migration is not yet active or the pricing API is unavailable.'); }
-      if (usageResult.status === 'fulfilled') setUsageSummary(usageResult.value.data);
-      else setUsageSummary(null);
+      try {
+        const usageResult = await request<{data:UsageSummary}>('/admin/usage?days=30');
+        setUsageSummary(usageResult.data);
+      } catch { setUsageSummary(null); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
   }, [page, query, request]);
@@ -140,40 +125,6 @@ export default function PlatformAdmin() {
       const result = await request<{data: Member[]}>('/admin/workspaces/' + workspaceId + '/members');
       setMembers(result.data);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Gagal memuat membership'); }
-  }
-
-  async function loadQuota(workspaceId:string) {
-    setSelectedWorkspace(workspaceId); setError('');
-    try {
-      const result=await request<{data:{quota_limit_microusd:number;period_start:string;period_end:string;status:'active'|'paused';consumed_microusd:number;reserved_microusd:number;available_microusd:number}}>('/admin/workspaces/'+workspaceId+'/quota');
-      setQuotaLimit(String(result.data.quota_limit_microusd));
-      setQuotaStart(new Date(result.data.period_start).toISOString().slice(0,16));
-      setQuotaEnd(new Date(result.data.period_end).toISOString().slice(0,16));
-      setQuotaStatus(result.data.status);
-      setQuotaSummary({consumed_microusd:result.data.consumed_microusd,reserved_microusd:result.data.reserved_microusd,available_microusd:result.data.available_microusd});
-    } catch (cause) { const start=new Date(); const end=new Date(start.getTime()+30*24*60*60*1000); setQuotaLimit(''); setQuotaStart(start.toISOString().slice(0,16)); setQuotaEnd(end.toISOString().slice(0,16)); setQuotaStatus('active'); setQuotaSummary(null); setNotice(cause instanceof Error?cause.message:'Quota account belum dikonfigurasi.'); }
-  }
-
-  async function saveQuota(event:React.FormEvent) {
-    event.preventDefault(); if(!selectedWorkspace)return;
-    setBusy(true);setError('');
-    try {
-      const result=await request<{data:{consumed_microusd:number;reserved_microusd:number;quota_limit_microusd:number;period_start:string;period_end:string;status:'active'|'paused'}}>('/admin/workspaces/'+selectedWorkspace+'/quota',{
-        method:'PUT',body:JSON.stringify({quota_limit_microusd:Number(quotaLimit),period_start:new Date(quotaStart).toISOString(),period_end:new Date(quotaEnd).toISOString(),status:quotaStatus})
-      });
-      setQuotaSummary({consumed_microusd:result.data.consumed_microusd,reserved_microusd:result.data.reserved_microusd,available_microusd:result.data.quota_limit_microusd-result.data.consumed_microusd-result.data.reserved_microusd});
-      setNotice('Workspace quota account saved.');
-    } catch(cause){setError(cause instanceof Error?cause.message:'Quota update failed');}
-    finally{setBusy(false);}
-  }
-
-  async function saveQuotaRate(operation:string,rate:string,unit:string) {
-    setBusy(true);setError('');
-    try {
-      await request('/admin/quota/operation-prices/'+operation,{method:'PUT',body:JSON.stringify({microusd_per_unit:Number(rate),unit_name:unit,notes:'Configured through Graphytion platform admin'})});
-      setNotice('Quota operation rate saved: '+operation);
-    } catch(cause){setError(cause instanceof Error?cause.message:'Quota operation rate update failed');}
-    finally{setBusy(false);}
   }
 
   async function updateMemberRole(member: Member, role: string) {
@@ -309,22 +260,6 @@ export default function PlatformAdmin() {
   }
 
 
-  async function saveModelPrice(event:React.FormEvent) {
-    event.preventDefault();setBusy(true);setError('');setNotice('');
-    try {
-      await request('/admin/providers/model-prices/'+encodeURIComponent(priceDraft.provider_key)+'/'+encodeURIComponent(priceDraft.model_key),{
-        method:'PUT',body:JSON.stringify({
-          input_microusd_per_million:priceDraft.input_microusd_per_million,
-          output_microusd_per_million:priceDraft.output_microusd_per_million,
-          notes:priceDraft.notes.trim()||null
-        })
-      });
-      setNotice('Provider model price version saved and audited.');
-      await load();
-    } catch(cause) { setError(cause instanceof Error?cause.message:'Provider model price update failed'); }
-    finally { setBusy(false); }
-  }
-
   async function logout() {
     try { await api.request('/auth/logout', { method: 'POST' }); } catch { /* session may already be expired */ }
     setAuthenticated(false); setOverview(null); setUsers([]); setWorkspaces([]); setProjects([]); setAudit([]);
@@ -354,32 +289,16 @@ export default function PlatformAdmin() {
       <section style={panel}><h2 style={{marginTop:0}}>AI provider configuration</h2>{llmStatus&&<div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}><div><strong>{llmStatus.generation_ready?'Generation provider ready':'Provider configuration required'}</strong><p style={{fontSize:12,color:'#68788e',margin:'4px 0'}}>Model: {llmStatus.configured_model} · Available providers: {llmStatus.available_providers.join(', ')||'none'}</p></div><span style={{fontSize:12,color:llmStatus.generation_ready?'#176b45':'#a15b00'}}>{llmStatus.openai_credential_configured?'OPENAI_API_KEY configured':'OPENAI_API_KEY missing'}</span></div>}</section>
 
       <section style={panel}>
-        <h2>AI usage economics · actual provider usage</h2>
-        {pricingError&&<p role="status" style={{fontSize:12,color:'#a15b00'}}>{pricingError}</p>}
-        <p style={{fontSize:13,color:'#68788e'}}>Biaya dihitung dari token aktual provider dan price book versi efektif. Event tanpa harga atau metadata token lengkap tetap ditandai unpriced, bukan dianggap gratis.</p>
-        {usageSummary&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
+        <h2>AI usage · personal diagnostics</h2>
+        <p style={{fontSize:13,color:'#68788e'}}>Pemakaian token untuk diagnosis teknis. Graphytion personal tidak menggunakan quota, wallet, price book, atau tagihan pengguna.</p>
+        {usageSummary&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10}}>
           <div><strong>{usageSummary.totals.input_tokens.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Input tokens · 30 hari</div></div>
           <div><strong>{usageSummary.totals.output_tokens.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Output tokens · 30 hari</div></div>
-          <div><strong>USD {(usageSummary.totals.priced_cost_microusd/1000000).toFixed(6)}</strong><div style={{fontSize:11,color:'#68788e'}}>Priced provider cost</div></div>
-          <div><strong>{usageSummary.totals.unpriced_events}</strong><div style={{fontSize:11,color:'#68788e'}}>Unpriced events · {usageSummary.totals.priced_events} priced</div></div>
+          <div><strong>{usageSummary.totals.events.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Usage events</div></div>
         </div>}
-        <h3>Versioned provider price book</h3>
-        <form onSubmit={saveModelPrice} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
-          <input aria-label="Provider key" value={priceDraft.provider_key} onChange={e=>setPriceDraft(v=>({...v,provider_key:e.target.value}))} placeholder="openai" style={input}/>
-          <input aria-label="Model key" value={priceDraft.model_key} onChange={e=>setPriceDraft(v=>({...v,model_key:e.target.value}))} placeholder="gpt-4.1-mini" style={input}/>
-          <label style={{fontSize:11}}>Input micro-USD / 1M tokens<input aria-label="Input micro USD per million tokens" type="number" min={0} step={1} value={priceDraft.input_microusd_per_million} onChange={e=>setPriceDraft(v=>({...v,input_microusd_per_million:Number(e.target.value)}))} style={input}/></label>
-          <label style={{fontSize:11}}>Output micro-USD / 1M tokens<input aria-label="Output micro USD per million tokens" type="number" min={0} step={1} value={priceDraft.output_microusd_per_million} onChange={e=>setPriceDraft(v=>({...v,output_microusd_per_million:Number(e.target.value)}))} style={input}/></label>
-          <input aria-label="Price notes" value={priceDraft.notes} onChange={e=>setPriceDraft(v=>({...v,notes:e.target.value}))} placeholder="Pricing source / terms" style={input}/>
-          <button disabled={busy||!priceDraft.provider_key.trim()||!priceDraft.model_key.trim()} style={button}>Save price version</button>
-        </form>
-        <p style={{fontSize:11,color:'#68788e'}}>1 USD = 1,000,000 micro-USD. A new rate creates a version; prior usage retains its price snapshot.</p>
-        {modelPrices.map(price=><div key={price.id} style={{padding:'7px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
-          <strong>{price.provider_key}/{price.model_key} · {price.is_active?'active':'inactive'}</strong>
-          <span style={{fontSize:12,color:'#68788e'}}>In {price.input_microusd_per_million.toLocaleString()} · Out {price.output_microusd_per_million.toLocaleString()} micro-USD/1M · {new Date(price.effective_at).toLocaleString()}</span>
-        </div>)}
         {usageSummary?.by_provider_model.map(item=><div key={item.provider_key+'/'+item.model_key} style={{padding:'7px 0',borderTop:'1px solid #edf0f5',display:'flex',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
-          <span>{item.provider_key}/{item.model_key} · {item.events} events</span>
-          <strong>USD {(item.cost_microusd/1000000).toFixed(6)}</strong>
+          <span>{item.provider_key}/{item.model_key}</span>
+          <span style={{fontSize:12,color:'#68788e'}}>{item.events} events · {item.input_tokens.toLocaleString()} in / {item.output_tokens.toLocaleString()} out</span>
         </div>)}
       </section>
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(145px,1fr))', gap: 10, margin: '18px 0' }}>
@@ -464,8 +383,8 @@ export default function PlatformAdmin() {
           <div><div style={{fontSize:12,color:'#68788e'}}>Worker: {job.worker_id||'queued'}<br/>{job.lease_expires_at?'Lease '+new Date(job.lease_expires_at).toLocaleTimeString():'No active lease'}</div>{job.status==='failed'&&<button disabled={busy} onClick={()=>void retryOperationalJob('render',job.id)} style={{...button,marginTop:6}}>Retry job</button>}</div>
         </div>)}
       </section>
-      <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button><button onClick={() => void loadQuota(workspace.id)} style={{...button,background:'#eaf3ff',color:'#173f72'}}>Quota</button></div></div>)}
-        {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{quotaStart&&quotaEnd&&<div style={{marginTop:16,paddingTop:14,borderTop:'1px solid #dce3ed'}}><h3>Quota · {workspaces.find(w=>w.id===selectedWorkspace)?.name}</h3>{quotaSummary&&<p style={{fontSize:12,color:'#68788e'}}>Consumed: {quotaSummary.consumed_microusd} µUSD · Reserved: {quotaSummary.reserved_microusd} µUSD · Available: {quotaSummary.available_microusd} µUSD</p>}<form onSubmit={saveQuota} style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:8}}><label style={{fontSize:12}}>Quota limit (µUSD)<input value={quotaLimit} onChange={e=>setQuotaLimit(e.target.value)} type="number" min="1" required style={input}/></label><label style={{fontSize:12}}>Period start<input value={quotaStart} onChange={e=>setQuotaStart(e.target.value)} type="datetime-local" required style={input}/></label><label style={{fontSize:12}}>Period end<input value={quotaEnd} onChange={e=>setQuotaEnd(e.target.value)} type="datetime-local" required style={input}/></label><label style={{fontSize:12}}>Status<select value={quotaStatus} onChange={e=>setQuotaStatus(e.target.value as 'active'|'paused')} style={input}><option value="active">Active</option><option value="paused">Paused</option></select></label><button disabled={busy} style={button}>Save quota account</button></form><div style={{marginTop:14,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:8}}><label style={{fontSize:12}}>TTS rate / 1,000 chars (µUSD)<input type="number" min="1" value={voiceoverRate} onChange={e=>setVoiceoverRate(e.target.value)} style={input}/><button type="button" disabled={busy} onClick={()=>void saveQuotaRate('voiceover_per_1000_chars',voiceoverRate,'1000 characters')} style={{...button,marginTop:6}}>Save TTS rate</button></label><label style={{fontSize:12}}>Render rate / second (µUSD)<input type="number" min="1" value={renderRate} onChange={e=>setRenderRate(e.target.value)} style={input}/><button type="button" disabled={busy} onClick={()=>void saveQuotaRate('render_per_second',renderRate,'second')} style={{...button,marginTop:6}}>Save render rate</button></label></div></div>}{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option><option value="billing">Billing</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
+      <section style={panel}><h2>Workspace administration</h2>{workspaces.map(workspace => <div key={workspace.id} style={{ padding: '10px 0', borderTop: '1px solid #edf0f5', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{workspace.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{workspace.slug} · {workspace.active_members} active members · {workspace.projects} projects · owner {workspace.owner_user_id}</div></div><div style={{display:'flex',gap:8,flexWrap:'wrap'}}><button onClick={() => void loadMembers(workspace.id)} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Manage members</button></div></div>)}
+        {selectedWorkspace && <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #dce3ed' }}><h3>Membership · {workspaces.find(w => w.id === selectedWorkspace)?.name}</h3>{{members.map(member => <div key={member.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{member.display_name || member.user_id}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{member.status} · {member.role}</div></div><div style={{ display: 'flex', gap: 8 }}><select aria-label={'Role ' + member.user_id} value={member.role} disabled={member.role === 'owner' || busy} onChange={event => void updateMemberRole(member, event.target.value)} style={{ ...input, width: 130 }}><option value="admin">Admin</option><option value="editor">Editor</option><option value="member">Member</option><option value="viewer">Viewer</option></select>{member.role !== 'owner' && member.status === 'active' && <button disabled={busy} onClick={() => void removeMember(member)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Remove</button>}</div></div>)}</div>}
       </section>
       <section style={panel}><h2>Invitation administration</h2>{invitations.filter(inv => !inv.accepted_at && !inv.cancelled_at).map(invitation => <div key={invitation.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{invitation.email}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{invitation.workspace_name} · {invitation.role} · {invitation.delivery_status} · expires {new Date(invitation.expires_at).toLocaleString()}</div></div><button disabled={busy} onClick={() => void cancelInvitation(invitation)} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Cancel</button></div>)}</section>
       <section style={panel}><h2>Project oversight</h2>{projects.map(project => <div key={project.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid #edf0f5', flexWrap: 'wrap' }}><div><strong>{project.name}</strong><div style={{ fontSize: 12, color: '#68788e' }}>{project.workspace_name} · {project.production_mode} · {project.status}</div></div>{project.status === 'archived' ? <button disabled={busy} onClick={() => void updateProjectStatus(project, 'draft')} style={{ ...button, background: '#edf3f9', color: '#173f72' }}>Restore</button> : <button disabled={busy || project.status === 'deleted'} onClick={() => void updateProjectStatus(project, 'archived')} style={{ ...button, background: '#fff1f0', color: '#b42318' }}>Archive</button>}</div>)}</section>

@@ -322,3 +322,45 @@ async def cancel_production_workflow(
     """), {"run": run_id, "payload": json.dumps({"requested_by": str(actor)})})
     await db.commit()
     return {"data": {"run_id": str(run_id), "status": "cancel_requested"}}
+
+
+class StepComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    output_refs: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/creative-runs/{run_id}/steps/{step_id}/complete")
+async def complete_production_step(
+    run_id: UUID, step_id: UUID, payload: StepComplete, claims: AuthenticatedClaims,
+    request: Request, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    run = await _run_scope(db, run_id, actor, "project.update")
+    ready = await db.scalar(text("""
+        select not exists (
+          select 1 from public.production_run_step_dependencies d
+          join public.production_run_steps p on p.id=d.depends_on_step_id
+          where d.step_id=:step and p.status<>'completed'
+        )
+    """), {"step": step_id})
+    if not ready:
+        raise HTTPException(409, "Step dependencies are not complete")
+    row = (await db.execute(text("""
+        update public.production_run_steps
+        set status='completed',output_refs=cast(:outputs as jsonb),
+            completed_at=now(),updated_at=now()
+        where id=:step and production_run_id=:run and workspace_id=:workspace
+          and status in ('ready','running') and child_job_id is null
+        returning id,step_key
+    """), {"outputs": json.dumps(payload.output_refs), "step": step_id,
+           "run": run_id, "workspace": run["workspace_id"]})).mappings().first()
+    if row is None:
+        raise HTTPException(409, "Only an active step without a child job can be completed manually")
+    await db.execute(text("""
+        insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
+        values(:run,'step.completed',cast(:payload as jsonb),
+          (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
+    """), {"run": run_id, "payload": json.dumps({"step_id": str(step_id), "step_key": row["step_key"], "completed_by": str(actor), "output_refs": payload.output_refs})})
+    summary = await db.scalar(text("select private.graphytion_sync_production_run(:run)"), {"run": run_id})
+    await db.commit()
+    return {"data": {"step_id": str(step_id), "status": "completed", "state": summary}}

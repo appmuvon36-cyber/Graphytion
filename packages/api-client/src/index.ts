@@ -1,4 +1,4 @@
-import type { RenderJobApi, ConversationThreadApi, ConversationMessageApi, MemoryItemApi } from '@graphytion/contracts';
+import type { RenderJobApi, ConversationThreadApi, ConversationMessageApi, MemoryItemApi, ProductionWorkflowApi, ProductionWorkflowStepDefinitionApi } from '@graphytion/contracts';
 
 export type MediaGenerationApi = {
   id: string;
@@ -45,12 +45,16 @@ export type MediaGenerationCreate = {
   model_key: string;
   prompt: string;
   generation_config?: Record<string, unknown>;
+  production_run_id?: string;
+  parent_step_id?: string;
 };
 
 export type RenderCreateRequestApi = {
   snapshot: unknown;
   render_profile_id?: string | null;
   composition_version?: string;
+  production_run_id?: string;
+  parent_step_id?: string;
 };
 
 export type RenderCreateResponseApi = {
@@ -226,5 +230,25 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
     deleteMemory: (memoryId: string) => request<void>(`memories/${memoryId}`, { method: 'DELETE' }),
+    getProductionWorkflow: (runId: string) =>
+      request<{ data: ProductionWorkflowApi }>(`creative-runs/${runId}/workflow`),
+    createProductionWorkflow: (runId: string, steps: ProductionWorkflowStepDefinitionApi[]) =>
+      request<{ data: { run_id: string; steps: number; state: Record<string, unknown>; replayed: boolean } }>(
+        `creative-runs/${runId}/workflow`, { method: 'POST', body: JSON.stringify({ steps }) },
+      ),
+    approveProductionStep: (runId: string, stepId: string) =>
+      request<{ data: { step_id: string; status: string } }>(`creative-runs/${runId}/steps/${stepId}/approve`, { method: 'POST' }),
+    completeProductionStep: (runId: string, stepId: string, output_refs: Record<string, unknown> = {}) =>
+      request<{ data: { step_id: string; status: string; state: Record<string, unknown> } }>(
+        `creative-runs/${runId}/steps/${stepId}/complete`, { method: 'POST', body: JSON.stringify({ output_refs }) },
+      ),
+    retryProductionStep: (runId: string, stepId: string) =>
+      request<{ data: { step_id: string; status: string; attempt_count: number } }>(`creative-runs/${runId}/steps/${stepId}/retry`, { method: 'POST' }),
+    attachProductionChild: (runId: string, stepId: string, child_type: 'agent_task'|'media_generation'|'audio_generation'|'render_job', child_job_id: string) =>
+      request<{ data: { step_id: string; child_job_type: string; child_job_id: string; state: Record<string, unknown> } }>(
+        `creative-runs/${runId}/steps/${stepId}/attach-child`, { method: 'POST', body: JSON.stringify({ child_type, child_job_id }) },
+      ),
+    cancelProductionWorkflow: (runId: string) =>
+      request<{ data: { run_id: string; status: string } }>(`creative-runs/${runId}/cancel-workflow`, { method: 'POST' }),
   };
 }

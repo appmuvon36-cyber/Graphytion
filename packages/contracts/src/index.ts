@@ -287,3 +287,39 @@ export const MemoryItemApiSchema = z.object({
 export type ConversationThreadApi = z.infer<typeof ConversationThreadApiSchema>;
 export type ConversationMessageApi = z.infer<typeof ConversationMessageApiSchema>;
 export type MemoryItemApi = z.infer<typeof MemoryItemApiSchema>;
+
+
+export const ProductionWorkflowStepApiSchema = z.object({
+  id: UUID, step_key: z.string(), step_type: z.enum([
+    'creative','agent','media_generation','asset_persistence','voiceover','audio_processing',
+    'subtitle','timeline','composition','render','quality_check','delivery',
+  ]),
+  status: z.enum(['pending','ready','running','waiting_approval','completed','failed','cancelled']),
+  input_refs: z.record(z.string(),z.unknown()), output_refs: z.record(z.string(),z.unknown()),
+  config: z.record(z.string(),z.unknown()), requires_approval: z.boolean(),
+  approved_by: UUID.nullable(), approved_at: Timestamp.nullable(),
+  attempt_count: z.number().int(), max_attempts: z.number().int(),
+  available_at: Timestamp, timeout_seconds: z.number().int(),
+  started_at: Timestamp.nullable(), completed_at: Timestamp.nullable(),
+  error_code: z.string().nullable(), error_message_safe: z.string().nullable(),
+  child_job_type: z.enum(['agent_task','media_generation','audio_generation','render_job']).nullable(),
+  child_job_id: UUID.nullable(), created_at: Timestamp, updated_at: Timestamp,
+  dependencies: z.array(z.object({step_id:UUID,step_key:z.string()}).strict()),
+}).strict();
+export type ProductionWorkflowStepApi = z.infer<typeof ProductionWorkflowStepApiSchema>;
+export type ProductionWorkflowStepDefinitionApi = {
+  key: string;
+  step_type: ProductionWorkflowStepApi['step_type'];
+  depends_on?: string[];
+  input_refs?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  requires_approval?: boolean;
+  max_attempts?: number;
+  timeout_seconds?: number;
+};
+export type ProductionWorkflowApi = {
+  run_id: string;
+  summary: Record<string, unknown> | null;
+  steps: ProductionWorkflowStepApi[];
+  events: Array<{event_type:string;event_payload:Record<string,unknown>;sequence_number:number;created_at:string}>;
+};

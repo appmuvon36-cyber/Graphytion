@@ -83,7 +83,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, b, s, sb, runResult, renderResult, assetResult, voiceResult, subtitleResult, mediaResult] = await Promise.all([
+      const [p, b, s, sb, runResult, renderResult, assetResult, voiceResult, subtitleResult] = await Promise.all([
         call<{data: VideoProjectApi}>('/projects/' + projectId),
         call<{data: CreativeBriefApi[]}>('/projects/' + projectId + '/briefs'),
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
@@ -93,10 +93,18 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets?scope=workspace'),
         call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
-        api.listMediaGenerations(projectId).then(result=>{setMediaLoadError('');return result;}).catch(error=>{setMediaLoadError(error instanceof Error?error.message:'Media generation API belum tersedia');return {data: [] as MediaGenerationApi[]};}),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
-      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data); setMediaGenerations(mediaResult.data);
+      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
+      // Keep other project panels usable, but never translate a failed media
+      // request into a misleading empty state.
+      try {
+        const mediaResult = await api.listMediaGenerations(projectId);
+        setMediaGenerations(mediaResult.data);
+        setMediaLoadError('');
+      } catch (mediaError) {
+        setMediaLoadError(mediaError instanceof Error ? mediaError.message : 'Media generation API unavailable');
+      }
       if (!selectedBrief && b.data[0]) setSelectedBrief(b.data[0].id);
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }

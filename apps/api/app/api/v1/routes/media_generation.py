@@ -462,12 +462,15 @@ async def complete_media_generation_artifact(
         await db.execute(text("""
             insert into public.project_assets(
               id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,
-              content_type,size_bytes,sha256
-            ) values(:id,:workspace,:project,:actor,:bucket,:path,:name,:mime,:size,:sha)
+              content_type,size_bytes,sha256,source_type,source_provider,source_job_id,
+              provenance,usage_rights_status
+            ) values(:id,:workspace,:project,:actor,:bucket,:path,:name,:mime,:size,:sha,
+              'generated',:provider,:job,cast(:provenance as jsonb),'unverified')
         """), {"id": asset_id, "workspace": row["workspace_id"], "project": row["project_id"],
                "actor": owner, "bucket": BUCKET, "path": path,
                "name": f"generated-{generation_id}.{suffix}", "mime": mime,
-               "size": len(content), "sha": digest})
+               "size": len(content), "sha": digest, "provider": row["provider_key"],
+               "job": generation_id, "provenance": json.dumps(provenance)})
         provider_cost = None
         if usage:
             input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")) )

@@ -103,6 +103,25 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (!mediaGenerations.some(item => ['queued','processing','cancel_requested'].includes(item.status))) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await api.listMediaGenerations(projectId);
+        const completedTransition = result.data.some(item =>
+          item.status === 'completed' &&
+          !mediaGenerations.some(previous => previous.id === item.id && previous.status === 'completed')
+        );
+        setMediaGenerations(result.data);
+        setMediaLoadError('');
+        if (completedTransition) void load();
+      } catch (error) {
+        setMediaLoadError(error instanceof Error ? error.message : 'Media generation status unavailable');
+      }
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [api, load, mediaGenerations, projectId]);
+
   async function generateStage(stage: 'brief' | 'script' | 'storyboard') {
     setBusy(true); setError(''); setNotice('');
     try {

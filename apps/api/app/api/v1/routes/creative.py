@@ -89,6 +89,50 @@ def _snapshot_hash(value: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+async def _load_run_checkpoint(
+    db: AsyncSession, *, run_id: UUID, checkpoint_key: str
+) -> dict[str, Any] | None:
+    row = (await db.execute(text("""
+        select payload from public.workflow_checkpoints
+        where production_run_id=:run and checkpoint_key=:key
+    """), {"run": run_id, "key": checkpoint_key})).mappings().first()
+    return dict(row["payload"]) if row else None
+
+
+async def _persist_run_checkpoint(
+    db: AsyncSession, *, run_id: UUID, worker_id: str, stage_key: str,
+    checkpoint_key: str, payload: dict[str, Any],
+) -> dict[str, Any]:
+    # A checkpoint is committed independently of the final artifact transaction.
+    # This makes expensive model stages resumable after a worker/process restart.
+    owned = await db.scalar(text("""
+        select id from public.production_runs
+        where id=:run and worker_id=:worker and lease_expires_at > now()
+          and cancel_requested_at is null
+        for update
+    """), {"run": run_id, "worker": worker_id})
+    if owned is None:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Creative worker lease was lost before checkpoint persistence")
+    safe_payload = _json_safe(payload)
+    await db.execute(text("""
+        insert into public.workflow_checkpoints(
+            production_run_id,stage_key,checkpoint_key,payload,content_hash
+        ) values (:run,:stage,:key,cast(:payload as jsonb),:hash)
+        on conflict (production_run_id,checkpoint_key) do nothing
+    """), {
+        "run": run_id, "stage": stage_key, "key": checkpoint_key,
+        "payload": json.dumps(safe_payload, ensure_ascii=False),
+        "hash": _snapshot_hash(safe_payload),
+    })
+    persisted = await db.scalar(text("""
+        select payload from public.workflow_checkpoints
+        where production_run_id=:run and checkpoint_key=:key
+    """), {"run": run_id, "key": checkpoint_key})
+    await db.commit()
+    return dict(persisted)
+
+
 async def _record_version(
     db: AsyncSession,
     *,
@@ -558,12 +602,24 @@ async def _process_creative_run(
             """), {"project": project_id, "workspace": workspace_id})).mappings().first()
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
-            output, provenance = await creative_pipeline.interpret_prompt(
-                input_prompt=payload.input_prompt,
-                project_settings=dict(project),
-                source_material=payload.source_material,
-                idempotency_key=str(run["id"]),
+            checkpoint = await _load_run_checkpoint(
+                db, run_id=run["id"], checkpoint_key="brief:generated"
             )
+            if checkpoint:
+                output = CreativeBriefOutput.model_validate(checkpoint["output"])
+                provenance = checkpoint["provenance"]
+            else:
+                output, provenance = await creative_pipeline.interpret_prompt(
+                    input_prompt=payload.input_prompt,
+                    project_settings=dict(project),
+                    source_material=payload.source_material,
+                    idempotency_key=str(run["id"]),
+                )
+                await _persist_run_checkpoint(
+                    db, run_id=run["id"], worker_id=run["worker_id"],
+                    stage_key="brief", checkpoint_key="brief:generated",
+                    payload={"output": output.model_dump(), "provenance": provenance},
+                )
             version = (await db.execute(text(
                 "select coalesce(max(version),0)+1 from public.creative_briefs where project_id=:project"
             ), {"project": project_id})).scalar_one()
@@ -592,11 +648,23 @@ async def _process_creative_run(
             """), {"brief": payload.brief_id, "project": project_id, "workspace": workspace_id})).mappings().first()
             if brief is None:
                 raise HTTPException(status_code=409, detail="Script generation requires an approved brief")
-            output, provenance = await creative_pipeline.write_script(
-                approved_brief=dict(brief["normalized_brief"]),
-                source_material=payload.source_material,
-                idempotency_key=str(run["id"]),
+            checkpoint = await _load_run_checkpoint(
+                db, run_id=run["id"], checkpoint_key="script:generated"
             )
+            if checkpoint:
+                output = ScriptOutput.model_validate(checkpoint["output"])
+                provenance = checkpoint["provenance"]
+            else:
+                output, provenance = await creative_pipeline.write_script(
+                    approved_brief=dict(brief["normalized_brief"]),
+                    source_material=payload.source_material,
+                    idempotency_key=str(run["id"]),
+                )
+                await _persist_run_checkpoint(
+                    db, run_id=run["id"], worker_id=run["worker_id"],
+                    stage_key="script", checkpoint_key="script:generated",
+                    payload={"output": output.model_dump(), "provenance": provenance},
+                )
             version = (await db.execute(text(
                 "select coalesce(max(version),0)+1 from public.video_scripts where project_id=:project"
             ), {"project": project_id})).scalar_one()
@@ -634,16 +702,41 @@ async def _process_creative_run(
                 "cta": script["cta"], "language": script["language"],
                 "estimated_duration_ms": script["estimated_duration_ms"],
             }
-            arc, arc_meta = await creative_pipeline.direct_story(
-                approved_brief=brief_payload, approved_script=script_payload,
-                idempotency_key=f"{run['id']}:story-arc",
+            arc_checkpoint = await _load_run_checkpoint(
+                db, run_id=run["id"], checkpoint_key="storyboard:story-arc"
             )
-            output, provenance = await creative_pipeline.direct_storyboard(
-                approved_brief=brief_payload, approved_script=script_payload,
-                story_arc=arc.model_dump(),
-                approved_component_candidates=payload.approved_component_candidates,
-                idempotency_key=f"{run['id']}:storyboard",
+            if arc_checkpoint:
+                arc = StoryArcOutput.model_validate(arc_checkpoint["output"])
+                arc_meta = arc_checkpoint["provenance"]
+            else:
+                arc, arc_meta = await creative_pipeline.direct_story(
+                    approved_brief=brief_payload, approved_script=script_payload,
+                    idempotency_key=f"{run['id']}:story-arc",
+                )
+                await _persist_run_checkpoint(
+                    db, run_id=run["id"], worker_id=run["worker_id"],
+                    stage_key="storyboard", checkpoint_key="storyboard:story-arc",
+                    payload={"output": arc.model_dump(), "provenance": arc_meta},
+                )
+            storyboard_checkpoint = await _load_run_checkpoint(
+                db, run_id=run["id"], checkpoint_key="storyboard:generated"
             )
+            if storyboard_checkpoint:
+                output = StoryboardOutput.model_validate(storyboard_checkpoint["output"])
+                storyboard_meta = storyboard_checkpoint["provenance"]
+            else:
+                output, storyboard_meta = await creative_pipeline.direct_storyboard(
+                    approved_brief=brief_payload, approved_script=script_payload,
+                    story_arc=arc.model_dump(),
+                    approved_component_candidates=payload.approved_component_candidates,
+                    idempotency_key=f"{run['id']}:storyboard",
+                )
+                await _persist_run_checkpoint(
+                    db, run_id=run["id"], worker_id=run["worker_id"],
+                    stage_key="storyboard", checkpoint_key="storyboard:generated",
+                    payload={"output": output.model_dump(), "provenance": storyboard_meta},
+                )
+            provenance = {"story_director": arc_meta, "storyboard_director": storyboard_meta}
             version = (await db.execute(text(
                 "select coalesce(max(version),0)+1 from public.storyboards where project_id=:project"
             ), {"project": project_id})).scalar_one()
@@ -723,13 +816,25 @@ async def _process_creative_run(
                 "language": scene_row["script_language"],
                 "estimated_duration_ms": scene_row["script_duration"],
             }
-            output, provenance = await creative_pipeline.regenerate_scene(
-                approved_brief=dict(scene_row["normalized_brief"] or {}),
-                approved_script=approved_script,
-                current_scene=current_scene,
-                revision_instruction=payload.revision_instruction,
-                idempotency_key=str(run["id"]),
+            checkpoint = await _load_run_checkpoint(
+                db, run_id=run["id"], checkpoint_key="scene:generated"
             )
+            if checkpoint:
+                output = StoryboardSceneOutput.model_validate(checkpoint["output"])
+                provenance = checkpoint["provenance"]
+            else:
+                output, provenance = await creative_pipeline.regenerate_scene(
+                    approved_brief=dict(scene_row["normalized_brief"] or {}),
+                    approved_script=approved_script,
+                    current_scene=current_scene,
+                    revision_instruction=payload.revision_instruction,
+                    idempotency_key=str(run["id"]),
+                )
+                await _persist_run_checkpoint(
+                    db, run_id=run["id"], worker_id=run["worker_id"],
+                    stage_key="scene", checkpoint_key="scene:generated",
+                    payload={"output": output.model_dump(), "provenance": provenance},
+                )
             artifact = (await db.execute(text("""
                 update public.storyboard_scenes set
                     title=:title,purpose=:purpose,duration_ms=:duration,

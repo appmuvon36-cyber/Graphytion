@@ -147,6 +147,17 @@ def _fingerprint(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+async def _reset_worker_session(db: AsyncSession) -> None:
+    # Worker sessions are pooled; never retain a prior tenant's assumed role/JWT claims.
+    await db.rollback()
+    await db.execute(text("RESET ROLE"))
+    await db.execute(text("""
+        select set_config('request.jwt.claim.sub','',false),
+               set_config('request.jwt.claim.role','',false)
+    """))
+    await db.commit()
+
+
 async def _append_event(
     db: AsyncSession, run_id: UUID, event_type: str, payload: dict[str, Any]
 ) -> None:
@@ -168,6 +179,7 @@ async def _heartbeat(step_id: UUID) -> None:
     while True:
         await asyncio.sleep(30)
         async with SessionLocal() as db:
+            await _reset_worker_session(db)
             renewed = await db.scalar(
                 text("select private.graphytion_heartbeat_production_step(:step,:worker,:lease)"),
                 {"step": step_id, "worker": WORKER_ID, "lease": LEASE_SECONDS},
@@ -751,6 +763,7 @@ async def _fail_step(
     step: dict[str, Any], error: Exception, *, retryable: bool
 ) -> None:
     async with SessionLocal() as db:
+        await _reset_worker_session(db)
         current = (await db.execute(text("""
             select production_run_id,attempt_count,max_attempts,worker_id
             from public.production_run_steps where id=:step for update
@@ -794,6 +807,7 @@ async def _fail_step(
 
 async def _claim_one() -> dict[str, Any] | None:
     async with SessionLocal() as db:
+        await _reset_worker_session(db)
         row = (await db.execute(
             text("select * from private.graphytion_claim_production_step(:worker,:lease)"),
             {"worker": WORKER_ID, "lease": LEASE_SECONDS},
@@ -810,6 +824,7 @@ async def _process_one(step: dict[str, Any]) -> None:
     heartbeat_task = asyncio.create_task(_heartbeat(step["id"]))
     try:
         async with SessionLocal() as db:
+            await _reset_worker_session(db)
             envelope, run = await _load_envelope(db, step)
             await _append_event(db, step["production_run_id"], "step.started", {
                 "step_id": str(step["id"]), "step_key": step["step_key"],
@@ -818,6 +833,7 @@ async def _process_one(step: dict[str, Any]) -> None:
             })
             await db.commit()
             await _dispatch_step(db, step, envelope, run)
+            await _reset_worker_session(db)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -834,6 +850,7 @@ async def _process_one(step: dict[str, Any]) -> None:
 
 async def _reconcile_runs() -> None:
     async with SessionLocal() as db:
+        await _reset_worker_session(db)
         rows = (await db.execute(text("""
             select id,requested_by,status from public.production_runs
             where status in ('queued','planning','ready_for_review','cancel_requested')
@@ -859,6 +876,7 @@ async def _reconcile_runs() -> None:
                     })
             await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": row["id"]})
         await db.commit()
+        await _reset_worker_session(db)
 
 
 async def run_dispatcher() -> None:

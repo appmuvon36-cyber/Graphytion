@@ -5,11 +5,18 @@ from typing import Any
 from uuid import uuid4
 
 
-def apply_brand_tokens(snapshot: dict[str, Any], config: dict[str, Any] | None) -> dict[str, Any]:
+def apply_brand_tokens(
+    snapshot: dict[str, Any], config: dict[str, Any] | None,
+    brand_kit_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Apply immutable Brand Kit tokens and materialize its logo as a real timeline clip."""
     result = deepcopy(snapshot)
     if not config:
+        if brand_kit_meta:
+            result["brandKit"] = deepcopy(brand_kit_meta)
         return result
+    if brand_kit_meta:
+        result["brandKit"] = deepcopy(brand_kit_meta)
     colors = config.get("colors") or {}
     typography = config.get("typography") or {}
     for clip in result.get("clips", []):

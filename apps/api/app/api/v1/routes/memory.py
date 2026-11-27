@@ -199,9 +199,9 @@ async def search_memories(
           and ((scope='personal' and owner_user_id=:actor)
             or (scope='project' and :project is not null and project_id=:project))
           and (nullif(btrim(:query),'') is null
-            or search_document @@ websearch_to_tsquery('simple',:query))
+            or (title ilike '%' || :query || '%' or content ilike '%' || :query || '%' or array_to_string(tags,' ') ilike '%' || :query || '%'))
         order by case when nullif(btrim(:query),'') is not null
-          then ts_rank_cd(search_document,websearch_to_tsquery('simple',:query)) else 0 end desc,
+          then case when title ilike '%' || :query || '%' then 1 else 0 end else 0 end desc,
           importance desc,updated_at desc limit :limit
     """), {
         "workspace": workspace_id, "actor": actor, "project": project_id,

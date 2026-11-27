@@ -62,7 +62,6 @@ create table if not exists public.memory_items (
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  search_document tsvector not null default ''::tsvector,
   constraint memory_items_scope_project_check check (
     (scope='personal' and project_id is null) or
     (scope='project' and project_id is not null)
@@ -75,25 +74,6 @@ create table if not exists public.memory_items (
     foreign key (project_id, workspace_id)
     references public.video_projects(id, workspace_id)
 );
-
-create or replace function private.graphytion_update_memory_search_document()
-returns trigger
-language plpgsql
-set search_path = pg_catalog, public
-as $
-begin
-  new.search_document :=
-    setweight(to_tsvector('simple'::regconfig, coalesce(new.title,'')), 'A') ||
-    setweight(to_tsvector('simple'::regconfig, coalesce(new.content,'')), 'B') ||
-    setweight(to_tsvector('simple'::regconfig, coalesce(array_to_string(new.tags,' '),'')), 'C');
-  return new;
-end;
-$;
-
-drop trigger if exists memory_items_search_document_update on public.memory_items;
-create trigger memory_items_search_document_update
-before insert or update of title, content, tags on public.memory_items
-for each row execute function private.graphytion_update_memory_search_document();
 
 create index if not exists conversation_threads_owner_recent_idx
   on public.conversation_threads(workspace_id, owner_user_id, last_message_at desc nulls last);
@@ -108,8 +88,6 @@ create index if not exists memory_items_project_recent_idx
   where deleted_at is null and project_id is not null;
 create index if not exists memory_items_owner_recent_idx
   on public.memory_items(owner_user_id, importance desc, updated_at desc) where deleted_at is null;
-create index if not exists memory_items_search_idx
-  on public.memory_items using gin(search_document);
 
 alter table public.conversation_threads enable row level security;
 alter table public.conversation_messages enable row level security;

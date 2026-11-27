@@ -15,8 +15,8 @@ COMPONENTS={
 }
 PROPS={
  "core.title-card.v1":{"title","subtitle","background"},
- "visual.image.v1":{"assetId","fit","position","opacity","mask","widthPercent","heightPercent","anchor","marginPercent"},
- "visual.video.v1":{"assetId","fit","position","volume","playbackRate","trimStartFrames","muted"},
+ "visual.image.v1":{"assetId","fit","position","opacity","mask","widthPercent","heightPercent","anchor","marginPercent","effects"},
+ "visual.video.v1":{"assetId","fit","position","volume","playbackRate","trimStartFrames","muted","effects"},
  "visual.shape.v1":{"shape","fill","stroke","strokeWidth","radius","shadow","points"},
  "text.basic.v1":{"text","fontFamily","fontAssetId","fontSize","fontWeight","color","align","letterSpacing","lineHeight","animation"},
  "data.chart.v1":{"chartType","data","color","showLabels"},
@@ -32,6 +32,12 @@ def validate_component(key:str,version:str,props:Any)->None:
  if key in {"visual.image.v1","visual.video.v1","audio.clip.v1"}:
   try:UUID(str(props["assetId"]))
   except (KeyError,ValueError,TypeError) as exc:raise HTTPException(422,"Media component requires a valid project asset UUID") from exc
+ if key in {"visual.image.v1","visual.video.v1"} and "effects" in props:
+  effects=props["effects"]
+  allowed_effects={"brightness","contrast","saturation","grayscale","sepia","blur","hue_rotate"}
+  if not isinstance(effects,dict) or set(effects)-allowed_effects:raise HTTPException(422,"Visual effect configuration is invalid")
+  bounds={"brightness":(0,3),"contrast":(0,3),"saturation":(0,3),"grayscale":(0,1),"sepia":(0,1),"blur":(0,20),"hue_rotate":(-180,180)}
+  if any(not _number(value,*bounds[key]) for key,value in effects.items()):raise HTTPException(422,"Visual effect values are outside supported bounds")
  if key=="visual.image.v1":
   if props.get("fit","contain") not in {"cover","contain","fill"} or props.get("mask","none") not in {"none","circle","rounded"} or not _number(props.get("opacity",1),0,1):raise HTTPException(422,"Image fit, mask or opacity is invalid")
   if not _number(props.get("widthPercent",100),1,100) or not _number(props.get("heightPercent",100),1,100):raise HTTPException(422,"Image layer dimensions must be between 1 and 100 percent")

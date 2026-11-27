@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
@@ -60,6 +61,15 @@ async def _scope(db: AsyncSession, project_id: UUID, actor: UUID, permission: st
     return workspace
 
 
+def _migration_missing(exc: ProgrammingError) -> bool:
+    message = str(exc).lower()
+    return "media_generation_jobs" in message or "graphytion_claim_media_generation_job" in message or "graphytion_recover_media_generation_jobs" in message
+
+
+def _migration_required() -> HTTPException:
+    return HTTPException(503, "Graphytion media generation migrations 22409-22413 must be applied before this workflow is available")
+
+
 def _require_worker(request: Request) -> None:
     configured = settings.internal_worker_token.get_secret_value() if settings.internal_worker_token else ""
     supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
@@ -109,7 +119,8 @@ async def create_media_generation(
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
     config = _validate_config(payload)
-    row = (await db.execute(text("""
+    try:
+        row = (await db.execute(text("""
         insert into public.media_generation_jobs(
           workspace_id,project_id,requested_by,media_type,provider_key,model_key,
           prompt,generation_config,idempotency_key
@@ -117,10 +128,15 @@ async def create_media_generation(
           cast(:config as jsonb),:key)
         on conflict(workspace_id,idempotency_key) do nothing
         returning id,status,media_type,provider_key,model_key,created_at
-    """), {"workspace": workspace, "project": project_id, "actor": actor,
-           "type": payload.media_type, "provider": payload.provider_key,
-           "model": payload.model_key, "prompt": payload.prompt,
-           "config": json.dumps(config), "key": idempotency_key})).mappings().first()
+        """), {"workspace": workspace, "project": project_id, "actor": actor,
+               "type": payload.media_type, "provider": payload.provider_key,
+               "model": payload.model_key, "prompt": payload.prompt,
+               "config": json.dumps(config), "key": idempotency_key})).mappings().first()
+    except ProgrammingError as exc:
+        await db.rollback()
+        if _migration_missing(exc):
+            raise _migration_required() from exc
+        raise
     if row is None:
         old = (await db.execute(text("""
             select id,status,media_type,provider_key,model_key,prompt,generation_config
@@ -159,14 +175,20 @@ async def create_media_generation(
 async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession):
     actor = _actor(claims)
     await _scope(db, project_id, actor, "project.read")
-    rows = (await db.execute(text("""
+    try:
+        rows = (await db.execute(text("""
         select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
                asset_id,output_mime_type,output_size_bytes,output_sha256,
                provider_cost_status,provider_cost_microusd,operational_cost_microusd,
                quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
         order by created_at desc limit 200
-    """), {"project": project_id})).mappings().all()
+        """), {"project": project_id})).mappings().all()
+    except ProgrammingError as exc:
+        await db.rollback()
+        if _migration_missing(exc):
+            raise _migration_required() from exc
+        raise
     return {"data": [dict(row) for row in rows]}
 
 
@@ -174,9 +196,15 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
 async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession):
     actor = _actor(claims)
     await set_rls_subject(db, str(actor))
-    row = (await db.execute(text("""
-        select * from public.media_generation_jobs where id=:id
-    """), {"id": generation_id})).mappings().first()
+    try:
+        row = (await db.execute(text("""
+            select * from public.media_generation_jobs where id=:id
+        """), {"id": generation_id})).mappings().first()
+    except ProgrammingError as exc:
+        await db.rollback()
+        if _migration_missing(exc):
+            raise _migration_required() from exc
+        raise
     if row is None:
         raise HTTPException(404, "Media generation not found")
     await _scope(db, row["project_id"], actor, "project.read")
@@ -296,9 +324,15 @@ async def cancel_media_generation(generation_id: UUID, request: Request, claims:
 @router.post("/internal/media-generation-jobs/recover")
 async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbSession):
     _require_worker(request)
-    rows = (await db.execute(text("""
-        select * from private.graphytion_recover_media_generation_jobs()
-    """))).mappings().all()
+    try:
+        rows = (await db.execute(text("""
+            select * from private.graphytion_recover_media_generation_jobs()
+        """))).mappings().all()
+    except ProgrammingError as exc:
+        await db.rollback()
+        if _migration_missing(exc):
+            return {"data": {"recovered": 0, "migration_required": True}}
+        raise
     await db.commit()
     return {"data": {"recovered": len(rows), "jobs": [
         {"generation_id": str(row["job_id"]), "status": row["job_status"]} for row in rows
@@ -309,9 +343,15 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
 async def claim_media_generation_job(request: Request, worker_id: str = Query(min_length=1, max_length=128),
                                      db: AsyncSession = DbSession):
     _require_worker(request)
-    row = (await db.execute(text("""
-        select * from private.graphytion_claim_media_generation_job(:worker)
-    """), {"worker": worker_id})).mappings().first()
+    try:
+        row = (await db.execute(text("""
+            select * from private.graphytion_claim_media_generation_job(:worker)
+        """), {"worker": worker_id})).mappings().first()
+    except ProgrammingError as exc:
+        await db.rollback()
+        if _migration_missing(exc):
+            return {"data": None, "migration_required": True}
+        raise
     if row is None:
         await db.rollback()
         return {"data": None}

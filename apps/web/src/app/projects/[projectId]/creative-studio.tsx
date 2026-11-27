@@ -98,7 +98,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }
     finally { setLoading(false); }
-  }, [call, projectId, selectedBrief, selectedScript]);
+  }, [api, call, projectId, selectedBrief, selectedScript]);
 
   useEffect(() => { void load(); }, [load]);
 

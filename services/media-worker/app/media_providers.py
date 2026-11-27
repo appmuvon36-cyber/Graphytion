@@ -113,43 +113,52 @@ class GeminiMediaProvider:
             raise ValueError("IMAGE_OUTPUT_FORMAT_UNSUPPORTED")
         if image_size not in {"512", "1K", "2K", "4K"}:
             raise ValueError("IMAGE_SIZE_UNSUPPORTED")
-        image_prompt = (
-            f"{prompt}\n\nOutput requirements: aspect ratio {aspect_ratio}; "
-            f"target image size {image_size}. Return one finished image."
-        )
-        body = await self._create_interaction({
-            "model": model,
-            "input": [{"type": "text", "text": image_prompt}],
-            "store": False,
-        })
-        if body.get("status") in {"in_progress", "queued", "running"}:
-            body = await self._poll_interaction(str(body["id"]))
-        image_block = next(
-            (item for item in self._output_blocks(body)
-             if item.get("type") == "image" and item.get("data")),
+        # Gemini image models use GenerateContent with imageConfig; this is
+        # intentionally distinct from the Interactions contract used by Omni video.
+        url = f"{self.API_BASE}/models/{model}:generateContent"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size,
+                },
+            },
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=20)) as client:
+            response = await client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("error"):
+            raise RuntimeError("GEMINI_IMAGE_RESPONSE_INVALID")
+        candidates = body.get("candidates") or []
+        parts = (candidates[0].get("content") or {}).get("parts") or [] if candidates else []
+        image_part = next(
+            (part for part in parts if isinstance(part, dict) and
+             (part.get("inlineData") or part.get("inline_data"))),
             None,
         )
-        if image_block is None:
-            output_image = body.get("output_image") or {}
-            image_block = output_image if output_image.get("data") else None
-        if image_block is None:
+        if image_part is None:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_MISSING")
+        inline_data = image_part.get("inlineData") or image_part.get("inline_data") or {}
         try:
-            content = base64.b64decode(image_block["data"], validate=True)
+            content = base64.b64decode(inline_data["data"], validate=True)
         except Exception as exc:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_INVALID_BASE64") from exc
-        mime = image_block.get("mime_type") or image_block.get("mimeType") or "image/png"
+        mime = inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png"
         signatures = {
-            "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-            "image/jpeg": content.startswith(b"\xff\xd8\xff"),
+            "image/png": content.startswith(b"\\x89PNG\\r\\n\\x1a\\n"),
+            "image/jpeg": content.startswith(b"\\xff\\xd8\\xff"),
             "image/webp": len(content) > 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP",
         }
         if mime not in signatures or not signatures[mime] or not content:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_MIME_MISMATCH")
         return content, mime, {
-            "provider": "gemini", "model": model, "response_id": body.get("id"),
-            "usage": body.get("usage"), "image_size_requested": image_size,
-            "aspect_ratio_requested": aspect_ratio,
+            "provider": "gemini", "model": model,
+            "response_id": body.get("responseId") or body.get("response_id"),
+            "usage": body.get("usageMetadata") or body.get("usage_metadata"),
+            "image_size": image_size, "aspect_ratio": aspect_ratio,
         }
 
     async def generate_video(

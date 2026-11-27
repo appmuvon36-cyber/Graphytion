@@ -373,6 +373,8 @@ async def _dispatch_subtitles(
     config = SubtitleConfiguration.model_validate(envelope.configuration)
     if any(segment.end_ms <= segment.start_ms for segment in config.segments):
         raise StepInputError("Subtitle segment end_ms must be greater than start_ms")
+    audio_output = envelope.dependency_outputs.get("audio_processing", {})
+    audio_asset_id = audio_output.get("asset_id")
     old = (await db.execute(
         text("select id,version from public.subtitle_tracks where parent_step_id=:step and production_run_id=:run"),
         {"step": envelope.step_id, "run": envelope.run_id},
@@ -396,18 +398,20 @@ async def _dispatch_subtitles(
             await db.execute(text("""
                 insert into public.subtitle_segments(
                   track_id,segment_index,start_ms,end_ms,text,speaker,word_timings,
-                  style_config,position_config,alignment_metadata
+                  style_config,position_config,alignment_metadata,audio_asset_id
                 ) values(:track,:index,:start,:end,:text,:speaker,'[]'::jsonb,
-                  '{}'::jsonb,'{}'::jsonb,'{}'::jsonb)
+                  '{}'::jsonb,'{}'::jsonb,'{}'::jsonb,:audio_asset)
             """), {
                 "track": track_id, "index": index, "start": segment.start_ms,
                 "end": segment.end_ms, "text": segment.text, "speaker": segment.speaker,
+                "audio_asset": audio_asset_id,
             })
     await _finish_without_child(db, step, {
         "subtitle_track_id": str(track_id),
         "segment_count": len(config.segments),
         "language": config.language,
         "format": config.format,
+        "audio_asset_id": str(audio_asset_id) if audio_asset_id else None,
     })
 
 
@@ -432,6 +436,105 @@ async def _dispatch_timeline(
     db: AsyncSession, step: dict[str, Any], envelope: StepEnvelope, run: dict[str, Any]
 ) -> None:
     snapshot, existing_id, expected_version = await _load_snapshot(db, step, envelope, run)
+    # Materialize the persisted media/TTS/subtitle outputs into the canonical
+    # composition snapshot so the render worker receives the same immutable edit.
+    snapshot.setdefault("tracks", [])
+    snapshot.setdefault("clips", [])
+    snapshot.setdefault("assetRefs", [])
+    media_row = (await db.execute(text("""
+        select id,asset_id,media_type from public.media_generation_jobs
+        where production_run_id=:run and status='completed' and asset_id is not null
+        order by created_at desc limit 1
+    """), {"run": envelope.run_id})).mappings().first()
+    if media_row and not any(
+        str(clip.get("assetId") or clip.get("props", {}).get("assetId")) == str(media_row["asset_id"])
+        for clip in snapshot["clips"]
+    ):
+        media_track_id = str(uuid4())
+        media_kind = "video" if media_row["media_type"] == "video" else "visual"
+        snapshot["tracks"].append({
+            "id": media_track_id, "kind": media_kind, "name": "Generated media",
+            "zIndex": max([int(track.get("zIndex", 0)) for track in snapshot["tracks"]] + [0]) + 1,
+            "visible": True, "locked": False, "muted": False, "volume": 1,
+        })
+        media_key = "visual.video.v1" if media_row["media_type"] == "video" else "visual.image.v1"
+        media_props = {"assetId": str(media_row["asset_id"]), "fit": "cover"}
+        if media_row["media_type"] == "video":
+            media_props.update({"volume": 0, "playbackRate": 1, "muted": True})
+        snapshot["clips"].append({
+            "id": str(uuid4()), "trackId": media_track_id, "startFrame": 0,
+            "durationFrames": snapshot["durationFrames"], "trimStartFrames": 0,
+            "playbackRate": 1, "componentKey": media_key, "componentVersion": "1.0.0",
+            "assetId": str(media_row["asset_id"]), "props": media_props,
+        })
+        snapshot["assetRefs"].append({"assetId": str(media_row["asset_id"]),
+                                      "kind": media_row["media_type"], "required": True})
+    voice_row = (await db.execute(text("""
+        select id,asset_id from public.audio_generations
+        where production_run_id=:run and status='completed' and asset_id is not null
+        order by created_at desc limit 1
+    """), {"run": envelope.run_id})).mappings().first()
+    if voice_row and not any(
+        str(clip.get("assetId") or clip.get("props", {}).get("assetId")) == str(voice_row["asset_id"])
+        for clip in snapshot["clips"]
+    ):
+        audio_track_id = str(uuid4())
+        snapshot["tracks"].append({
+            "id": audio_track_id, "kind": "voiceover", "name": "Generated voiceover",
+            "zIndex": max([int(track.get("zIndex", 0)) for track in snapshot["tracks"]] + [0]) + 1,
+            "visible": True, "locked": False, "muted": False, "volume": 1,
+        })
+        snapshot["clips"].append({
+            "id": str(uuid4()), "trackId": audio_track_id, "startFrame": 0,
+            "durationFrames": snapshot["durationFrames"], "trimStartFrames": 0,
+            "playbackRate": 1, "componentKey": "audio.clip.v1", "componentVersion": "1.0.0",
+            "assetId": str(voice_row["asset_id"]),
+            "props": {"assetId": str(voice_row["asset_id"]), "volume": 1,
+                      "fadeInFrames": 0, "fadeOutFrames": 0, "playbackRate": 1,
+                      "trimStartFrames": 0},
+        })
+        snapshot["assetRefs"].append({"assetId": str(voice_row["asset_id"]),
+                                      "kind": "audio", "required": True})
+    subtitle_output = envelope.dependency_outputs.get("subtitle", {})
+    subtitle_track_id = subtitle_output.get("subtitle_track_id")
+    if subtitle_track_id:
+        subtitle_track = (await db.execute(text("""
+            select id,language from public.subtitle_tracks
+            where id=:track and project_id=:project and workspace_id=:workspace
+        """), {"track": subtitle_track_id, "project": run["project_id"],
+               "workspace": run["workspace_id"]})).mappings().first()
+        if subtitle_track:
+            subtitle_track_id = str(subtitle_track["id"])
+            timeline_subtitle_track = next((track for track in snapshot["tracks"]
+                if track.get("kind") == "subtitle" and track.get("name") == "Graphytion auto subtitles"), None)
+            if timeline_subtitle_track is None:
+                timeline_subtitle_track = {
+                    "id": str(uuid4()), "kind": "subtitle",
+                    "name": "Graphytion auto subtitles",
+                    "zIndex": max([int(track.get("zIndex", 0)) for track in snapshot["tracks"]] + [0]) + 10,
+                    "visible": True, "locked": False, "muted": False, "volume": 1,
+                }
+                snapshot["tracks"].append(timeline_subtitle_track)
+            subtitle_rows = (await db.execute(text("""
+                select segment_index,start_ms,end_ms,text from public.subtitle_segments
+                where track_id=:track order by segment_index
+            """), {"track": subtitle_track_id})).mappings().all()
+            for segment in subtitle_rows:
+                start_frame = round(int(segment["start_ms"]) * snapshot["fps"] / 1000)
+                end_frame = round(int(segment["end_ms"]) * snapshot["fps"] / 1000)
+                start_frame = max(0, start_frame)
+                end_frame = min(int(snapshot["durationFrames"]), max(start_frame + 1, end_frame))
+                if start_frame >= int(snapshot["durationFrames"]):
+                    continue
+                snapshot["clips"].append({
+                    "id": str(uuid4()), "trackId": timeline_subtitle_track["id"],
+                    "startFrame": start_frame, "durationFrames": max(1, end_frame-start_frame),
+                    "trimStartFrames": 0, "playbackRate": 1,
+                    "componentKey": "text.subtitle.v1", "componentVersion": "1.0.0",
+                    "props": {"text": segment["text"], "color": "#ffffff",
+                              "background": "rgba(0,0,0,.65)", "fontSize": 32,
+                              "position": "bottom", "align": "center"},
+                })
     brand_row = (await db.execute(text("""
         select bk.brand_config from public.video_projects p
         left join public.brand_kits bk on bk.id=p.brand_kit_id and bk.workspace_id=p.workspace_id

@@ -109,10 +109,25 @@ async def upload_project_asset(
     request: Request,
     claims: AuthenticatedClaims,
     file: UploadFile,
+    supersedes_asset_id: UUID | None = Query(default=None),
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
     workspace_id = await _project_workspace(db, project_id, actor, "project.update")
+    asset_family_id = uuid4()
+    version_number = 1
+    if supersedes_asset_id:
+        previous = (await db.execute(text("""
+            select asset_family_id from public.project_assets
+            where id=:asset and workspace_id=:workspace and status='active' for update
+        """), {"asset": supersedes_asset_id, "workspace": workspace_id})).mappings().first()
+        if previous is None:
+            raise HTTPException(status_code=404, detail="Asset version source not found in this workspace")
+        asset_family_id = previous["asset_family_id"]
+        version_number = int(await db.scalar(text("""
+            select coalesce(max(version_number),0)+1 from public.project_assets
+            where asset_family_id=:family
+        """), {"family": asset_family_id}))
     content_type = file.content_type or ""
     extension = MIME_EXTENSIONS.get(content_type)
     if not extension:
@@ -136,14 +151,18 @@ async def upload_project_asset(
         row = (await db.execute(text("""
             insert into public.project_assets(
                 id,workspace_id,project_id,uploaded_by,bucket,object_path,
-                file_name,content_type,size_bytes,sha256
+                file_name,content_type,size_bytes,sha256,asset_family_id,version_number,
+                supersedes_asset_id,source_type
             ) values (
-                :id,:workspace,:project,:actor,:bucket,:path,:name,:type,:size,:hash
+                :id,:workspace,:project,:actor,:bucket,:path,:name,:type,:size,:hash,
+                :family,:version,:supersedes,'upload'
             ) returning *
         """), {
             "id": asset_id, "workspace": workspace_id, "project": project_id,
             "actor": actor, "bucket": ASSET_BUCKET, "path": object_path,
             "name": filename, "type": content_type, "size": len(content), "hash": digest,
+            "family": asset_family_id, "version": version_number,
+            "supersedes": supersedes_asset_id,
         })).mappings().one()
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
@@ -156,7 +175,10 @@ async def upload_project_asset(
             "workspace_id": str(row["workspace_id"]), "uploaded_by": str(row["uploaded_by"]),
             "file_name": row["file_name"], "content_type": row["content_type"],
             "size_bytes": row["size_bytes"], "sha256": row["sha256"],
-            "status": row["status"], "created_at": row["created_at"],
+            "status": row["status"], "asset_family_id": str(row["asset_family_id"]),
+            "version_number": row["version_number"],
+            "supersedes_asset_id": str(row["supersedes_asset_id"]) if row["supersedes_asset_id"] else None,
+            "created_at": row["created_at"],
         }}
     except Exception as exc:
         await db.rollback()

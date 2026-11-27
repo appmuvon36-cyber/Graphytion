@@ -333,3 +333,26 @@ Latest source implementation after the priority reset:
 - Source-only implementation. No production migration, DB mutation, Railway configuration, deployment, or real render job was run. Typecheck/build and runtime rendering are not yet verified in this execution.
 
 **Latest source HEAD:** `55f134bc1443d164c1c2263def1bf1e3ed1a2095`. Phase 03 remains OPEN pending the documented FastAPI runtime/database-role and migration dependencies, followed by a real end-to-end render cycle.
+
+
+## Production runtime recovery — 2026-11-27
+
+This update supersedes the earlier API/worker connectivity blockers where they conflict.
+
+- The API Dockerfile now binds Uvicorn to Railway's `PORT` (default 8080) and exposes 8080. The previous container listened on 8000 while Railway healthchecked 8080. The API deployment passed the Railway `/api/v1/health` healthcheck; latest API deployment on commit `6c5c5ee6521d05ebc422e5a8ea9bb40e83f2170b` is SUCCESS.
+- Both Media and Render Worker `GRAPHYTION_API_BASE_URL` values now target the private API endpoint including the versioned prefix: `http://graphytionapi.railway.internal:8080/api/v1`. This fixes the former port-8000 connection refusal and missing `/api/v1` prefix (404).
+- Worker heartbeat exposed an ambiguous `worker_id` reference in `private.graphytion_upsert_worker_heartbeat`. Migration `20261127022404_worker_heartbeat_conflict_target_fix` now targets `worker_heartbeats_pkey` explicitly. It is applied in Production and its matching SQL file is committed to `supabase/migrations/20261127022404_worker_heartbeat_conflict_target_fix.sql`.
+- Production migration history now contains 24 entries; the repository contains the matching 24 migration SQL files. The two previously pending migrations, durable creative retry scheduling and worker heartbeat conflict correction, are applied. No destructive migration or data reset was performed.
+- Production DB evidence: `graphytion_api` is LOGIN-enabled, non-superuser and non-BYPASSRLS. API worker claim/recovery and heartbeat requests now return HTTP 200. `worker_heartbeats` contains one online Media Worker and one online Render Worker. This verifies API-to-PostgreSQL connectivity for those paths.
+- Railway existing services: API, Media Worker, Render Worker have successful deployments on the current source/config; Web and Remotion Studio remain live on their latest successful deployments because their source paths were unchanged and Railway correctly skipped unrelated builds. No new Railway service or database was created.
+- Supabase Storage buckets `avatars`, `project-assets`, and `render-artifacts` remain private. Security Advisor returned zero lint findings at this inspection.
+
+### Remaining production gates
+
+- No Auth users, profiles, workspaces, or platform-admin rows exist yet. Initial owner account creation and one-time super-admin promotion are still required before a real customer journey can be exercised.
+- Invitation email remains inactive until the verified Resend sender and API credentials are configured on the API service.
+- Redis remains unavailable due to the Railway plan's service resource limit; PostgreSQL polling and durable leases remain the active fallback.
+- The repository contains the AI Worker Dockerfile and entrypoint, but the existing Railway project currently has no dedicated AI Worker service. No new service was created under the existing-service constraint.
+- No real TTS or render job was submitted: there is no production user/workspace/project, and no synthetic production records were created. The worker claim/heartbeat/recovery connectivity is verified; a complete artifact-producing cycle is not.
+
+**Phase 03 remains OPEN.** API liveness, DB-backed worker control paths, and migration parity are restored; Auth bootstrap, invitation delivery, AI Worker service provisioning, Redis capacity, and one real TTS/render artifact cycle remain release blockers.

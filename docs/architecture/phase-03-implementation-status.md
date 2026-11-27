@@ -299,4 +299,13 @@ Latest source implementation after the priority reset:
 - Retry budget enforcement remains in the FastAPI failure callback and PostgreSQL `audio_generations.max_attempts`.
 - Source-only implementation. Runtime execution, provider calls, typecheck/build, and migration application were not performed.
 
-**Latest source HEAD:** `3ad2d677c47c4793324dd783a0a5e8d5915952e2`. Phase 03 remains OPEN.
+**Latest source HEAD before the next implementation slice:** `9f65584f5b7ca09e26620049d4e35ba4edb8dcda`. Phase 03 remains OPEN.
+
+## LLM provider transient retry hardening — 2026-11-27
+
+- The centralized OpenAI structured-output adapter now retries HTTP `408`, `425`, `429`, and `5xx` responses within its existing bounded three-attempt budget.
+- When the provider supplies a numeric `Retry-After` header, the adapter honors it with a 0–30 second cap; otherwise it uses bounded exponential delay. Permanent provider/client errors remain non-retryable.
+- The gateway still fails explicitly when no provider adapter is configured; no mock response or fallback output is introduced.
+- Source-only change. No provider request, usage event, database migration, deployment, typecheck, or runtime verification was performed.
+
+**Latest source HEAD:** `9f39d9417e584758f6b31012d47257533405a09b`. Phase 03 remains OPEN.

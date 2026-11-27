@@ -15,7 +15,6 @@ from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.config import settings
 from app.services.creative_pipeline import creative_pipeline
 from app.services.agent_tools import agent_tool_registry
-from app.services.quota import reserve_ai_usage, reconcile_ai_usage, release_ai_usage
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -942,7 +941,6 @@ async def _process_creative_run(
                 "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                 "request_id": usage.get("provider_request_id"),
             })
-        await reconcile_ai_usage(db, run["id"])
         await db.execute(text("""
             update public.agent_tasks set status='succeeded',output_artifact_id=:artifact,
                 output_payload=cast(:output as jsonb),completed_at=now(),lease_expires_at=null,worker_id=null
@@ -1037,7 +1035,6 @@ async def _process_creative_run(
             where id=:task and worker_id=:worker
         """), {"code": safe_code, "detail": str(exc)[:1000],
                "task": task, "worker": run["worker_id"]})
-        await release_ai_usage(db, run["id"], safe_code)
         await db.execute(text("""
             insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
             values (:run,'stage.failed',cast(:payload as jsonb),
@@ -1104,10 +1101,6 @@ async def execute_creative_stage(
             return {"data": {"run_id": str(existing["id"]), "status": existing["status"], "replayed": True}}
         raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different creative request")
 
-    await reserve_ai_usage(
-        db, workspace_id=workspace_id, project_id=project_id, run_id=run["id"],
-        stage=stage, input_snapshot=input_snapshot, idempotency_key=idempotency_key,
-    )
     task = (await db.execute(text("""
         insert into public.agent_tasks(
             production_run_id,agent_key,task_type,status,input_payload,max_attempts
@@ -1199,7 +1192,6 @@ async def cancel_queued_creative_run(
             update public.agent_tasks set status='cancelled',completed_at=now()
             where production_run_id=:run and status in ('queued','pending','retry_wait')
         """), {"run": run_id})
-        await release_ai_usage(db, run_id, "user_cancelled_before_execution")
     elif run["status"] in ("planning", "scripting", "storyboarding"):
         next_status = "cancel_requested"
         await db.execute(text("""

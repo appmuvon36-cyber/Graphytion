@@ -266,3 +266,15 @@ Latest source implementation after the priority reset:
 - No production migration, secret change, Railway deployment, or synthetic production job was performed.
 
 **Latest implementation source HEAD before this tracker update:** `e2a32a83962fc49e5e42ba846e6adede3f54f60b`. The tracker update itself is committed immediately afterward. Phase 03 remains OPEN.
+## Creative worker retry lifecycle correction — 2026-11-27
+
+- `apps/api/app/workers/creative.py` now persists the outcome when `_process_creative_run` raises an API-level execution error instead of leaving the run leased until timeout recovery.
+- Transient provider statuses (`429`, `502`, `503`, `504`) use bounded exponential delay and are re-queued only while the persisted `production_runs.max_attempts` budget remains. The retry limit is read from PostgreSQL, not assumed from a hard-coded default.
+- Non-retryable validation, authorization, and other permanent HTTP failures are terminally failed immediately.
+- Run and task ownership are checked during release; worker ID and lease are cleared, task state/error metadata is persisted, and a sequenced workflow event records retry scheduling or terminal failure.
+- The worker heartbeat is stopped before releasing a run, preventing the old worker from extending a lease after retry/terminal transition.
+- No schema change is required: existing run/task status values, error fields, lease fields, and workflow event table are reused.
+- This is source-level implementation. No worker execution, production job, deployment, or live provider call was performed; runtime behavior remains pending verification.
+- Verification status: source diff reviewed and updated file re-fetched from `main`; Python typecheck/build was not run in this connector-only execution.
+
+**Latest source HEAD:** `2c50f10eca6432641caa07ed1fabbe8a6f0f267d`. Phase 03 remains OPEN.

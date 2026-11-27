@@ -142,7 +142,6 @@ class GeminiMediaProvider:
                 "input": [{"type": "text", "text": prompt}],
                 "response_format": {
                     "type": "image",
-                    "delivery": "inline",
                     "mime_type": mime_type,
                     "aspect_ratio": aspect_ratio,
                     "image_size": image_size,
@@ -212,7 +211,6 @@ class GeminiMediaProvider:
                 "input": [{"type": "text", "text": prompt}],
                 "response_format": {
                     "type": "video",
-                    "delivery": "inline",
                     "duration": f"{duration_seconds}s",
                     "resolution": resolution,
                     "aspect_ratio": aspect_ratio,

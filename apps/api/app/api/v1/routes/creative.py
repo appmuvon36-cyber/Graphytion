@@ -690,6 +690,8 @@ async def _process_creative_run(
                     approved_brief=dict(brief["normalized_brief"]),
                     source_material=payload.source_material,
                     idempotency_key=str(run["id"]),
+                    provider_key=tool.configuration.get("provider_key"),
+                    model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -867,6 +869,8 @@ async def _process_creative_run(
                     current_scene=current_scene,
                     revision_instruction=payload.revision_instruction,
                     idempotency_key=str(run["id"]),
+                    provider_key=tool.configuration.get("provider_key"),
+                    model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],

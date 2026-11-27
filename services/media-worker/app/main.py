@@ -201,7 +201,9 @@ class Worker:
         return True
 
     async def process(self) -> bool:
-        if await self.process_generated_media():\n            return True\n        try:
+        if await self.process_generated_media():
+            return True
+        try:
             job = await self.api(
                 "/internal/media-jobs/claim",
                 method="POST",

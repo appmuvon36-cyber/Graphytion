@@ -67,7 +67,7 @@ def _migration_missing(exc: ProgrammingError) -> bool:
 
 
 def _migration_required() -> HTTPException:
-    return HTTPException(503, "Graphytion media generation migrations 22409-22414 must be applied before this workflow is available")
+    return HTTPException(503, "Graphytion media generation runtime migration must be applied before this workflow is available")
 
 
 def _require_worker(request: Request) -> None:
@@ -251,7 +251,7 @@ async def retry_media_generation(
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
     row = (await db.execute(text("""
-        select id,project_id,workspace_id,media_type,status
+        select id,project_id,workspace_id,media_type,status,provider_job_id,provider_operation_status
         from public.media_generation_jobs where id=:id for update
     """), {"id": generation_id})).mappings().first()
     if row is None:
@@ -259,6 +259,8 @@ async def retry_media_generation(
     await _scope(db, row["project_id"], actor, "project.update")
     if row["status"] != "failed":
         raise HTTPException(409, "Only failed media generation jobs can be retried")
+    if row["provider_job_id"] and row["provider_operation_status"] in {"submitted", "queued", "in_progress", "unknown"}:
+        raise HTTPException(409, "The previous provider operation is still recoverable; resume it instead of creating a new operation")
     operation = "image_generation" if row["media_type"] == "image" else "video_generation"
     resource_type = operation
     reservation = await reserve_fixed_operation(
@@ -268,9 +270,9 @@ async def retry_media_generation(
         idempotency_key=f"media-generation:{generation_id}:retry:{idempotency_key}",
     )
     await db.execute(text("""
-        update public.media_generation_jobs set status='queued',error_code=null,
-          attempt_count=0,max_attempts=3,worker_id=null,lease_expires_at=null,
-          quota_reservation_id=:reservation,provider_job_id=null,completed_at=null,updated_at=now()
+        update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
+          attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
+          quota_reservation_id=:reservation,provider_operation_status='not_started',completed_at=null,updated_at=now()
         where id=:id and status='failed'
     """), {"id": generation_id, "reservation": reservation})
     await db.execute(text("""
@@ -383,6 +385,13 @@ async def heartbeat_media_generation_job(generation_id: UUID, request: Request,
     if status["status"] == "processing":
         await db.execute(text("select private.graphytion_heartbeat_media_generation_job(:id,:worker)"),
                          {"id": generation_id, "worker": worker_id})
+        await db.execute(text("""
+            update public.media_generation_jobs
+            set provider_operation_last_polled_at=case when provider_job_id is not null then now() else provider_operation_last_polled_at end,
+                provider_operation_poll_count=provider_operation_poll_count + case when provider_job_id is not null then 1 else 0 end,
+                updated_at=now()
+            where id=:id and worker_id=:worker
+        """), {"id": generation_id, "worker": worker_id})
     await set_rls_subject(db, str(status["requested_by"]))
     await db.commit()
     return {"data": {"generation_id": str(generation_id), "cancel_requested": status["status"] == "cancel_requested",
@@ -407,7 +416,7 @@ async def save_media_provider_operation(
     await set_rls_subject(db, str(owner))
     result = await db.execute(text("""
         update public.media_generation_jobs
-        set provider_job_id=:operation,updated_at=now()
+        set provider_job_id=:operation,provider_operation_status='submitted',updated_at=now()
         where id=:id and worker_id=:worker and status in ('processing','cancel_requested')
           and provider_key='gemini'
         returning id
@@ -428,7 +437,7 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
         raise HTTPException(409, "Media generation lease is no longer owned")
     await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
-        select id,requested_by,workspace_id,media_type,attempt_count,max_attempts,status
+        select id,requested_by,workspace_id,media_type,attempt_count,max_attempts,retry_count,max_retries,status,provider_job_id
         from public.media_generation_jobs where id=:id and worker_id=:worker for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if row is None:
@@ -445,9 +454,13 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
         """), {"id": generation_id})
         status = "cancelled"
     else:
-        status = "queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] else "failed"
+        status = "queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] and row["retry_count"] < row["max_retries"] else "failed"
         await db.execute(text("""
-            update public.media_generation_jobs set status=:status,error_code=:error,
+            update public.media_generation_jobs set status=:status,error_code=:error,last_error=:error,
+              last_error_class=case when :status='queued' then 'transient' else 'permanent_or_exhausted' end,
+              retry_count=retry_count + case when :status='queued' then 1 else 0 end,
+              next_retry_at=case when :status='queued' then now()+make_interval(secs => least(300,(5*power(2,least(attempt_count,6)))::integer)) else null end,
+              provider_operation_status=case when provider_job_id is not null then 'unknown' when :status='failed' then 'failed' else 'not_started' end,
               worker_id=null,lease_expires_at=null,
               completed_at=case when :status='failed' then now() else null end,updated_at=now()
             where id=:id
@@ -545,15 +558,16 @@ async def complete_media_generation_artifact(
         await db.execute(text("""
             insert into public.project_assets(
               id,workspace_id,project_id,uploaded_by,bucket,object_path,file_name,
-              content_type,size_bytes,sha256,source_type,source_provider,source_job_id,
-              provenance,usage_rights_status
+              content_type,size_bytes,sha256,source_type,source_provider,source_model,source_job_id,
+              provenance,generation_metadata,usage_rights_status,generated_at
             ) values(:id,:workspace,:project,:actor,:bucket,:path,:name,:mime,:size,:sha,
-              'generated',:provider,:job,cast(:provenance as jsonb),'unverified')
+              'generated',:provider,:model,:job,cast(:provenance as jsonb),cast(:generation_metadata as jsonb),'unverified',now())
         """), {"id": asset_id, "workspace": row["workspace_id"], "project": row["project_id"],
                "actor": owner, "bucket": BUCKET, "path": path,
                "name": f"generated-{generation_id}.{suffix}", "mime": mime,
-               "size": len(content), "sha": digest, "provider": row["provider_key"],
-               "job": generation_id, "provenance": json.dumps(provenance)})
+               "size": len(content), "sha": digest, "provider": row["provider_key"], "model": row["model_key"],
+               "job": generation_id, "provenance": json.dumps(provenance),
+               "generation_metadata": json.dumps({"prompt_sha256": hashlib.sha256(row["prompt"].encode("utf-8")).hexdigest(), "generation_config": row["generation_config"]})})
         provider_cost = None
         if usage:
             input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")) )
@@ -579,10 +593,11 @@ async def complete_media_generation_artifact(
         """), {"asset": asset_id, "mime": mime, "size": len(content), "sha": digest,
                "provenance": json.dumps(provenance), "usage": json.dumps(usage) if usage else None,
                "provider_cost": provider_cost, "id": generation_id, "worker": worker_id})
-        await reconcile_fixed_operation(
-            db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-            resource_id=generation_id,
-        )
+        if provider_cost is not None and operational_cost is not None:
+            await reconcile_fixed_operation(
+                db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
+                resource_id=generation_id,
+            )
         reservation = (await db.execute(text("""
             select consumed_microusd from public.quota_reservations
             where id=:id and status='consumed'
@@ -590,11 +605,13 @@ async def complete_media_generation_artifact(
         quota_debit = int(reservation["consumed_microusd"]) if reservation else None
         cost_price = (await db.execute(text("""
             select microusd_per_unit,unit_name
-            from public.media_operational_cost_prices
-            where media_type=:type and provider_key=:provider and model_key=:model
+            from public.quota_operation_prices
+            where price_kind='operational' and operation_key=:operation
+              and media_type=:type and provider_key=:provider and model_key=:model
               and is_active=true and effective_at<=now()
             order by effective_at desc,created_at desc limit 1
-        """), {"type": row["media_type"], "provider": row["provider_key"],
+        """), {"operation": "image_generation" if row["media_type"] == "image" else "video_generation",
+               "type": row["media_type"], "provider": row["provider_key"],
                "model": row["model_key"]})).mappings().first()
         operational_cost = None
         if cost_price:

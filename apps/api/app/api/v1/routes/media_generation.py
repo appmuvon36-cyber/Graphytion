@@ -280,15 +280,23 @@ async def retry_media_generation(
     """), {"workspace": row["workspace_id"], "key": idempotency_key, "id": generation_id})
     if existing_key is not None:
         raise HTTPException(409, "Idempotency-Key has already been used by another media generation")
-    # Free personal mode never creates a new quota reservation. Preserve a
-    # pre-existing reservation reference only for legacy jobs pending cost resolution.
-    reservation = row["quota_reservation_id"]
+    # Personal mode has no quota holds. Release any reservation left by a legacy
+    # pre-personal job before it is queued again.
+    if row["quota_reservation_id"] is not None:
+        await release_fixed_operation(
+            db,
+            resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
+            resource_id=generation_id,
+            reason="personal_mode_retry_no_quota",
+        )
     try:
         await db.execute(text("""
             update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
               attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
-              quota_reservation_id=:reservation,quota_debit_microusd=case when :reservation is null then 0 else quota_debit_microusd end,
-              quota_reconciliation_status=case when :reservation is null then 'not_required' else 'pending' end,
+              quota_reservation_id=null,quota_debit_microusd=0,margin_microusd=null,
+              quota_reconciliation_status='not_required',quota_reconciled_at=now(),
+              operational_cost_microusd=null,operational_price_id=null,provider_price_id=null,
+              estimated_provider_cost_microusd=null,price_snapshot='{}'::jsonb,
               provider_operation_history=provider_operation_history || case when provider_job_id is null then '[]'::jsonb
                 else jsonb_build_array(jsonb_build_object('operation_id',provider_job_id,
                   'terminal_status',provider_operation_status,'archived_at',now())) end,
@@ -296,7 +304,7 @@ async def retry_media_generation(
               provider_operation_last_polled_at=null,provider_operation_poll_count=0,
               idempotency_key=:key,completed_at=null,updated_at=now()
             where id=:id and status='failed'
-        """), {"id": generation_id, "reservation": reservation, "key": idempotency_key})
+        """), {"id": generation_id, "key": idempotency_key})
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(409, "Idempotency-Key has already been used by another media generation") from exc
@@ -325,6 +333,10 @@ async def cancel_media_generation(generation_id: UUID, request: Request, claims:
     if row["status"] == "queued":
         await db.execute(text("""
             update public.media_generation_jobs set status='cancelled',completed_at=now(),
+              quota_reservation_id=null,quota_debit_microusd=0,margin_microusd=null,
+              quota_reconciliation_status='not_required',quota_reconciled_at=now(),
+              operational_cost_microusd=null,operational_price_id=null,provider_price_id=null,
+              estimated_provider_cost_microusd=null,price_snapshot='{}'::jsonb,
               updated_at=now() where id=:id and status='queued'
         """), {"id": generation_id})
         await release_fixed_operation(
@@ -365,118 +377,30 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
         for job in pending:
             await set_rls_subject(db, str(job["requested_by"]))
             usage = job["provider_usage"] or {}
-            provider_price = None
             provider_cost = int(job["provider_cost_microusd"]) if job["provider_cost_microusd"] is not None else None
-            estimated_provider_cost = int(job["estimated_provider_cost_microusd"]) if job["estimated_provider_cost_microusd"] is not None else None
             if provider_cost is None:
                 reported = usage.get("provider_cost_microusd", usage.get("cost_microusd"))
                 if isinstance(reported, int) and reported >= 0:
                     provider_cost = reported
-                else:
-                    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")))
-                    output_tokens = usage.get("output_tokens", usage.get("completion_tokens", usage.get("total_output_tokens")))
-                    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-                        provider_price = (await db.execute(text("""
-                            select id,input_microusd_per_million,output_microusd_per_million
-                            from public.ai_model_prices
-                            where provider_key=:provider and model_key=:model
-                              and is_active=true and effective_at<=now()
-                            order by effective_at desc,created_at desc limit 1
-                        """), {"provider": job["provider_key"], "model": job["model_key"]})).mappings().first()
-                        if provider_price:
-                            estimated_provider_cost = round(input_tokens * int(provider_price["input_microusd_per_million"]) / 1000000) + round(output_tokens * int(provider_price["output_microusd_per_million"]) / 1000000)
-            cost_price = (await db.execute(text("""
-                select id,microusd_per_unit,unit_name,effective_at
-                from public.quota_operation_prices
-                where price_kind='operational'
-                  and operation_key=:operation and media_type=:media
-                  and provider_key=:provider and model_key=:model
-                  and is_active=true and effective_at<=now()
-                order by effective_at desc,created_at desc limit 1
-            """), {
-                "operation": "image_generation" if job["media_type"] == "image" else "video_generation",
-                "media": job["media_type"], "provider": job["provider_key"], "model": job["model_key"],
-            })).mappings().first()
-            operational_cost = int(job["operational_cost_microusd"]) if job["operational_cost_microusd"] is not None else None
-            if operational_cost is None and cost_price:
-                units = int((job["generation_config"] or {}).get("duration_seconds", 1)) if job["media_type"] == "video" else 1
-                operational_cost = int(cost_price["microusd_per_unit"]) * units
-            snapshot = dict(job["price_snapshot"] or {})
-            if provider_price:
-                snapshot["provider"] = {
-                    "id": str(provider_price["id"]),
-                    "input_microusd_per_million": int(provider_price["input_microusd_per_million"]),
-                    "output_microusd_per_million": int(provider_price["output_microusd_per_million"]),
-                }
-            if cost_price:
-                snapshot["operational"] = {
-                    "id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]),
-                    "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat(),
-                }
             await db.execute(text("""
                 update public.media_generation_jobs set
                   provider_cost_microusd=coalesce(:provider_cost,provider_cost_microusd),
-                  estimated_provider_cost_microusd=coalesce(:estimated,estimated_provider_cost_microusd),
+                  estimated_provider_cost_microusd=null,
                   provider_cost_status=case when coalesce(:provider_cost,provider_cost_microusd) is null then 'unpriced' else 'priced' end,
-                  provider_price_id=coalesce(:provider_price_id,provider_price_id),
-                  operational_cost_microusd=coalesce(:operational,operational_cost_microusd),
-                  operational_price_id=coalesce(:operational_price_id,operational_price_id),
+                  provider_price_id=null,operational_cost_microusd=null,operational_price_id=null,
                   quota_debit_microusd=0,margin_microusd=null,
-                  economics_status=case
-                    when coalesce(:provider_cost,provider_cost_microusd) is not null
-                      and coalesce(:operational,operational_cost_microusd) is not null then 'complete'
-                    when coalesce(:estimated,estimated_provider_cost_microusd) is not null
-                      or coalesce(:provider_cost,provider_cost_microusd) is not null
-                      or coalesce(:operational,operational_cost_microusd) is not null then 'partial'
-                    else 'unpriced' end,
-                  quota_reconciliation_status='not_required',quota_reconciled_at=null,
-                  price_snapshot=cast(:snapshot as jsonb),updated_at=now()
+                  economics_status=case when coalesce(:provider_cost,provider_cost_microusd) is null then 'unpriced' else 'partial' end,
+                  quota_reservation_id=null,quota_reconciliation_status='not_required',
+                  quota_reconciled_at=now(),price_snapshot='{}'::jsonb,updated_at=now()
                 where id=:id
-            """), {
-                "provider_cost": provider_cost, "estimated": estimated_provider_cost,
-                "provider_price_id": provider_price["id"] if provider_price else None,
-                "operational": operational_cost, "operational_price_id": cost_price["id"] if cost_price else None,
-                "snapshot": json.dumps(snapshot), "id": job["id"],
-            })
-            # A legacy quota hold is released only when actual provider cost is known.
-            if provider_cost is not None and job["quota_reservation_id"] is not None:
+            """), {"provider_cost": provider_cost, "id": job["id"]})
+            if job["quota_reservation_id"] is not None:
                 await release_fixed_operation(
-                    db, resource_type="image_generation" if job["media_type"] == "image" else "video_generation",
-                    resource_id=job["id"], reason="free_personal_mode_provider_cost_resolved",
+                    db,
+                    resource_type="image_generation" if job["media_type"] == "image" else "video_generation",
+                    resource_id=job["id"],
+                    reason="personal_mode_recovery_no_quota",
                 )
-            if provider_cost is None or operational_cost is None:
-                continue
-            snapshot = dict(job["price_snapshot"] or {})
-            if provider_price:
-                snapshot["provider"] = {
-                    "id": str(provider_price["id"]),
-                    "input_microusd_per_million": int(provider_price["input_microusd_per_million"]),
-                    "output_microusd_per_million": int(provider_price["output_microusd_per_million"]),
-                }
-            if cost_price:
-                snapshot["operational"] = {
-                    "id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]),
-                    "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat(),
-                }
-            await db.execute(text("""
-                update public.media_generation_jobs set
-                  provider_cost_microusd=:provider_cost,
-                  estimated_provider_cost_microusd=coalesce(:estimated_provider_cost,estimated_provider_cost_microusd),
-                  provider_cost_status=case when :provider_cost is null then 'unpriced' else 'priced' end,
-                  provider_price_id=coalesce(:provider_price_id,provider_price_id),
-                  operational_cost_microusd=:operational_cost,
-                  operational_price_id=coalesce(:operational_price_id,operational_price_id),
-                  quota_debit_microusd=0,margin_microusd=null,
-                  economics_status=case when :provider_cost is not null then 'complete' else 'partial' end,
-                  quota_reconciliation_status='not_required',quota_reconciled_at=null,
-                  price_snapshot=cast(:snapshot as jsonb),updated_at=now()
-                where id=:id
-            """), {
-                "provider_cost": provider_cost, "estimated_provider_cost": estimated_provider_cost,
-                "provider_price_id": provider_price["id"] if provider_price else None,
-                "operational_cost": operational_cost, "operational_price_id": cost_price["id"] if cost_price else None,
-                "snapshot": json.dumps(snapshot), "id": job["id"],
-            })
             reconciled += 1
         await db.commit()
     except ProgrammingError as exc:
@@ -750,77 +674,40 @@ async def complete_media_generation_artifact(
                "job": generation_id, "provenance": json.dumps(provenance),
                "generation_metadata": json.dumps(generation_metadata)})
         provider_cost = None
-        estimated_provider_cost = None
-        provider_price = None
         if usage:
             reported_cost = usage.get("provider_cost_microusd", usage.get("cost_microusd"))
             if isinstance(reported_cost, int) and reported_cost >= 0:
                 provider_cost = reported_cost
-            input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")))
-            output_tokens = usage.get("output_tokens", usage.get("completion_tokens", usage.get("total_output_tokens")))
-            if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-                provider_price = (await db.execute(text("""
-                    select id,input_microusd_per_million,output_microusd_per_million
-                    from public.ai_model_prices where provider_key=:provider and model_key=:model
-                      and is_active=true and effective_at<=now()
-                    order by effective_at desc,created_at desc limit 1
-                """), {"provider": row["provider_key"], "model": row["model_key"]})).mappings().first()
-                if provider_price:
-                    estimated_provider_cost = round(input_tokens * int(provider_price["input_microusd_per_million"]) / 1000000) + round(output_tokens * int(provider_price["output_microusd_per_million"]) / 1000000)
         await db.execute(text("""
             update public.media_generation_jobs set status='completed',asset_id=:asset,
               output_mime_type=:mime,output_size_bytes=:size,output_sha256=:sha,
               provider_provenance=cast(:provenance as jsonb),
               provider_usage=cast(:usage as jsonb),
               provider_cost_microusd=:provider_cost,
-              estimated_provider_cost_microusd=:estimated_provider_cost,
+              estimated_provider_cost_microusd=null,
               provider_cost_status=case when :provider_cost is null then 'unpriced' else 'priced' end,
               provider_operation_status='completed',provider_operation_last_polled_at=now(),
               completed_at=now(),worker_id=null,lease_expires_at=null,updated_at=now()
             where id=:id and status in ('processing','cancel_requested') and worker_id=:worker
         """), {"asset": asset_id, "mime": mime, "size": len(content), "sha": digest,
                "provenance": json.dumps(provenance), "usage": json.dumps(usage) if usage else None,
-               "provider_cost": provider_cost, "estimated_provider_cost": estimated_provider_cost,
-               "id": generation_id, "worker": worker_id})
-        if provider_cost is not None and row["quota_reservation_id"] is not None:
+               "provider_cost": provider_cost, "id": generation_id, "worker": worker_id})
+        if row["quota_reservation_id"] is not None:
             await release_fixed_operation(
-                db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-                resource_id=generation_id, reason="free_personal_mode_provider_cost_resolved",
+                db,
+                resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
+                resource_id=generation_id,
+                reason="personal_mode_completion_no_quota",
             )
-        quota_debit = 0
-        cost_price = (await db.execute(text("""
-            select id,microusd_per_unit,unit_name,effective_at
-            from public.quota_operation_prices
-            where price_kind='operational' and operation_key=:operation
-              and media_type=:type and provider_key=:provider and model_key=:model
-              and is_active=true and effective_at<=now()
-            order by effective_at desc,created_at desc limit 1
-        """), {"operation": "image_generation" if row["media_type"] == "image" else "video_generation",
-               "type": row["media_type"], "provider": row["provider_key"],
-               "model": row["model_key"]})).mappings().first()
-        operational_cost = None
-        if cost_price:
-            units = int((row["generation_config"] or {}).get("duration_seconds", 1)) if row["media_type"] == "video" else 1
-            operational_cost = int(cost_price["microusd_per_unit"]) * units
-        margin = None
-        economics_status = "complete" if provider_cost is not None and operational_cost is not None else ("partial" if estimated_provider_cost is not None or provider_cost is not None or operational_cost is not None else "unpriced")
         await db.execute(text("""
-            update public.media_generation_jobs set operational_cost_microusd=:operational,
-              quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics,
-              provider_price_id=:provider_price_id,operational_price_id=:operational_price_id,
-              price_snapshot=cast(:price_snapshot as jsonb),
-              quota_reconciliation_status='not_required',quota_reconciled_at=null,
-              currency='USD'
+            update public.media_generation_jobs set
+              operational_cost_microusd=null,quota_debit_microusd=0,margin_microusd=null,
+              economics_status=case when provider_cost_microusd is null then 'unpriced' else 'partial' end,
+              provider_price_id=null,operational_price_id=null,quota_reservation_id=null,
+              quota_reconciliation_status='not_required',quota_reconciled_at=now(),
+              price_snapshot='{}'::jsonb,currency='USD'
             where id=:id
-        """), {"operational": operational_cost, "debit": quota_debit, "margin": margin,
-               "economics": economics_status, "id": generation_id,
-               "provider_price_id": provider_price["id"] if provider_price else None,
-               "operational_price_id": cost_price["id"] if cost_price else None,
-               "price_snapshot": json.dumps({
-                   "provider": ({"id": str(provider_price["id"]), "input_microusd_per_million": int(provider_price["input_microusd_per_million"]), "output_microusd_per_million": int(provider_price["output_microusd_per_million"]) } if provider_price else None),
-                   "operational": ({"id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]), "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat()} if cost_price else None)
-               }),
-               })
+        """), {"id": generation_id})
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
             values(:actor,:workspace,'media_generation.completed','media_generation',:id,:request,cast(:metadata as jsonb))

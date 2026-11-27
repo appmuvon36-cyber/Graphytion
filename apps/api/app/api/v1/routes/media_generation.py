@@ -180,7 +180,7 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
     try:
         rows = (await db.execute(text("""
         select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
-               provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
+               provider_job_id as provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
                provider_cost_status,provider_cost_microusd,operational_cost_microusd,
                quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
@@ -224,7 +224,7 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
         "id": str(row["id"]), "project_id": str(row["project_id"]),
         "media_type": row["media_type"], "provider_key": row["provider_key"],
         "model_key": row["model_key"], "status": row["status"],
-        "provider_operation_id": row["provider_operation_id"],
+        "provider_operation_id": row["provider_job_id"],
         "error_code": row["error_code"], "attempt_count": row["attempt_count"],
         "generation_config": row["generation_config"],
         "provider_provenance": row["provider_provenance"],
@@ -406,7 +406,7 @@ async def save_media_provider_operation(
     await set_rls_subject(db, str(owner))
     result = await db.execute(text("""
         update public.media_generation_jobs
-        set provider_operation_id=:operation,updated_at=now()
+        set provider_job_id=:operation,updated_at=now()
         where id=:id and worker_id=:worker and status in ('processing','cancel_requested')
           and provider_key='gemini'
         returning id

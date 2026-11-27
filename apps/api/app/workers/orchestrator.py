@@ -741,7 +741,7 @@ async def _dispatch_render(
         """), {
             "workspace": run["workspace_id"], "project": run["project_id"], "actor": run["requested_by"],
             "snapshot": _canonical(snapshot), "hash": digest, "config": _canonical(render_config),
-            "key": render_idempotency_key, "profile": profile["id"], "version": version or snapshot.get("version"),
+            "key": render_idempotency_key, "profile": profile["id"], "version": snapshot["version"],
             "assets": _canonical([str(asset_id) for asset_id in asset_ids]),
             "timeline": timeline_id, "attempts": max_attempts, "run": envelope.run_id,
             "step": envelope.step_id,

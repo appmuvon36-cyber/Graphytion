@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     internal_worker_token: SecretStr | None = Field(default=None, repr=False)
     openai_api_key: SecretStr | None = Field(default=None, repr=False)
+    gemini_api_key: SecretStr | None = Field(default=None, repr=False)
+    llm_default_provider: str = "openai"
     llm_model_key: str = "gpt-4.1-mini"
+    gemini_model_key: str = "gemini-2.5-flash"
     llm_timeout_seconds: int = Field(default=60, ge=5, le=180)
 
     @property
@@ -94,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def openai_api_key_value(self) -> str | None:
         return self.openai_api_key.get_secret_value() if self.openai_api_key else None
+
+    @property
+    def gemini_api_key_value(self) -> str | None:
+        return self.gemini_api_key.get_secret_value() if self.gemini_api_key else None
 
     @property
     def resend_webhook_secret_value(self) -> str | None:

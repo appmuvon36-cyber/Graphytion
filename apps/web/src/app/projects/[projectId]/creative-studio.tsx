@@ -40,6 +40,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
   const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
   const [mediaGenerations,setMediaGenerations]=useState<MediaGenerationApi[]>([]);
+  const [mediaLoadError,setMediaLoadError]=useState('');
   const [mediaPrompt,setMediaPrompt]=useState('');
   const [mediaType,setMediaType]=useState<'image'|'video'>('image');
   const [mediaAspectRatio,setMediaAspectRatio]=useState('1:1');
@@ -90,7 +91,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets?scope=workspace'),
         call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
-        api.listMediaGenerations(projectId),
+        api.listMediaGenerations(projectId).then(result=>{setMediaLoadError('');return result;}).catch(error=>{setMediaLoadError(error instanceof Error?error.message:'Media generation API belum tersedia');return {data: [] as MediaGenerationApi[]};}),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
       setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data); setMediaGenerations(mediaResult.data);
@@ -563,6 +564,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     <section style={panel}>
       <h2 style={{marginTop:0}}>07 · Image & Video Generation</h2>
       <p style={{fontSize:12,color:'#68788e'}}>Image dan video generation diproses melalui Media Worker existing. Artifact tervalidasi otomatis masuk ke Project Assets.</p>
+      {mediaLoadError&&<p role="status" style={{fontSize:12,color:'#9b4a12'}}>Media generation belum siap: {mediaLoadError}</p>}
       <form onSubmit={generateMedia} style={{display:'grid',gap:9}}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
           <select aria-label="Media type" value={mediaType} onChange={event=>{const value=event.target.value as 'image'|'video';setMediaType(value);setMediaAspectRatio(value==='image'?'1:1':'16:9');}} style={field}>

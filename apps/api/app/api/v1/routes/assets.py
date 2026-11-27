@@ -313,8 +313,14 @@ async def delete_project_asset(
             )
           )
     """), {"workspace": row["workspace_id"], "asset": str(asset_id)})
+    media_jobs_table = await db.scalar(text("select to_regclass('public.media_generation_jobs') is not null"))
+    if not referenced and media_jobs_table:
+        referenced = await db.scalar(text("""
+            select exists(select 1 from public.media_generation_jobs
+              where asset_id=:asset and status='completed')
+        """), {"asset": asset_id})
     if referenced:
-        raise HTTPException(status_code=409, detail="Asset is still referenced by a Brand Kit, saved timeline, or published template")
+        raise HTTPException(status_code=409, detail="Asset is still referenced by a Brand Kit, saved timeline, published template, or generation history")
     await db.execute(text("""
         update public.project_assets set status='deleting' where id=:asset
     """), {"asset": asset_id})

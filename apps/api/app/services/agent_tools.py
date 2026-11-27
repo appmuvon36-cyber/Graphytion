@@ -79,7 +79,10 @@ class AgentToolRegistry:
     def validate(self, stage: str, payload: dict[str, Any]) -> dict[str, Any]:
         tool = self.for_stage(stage)
         try:
-            return tool.input_model.model_validate(payload).model_dump(mode="json")
+            return tool.input_model.model_validate({
+                key: value for key, value in payload.items()
+                if key in tool.input_model.model_fields
+            }).model_dump(mode="json")
         except Exception as exc:
             raise HTTPException(status_code=422, detail="Agent tool input does not match its registered schema") from exc
 

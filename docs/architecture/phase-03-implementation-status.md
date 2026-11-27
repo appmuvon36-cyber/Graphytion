@@ -422,3 +422,15 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 - Migration `20261127022414_gemini_developer_api_only.sql` normalizes any legacy Agent Platform provider labels and constrains media generation to Gemini. It follows existing media migrations 22409–22413 and must be applied before enabling the new API path in production.
 - Provider usage and cost remain unpriced unless returned usage can be reconciled to an active price-book row. No usage or provider cost is fabricated.
 - Source implementation is committed to `main`; no live generation request or synthetic transaction was run. Provider runtime, actual provider cancellation outcome, Supabase migration application, and artifact delivery remain pending production evidence.
+
+
+## Remotion production integration continuation — 2026-11-27
+
+- Render submission no longer reserves, reconciles, or releases quota operations. Render lifecycle is personal-use and has no Graphytion quota debit or pricing dependency. Existing economics tables are retained for compatibility; this slice does not drop or mutate them.
+- On validated final artifact upload, FastAPI registers the MP4/WebM in `public.project_assets` using the existing private `render-artifacts` bucket. Provenance and generation metadata include the render job ID, immutable timeline hash, composition version and render profile configuration. The existing Asset Library list, signed preview/download and workspace scoping therefore expose final renders without copying the binary into a second bucket.
+- Asset deletion now protects completed render outputs referenced by their persisted render-job metadata. Existing project timeline, template, Brand Kit and generation-history protection remains in place.
+- No schema migration is required: the current asset metadata columns and render tables are reused. No Supabase production migration or synthetic render job was run.
+- Source-level verification: render API has no quota/fixed-operation references; final artifact insertion matches the existing `project_assets` columns introduced by the applied media runtime migration; worker output still uses ffprobe validation and the existing private storage upload endpoint.
+- Runtime render output and Asset Library display remain unverified until a real render is performed; this was intentionally not run under the owner's no-real-test rule.
+
+**Implementation commits:** `aafed8b7cd806ab410da0171595252b4eb4273a8`, `cea3f121e7ad0303360427cf09b5b9c833143ae2`, `c783eeb0a67a2efb68f51e9ee4d8251ea6e62f82`. Phase 03 remains OPEN pending remaining integration and runtime evidence.

@@ -156,7 +156,8 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
     rows = (await db.execute(text("""
         select id,media_type,provider_key,model_key,status,error_code,attempt_count,
                asset_id,output_mime_type,output_size_bytes,output_sha256,
-               provider_cost_status,provider_cost_microusd,created_at,started_at,completed_at
+               provider_cost_status,provider_cost_microusd,operational_cost_microusd,
+               quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
         order by created_at desc limit 200
     """), {"project": project_id})).mappings().all()
@@ -193,6 +194,10 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
         "provider_usage": row["provider_usage"],
         "provider_cost_status": row["provider_cost_status"],
         "provider_cost_microusd": row["provider_cost_microusd"],
+        "operational_cost_microusd": row["operational_cost_microusd"],
+        "quota_debit_microusd": row["quota_debit_microusd"],
+        "margin_microusd": row["margin_microusd"],
+        "economics_status": row["economics_status"],
         "created_at": row["created_at"], "completed_at": row["completed_at"],
         "artifact": artifact,
     }}
@@ -492,6 +497,31 @@ async def complete_media_generation_artifact(
             db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
             resource_id=generation_id,
         )
+        reservation = (await db.execute(text("""
+            select consumed_microusd from public.quota_reservations
+            where id=:id and status='consumed'
+        """), {"id": row["quota_reservation_id"]})).mappings().first() if row["quota_reservation_id"] else None
+        quota_debit = int(reservation["consumed_microusd"]) if reservation else None
+        cost_price = (await db.execute(text("""
+            select microusd_per_unit,unit_name
+            from public.media_operational_cost_prices
+            where media_type=:type and provider_key=:provider and model_key=:model
+              and is_active=true and effective_at<=now()
+            order by effective_at desc,created_at desc limit 1
+        """), {"type": row["media_type"], "provider": row["provider_key"],
+               "model": row["model_key"]})).mappings().first()
+        operational_cost = None
+        if cost_price:
+            units = int((row["generation_config"] or {}).get("duration_seconds", 1)) if row["media_type"] == "video" else 1
+            operational_cost = int(cost_price["microusd_per_unit"]) * units
+        margin = quota_debit - provider_cost - operational_cost if quota_debit is not None and provider_cost is not None and operational_cost is not None else None
+        economics_status = "complete" if margin is not None else ("partial" if any(value is not None for value in (quota_debit, provider_cost, operational_cost)) else "unpriced")
+        await db.execute(text("""
+            update public.media_generation_jobs set operational_cost_microusd=:operational,
+              quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics
+            where id=:id
+        """), {"operational": operational_cost, "debit": quota_debit, "margin": margin,
+               "economics": economics_status, "id": generation_id})
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
             values(:actor,:workspace,'media_generation.completed','media_generation',:id,:request,cast(:metadata as jsonb))

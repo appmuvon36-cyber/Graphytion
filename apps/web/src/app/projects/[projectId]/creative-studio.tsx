@@ -358,21 +358,58 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     if (!workflowRunId) return;
     setBusy(true); setError('');
     try {
+      let parsedScriptSegments: Array<{text:string}> = [];
+      try {
+        const parsed = JSON.parse(scriptText) as {segments?:Array<{text?:unknown}>};
+        parsedScriptSegments = Array.isArray(parsed.segments)
+          ? parsed.segments.map(segment=>({text:String(segment.text??'').trim()})).filter(segment=>segment.text)
+          : [];
+      } catch { /* The explicit voice text remains the authoritative fallback. */ }
+      let visualPrompt = mediaPrompt.trim() || prompt.trim();
+      if (!visualPrompt) {
+        try {
+          const scenes = JSON.parse(sceneJson) as Array<{title?:string;visual_direction?:{description?:string;movement?:string;composition?:string}}>;
+          visualPrompt = scenes.map(scene=>[scene.title,scene.visual_direction?.description,scene.visual_direction?.movement,scene.visual_direction?.composition].filter(Boolean).join(' — ')).filter(Boolean).join('\n');
+        } catch { /* Missing visual direction is reported below. */ }
+      }
+      const narration = voiceText.trim() || parsedScriptSegments.map(segment=>segment.text).join('\n');
+      if (!visualPrompt.trim()) throw new Error('Isi Media Prompt atau storyboard visual direction sebelum menjalankan workflow otomatis.');
+      if (!narration.trim()) throw new Error('Isi Voice Text atau script segments sebelum menjalankan workflow otomatis.');
+      const subtitleTexts = parsedScriptSegments.length ? parsedScriptSegments.map(segment=>segment.text) : [narration];
+      let subtitleCursor = 0;
+      const subtitleSegments = subtitleTexts.flatMap(value => {
+        const chunks = value.match(/.{1,280}(?:\\s|$)/g) || [value];
+        return chunks.map(chunk=>{
+          const textValue = chunk.trim();
+          if (!textValue) return null;
+          const start_ms = subtitleCursor;
+          subtitleCursor += Math.max(1800,Math.ceil(textValue.length/14*1000));
+          return {start_ms,end_ms:subtitleCursor,text:textValue};
+        }).filter((segment):segment is {start_ms:number;end_ms:number;text:string}=>segment!==null);
+      });
+      const mediaConfig = mediaType === 'image'
+        ? {aspect_ratio:mediaAspectRatio,image_size:mediaImageSize}
+        : {aspect_ratio:mediaAspectRatio,duration_seconds:mediaDurationSeconds,resolution:mediaResolution};
       await api.createProductionWorkflow(workflowRunId, [
         { key:'creative_agents', step_type:'agent' },
         { key:'creative_review', step_type:'creative', depends_on:['creative_agents'], requires_approval:true },
-        { key:'media_generation', step_type:'media_generation', depends_on:['creative_review'] },
+        { key:'media_generation', step_type:'media_generation', depends_on:['creative_review'],
+          config:{media_type:mediaType,model_key:mediaType==='image'?'gemini-3.1-flash-image':'gemini-omni-1.2-flash',prompt:visualPrompt,generation_config:mediaConfig} },
         { key:'asset_persistence', step_type:'asset_persistence', depends_on:['media_generation'] },
-        { key:'voiceover', step_type:'voiceover', depends_on:['creative_review'] },
-        { key:'subtitle', step_type:'subtitle', depends_on:['voiceover'] },
-        { key:'timeline', step_type:'timeline', depends_on:['asset_persistence','subtitle'] },
+        { key:'voiceover', step_type:'voiceover', depends_on:['creative_review'],
+          config:{text:narration,provider_key:voiceProvider,model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID'} },
+        { key:'subtitle', step_type:'subtitle', depends_on:['voiceover'],
+          config:{language:project?.default_language||'id-ID',format:'webvtt',style_config:{position:'bottom'},segments:subtitleSegments} },
+        { key:'timeline', step_type:'timeline', depends_on:['asset_persistence','subtitle'],
+          config:previewSnapshot?{snapshot:previewSnapshot,...(timelineVersion?{expected_version:timelineVersion}:{})}:{} },
         { key:'composition', step_type:'composition', depends_on:['timeline'] },
-        { key:'render', step_type:'render', depends_on:['composition'] },
+        { key:'render', step_type:'render', depends_on:['composition'],
+          config:previewSnapshot?{snapshot:previewSnapshot}:{} },
         { key:'quality_check', step_type:'quality_check', depends_on:['render'] },
         { key:'delivery', step_type:'delivery', depends_on:['quality_check'] },
       ]);
       const refreshed = await api.getProductionWorkflow(workflowRunId);
-      setWorkflow(refreshed.data); setNotice('Production workflow persisted. Setujui creative review untuk membuka tahap berikutnya.');
+      setWorkflow(refreshed.data); setNotice('Production workflow tersimpan. Dispatcher akan melanjutkan tahap otomatis setelah creative review disetujui.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Workflow could not be created'); }
     finally { setBusy(false); }
   }

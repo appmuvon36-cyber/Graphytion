@@ -517,7 +517,7 @@ Existing production services only; no additional service or database was created
 
 This section supersedes earlier runtime statements above where they conflict with the current connected production evidence.
 
-**Current source:** branch `main`, HEAD `a3def8e0e9efd6482f9ed24a50725a88ce43ba5a`.  
+**Application source HEAD:** branch `main`, `a3def8e0e9efd6482f9ed24a50725a88ce43ba5a`.  
 **Dispatcher implementation commit:** `8a962bbe233e6e8ca37e3c32e839b382b7e9d441`. Subsequent integration refinements include RLS-safe reconciliation/failure recording, TTS word-alignment subtitle timing, and Studio auto-completion of the approved creative gate.  
 **CI:** workflow run `46049427514` completed SUCCESS on HEAD `a3def8e0e9efd6482f9ed24a50725a88ce43ba5a`; typecheck, web/admin build, Remotion bundle, migration SQL parse, Python compile/lint/import, worker import and FastAPI startup smoke all passed. Railway rebuilt and started that HEAD successfully.
 

@@ -81,6 +81,8 @@ class SubtitleSegment(BaseModel):
     end_ms: int = Field(gt=0)
     text: str = Field(min_length=1, max_length=4000)
     speaker: str | None = None
+    word_timings: list[dict[str, Any]] = Field(default_factory=list)
+    alignment_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SubtitleConfiguration(BaseModel):
@@ -489,6 +491,59 @@ async def _dispatch_subtitles(
         raise StepInputError("Subtitle segment end_ms must be greater than start_ms")
     audio_output = envelope.dependency_outputs.get("audio_processing", {})
     audio_asset_id = audio_output.get("asset_id")
+    audio_row = (await db.execute(text("""
+        select asset_id,alignment_status,alignment_result
+        from public.audio_generations
+        where production_run_id=:run and status='completed'
+        order by created_at desc limit 1
+    """), {"run": envelope.run_id})).mappings().first()
+    if audio_row:
+        audio_asset_id = audio_asset_id or (str(audio_row["asset_id"]) if audio_row["asset_id"] else None)
+        alignment = audio_row["alignment_result"] or {}
+        raw_words = alignment.get("words", []) if audio_row["alignment_status"] == "available" else []
+        normalized_words: list[dict[str, Any]] = []
+        for word in raw_words if isinstance(raw_words, list) else []:
+            if (not isinstance(word, dict) or not isinstance(word.get("start_ms"), int)
+                or not isinstance(word.get("end_ms"), int) or not isinstance(word.get("text"), str)
+                or word["start_ms"] < 0 or word["end_ms"] <= word["start_ms"] or not word["text"].strip()):
+                normalized_words = []
+                break
+            normalized_words.append({
+                "start_ms": word["start_ms"], "end_ms": word["end_ms"],
+                "text": word["text"].strip(),
+            })
+        if normalized_words and all(
+            normalized_words[index]["start_ms"] >= normalized_words[index-1]["start_ms"]
+            for index in range(1, len(normalized_words))
+        ):
+            aligned_segments: list[SubtitleSegment] = []
+            group: list[dict[str, Any]] = []
+            def flush_alignment_group() -> None:
+                if not group:
+                    return
+                word_timings = [{
+                    **word, "audio_asset_id": str(audio_asset_id),
+                    "provider": alignment.get("provider", "tts"),
+                } for word in group]
+                aligned_segments.append(SubtitleSegment(
+                    start_ms=group[0]["start_ms"], end_ms=group[-1]["end_ms"],
+                    text=" ".join(word["text"] for word in group),
+                    word_timings=word_timings,
+                    alignment_metadata={"source": "tts_word_alignment",
+                                        "provider": alignment.get("provider", "tts")},
+                ))
+                group.clear()
+            for word in normalized_words:
+                candidate_text = " ".join(item["text"] for item in group + [word])
+                gap = word["start_ms"] - group[-1]["end_ms"] if group else 0
+                if group and (len(candidate_text) > 42 or len(group) >= 7 or gap > 450):
+                    flush_alignment_group()
+                group.append(word)
+                if word["text"][-1:] in {".", "!", "?", ",", ";", ":"}:
+                    flush_alignment_group()
+            flush_alignment_group()
+            if aligned_segments:
+                config.segments = aligned_segments
     old = (await db.execute(
         text("select id,version from public.subtitle_tracks where parent_step_id=:step and production_run_id=:run"),
         {"step": envelope.step_id, "run": envelope.run_id},
@@ -513,6 +568,9 @@ async def _dispatch_subtitles(
             item = SubtitleSegmentInput(
                 segment_index=index, start_ms=segment.start_ms, end_ms=segment.end_ms,
                 text=segment.text, speaker=segment.speaker,
+                word_timings=segment.word_timings,
+                alignment_metadata={**segment.alignment_metadata,
+                    "audio_asset_id": str(audio_asset_id) if audio_asset_id else None},
                 audio_asset_id=UUID(str(audio_asset_id)) if audio_asset_id else None,
             )
             await _insert_segment(

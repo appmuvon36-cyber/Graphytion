@@ -1,12 +1,21 @@
 # Graphytion Media Worker
 
-Provider-backed asynchronous image, video and voice-over generation. PostgreSQL is the durable job queue. The worker polls authenticated FastAPI claim endpoints, acquires transactional leases, generates images with Gemini 3.1 Flash Image through the Gemini API and short videos with Gemini Omni Flash through Google Agent Platform, synthesizes MP3 through Gemini/OpenAI TTS adapters, and uploads validated artifacts through FastAPI to private Supabase Storage. Heartbeats extend active leases and a recovery scan reclaims expired leases. No external queue broker is required. No audio is fabricated when provider credentials are absent.
+Provider-backed image, video and voice-over generation on the existing Media Worker. PostgreSQL is the durable job queue; workers claim jobs through authenticated FastAPI endpoints, use transactional leases and heartbeats, and upload validated artifacts through FastAPI to private Supabase Storage. No additional worker, queue, or provider runtime is introduced.
 
 Build from repository root: `docker build -f services/media-worker/Dockerfile -t graphytion-media-worker .`
 
-Required runtime values are listed in `.env.example`; supply them only in the deployment secret manager during the deployment phase.
+## Image and video generation
 
+Both image and video generation use the **Gemini Developer API** and the same server-side `GEMINI_API_KEY` secret. The worker sends the key only in the `x-goog-api-key` request header; it is never returned to the browser or logged.
 
-Image generation uses `GEMINI_IMAGE_MODEL` (default `gemini-3.1-flash-image`). Video generation uses `gemini-omni-1.2-flash` through the Google Agent Platform Interactions API with OAuth credentials. Configure `GOOGLE_CLOUD_PROJECT` and either `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_SERVICE_ACCOUNT_JSON` on the existing Media Worker. Provider output is validated by MIME and file signature before it is accepted. Provider cost is explicitly recorded as unpriced unless the provider returns token usage that can be reconciled against a configured model price book; the worker never invents a cost.
+- Image: `gemini-3.1-flash-image` through `POST https://generativelanguage.googleapis.com/v1beta/interactions`.
+- Video: `gemini-omni-1.2-flash` through the same Interactions API. Video jobs use background execution, persist the returned interaction ID, poll `GET /v1beta/interactions/{id}`, and request cancellation through `POST /v1beta/interactions/{id}/cancel` when cancellation is requested.
+- Video output is accepted only when the provider returns inline base64 MP4 data. Google Cloud Storage URIs are not fetched by this worker.
 
-The Media Worker also claims the durable `media_generation_jobs` queue and continues to service existing voice-over jobs. It does not create a separate image/video worker.
+Provider output is validated by MIME type and file signature before FastAPI stores it as a private project asset. Provider usage and cost remain explicitly unpriced unless verifiable usage and a matching active price-book entry are available. The worker never invents usage or cost.
+
+## Runtime configuration
+
+Required for worker startup: `GRAPHYTION_API_BASE_URL`, `INTERNAL_WORKER_TOKEN`, and `GEMINI_API_KEY`. Optional variables for the existing voice-over pipeline are documented in `.env.example`. No Google Cloud Project, Service Account, ADC, Vertex AI, or Agent Platform credentials are required.
+
+The worker continues to service existing TTS jobs and media generation jobs from the same durable PostgreSQL queue.

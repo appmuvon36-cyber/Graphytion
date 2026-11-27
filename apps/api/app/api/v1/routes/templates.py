@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -50,10 +50,20 @@ class TemplateCreate(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 
+class BrandLogoLayout(BaseModel):
+    width_percent: float = Field(default=16, ge=4, le=40)
+    height_percent: float = Field(default=12, ge=4, le=40)
+    opacity: float = Field(default=1, ge=0.1, le=1)
+    anchor: Literal["top-left", "top-right", "bottom-left", "bottom-right", "center"] = "top-right"
+    margin_percent: float = Field(default=4, ge=0, le=12)
+    fit: Literal["contain", "cover"] = "contain"
+
+
 class BrandConfig(BaseModel):
     colors: dict[str, str] = Field(default_factory=dict)
     typography: dict[str, str] = Field(default_factory=dict)
     logo_asset_id: UUID | None = None
+    logo_layout: BrandLogoLayout = Field(default_factory=BrandLogoLayout)
     voice_style: str | None = Field(default=None, max_length=240)
 
     @field_validator("colors")

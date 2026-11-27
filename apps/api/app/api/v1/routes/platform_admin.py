@@ -979,7 +979,7 @@ async def set_quota_operation_price(
 ):
     actor = _actor(claims)
     await _require_super_admin(db, actor)
-    allowed = {"voiceover_per_1000_chars","render_per_second","image_generation","video_generation"}
+    allowed = {"voiceover_per_1000_chars","render_per_second"}  # Media generation is free personal usage.
     if operation_key not in allowed:
         raise HTTPException(status_code=422, detail="Unsupported quota operation key")
     await db.execute(text("""

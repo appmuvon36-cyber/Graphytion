@@ -6,15 +6,15 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from redis.asyncio import Redis
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.config import settings
-from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.creative_pipeline import creative_pipeline
+from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
 permissions = WorkspacePermissionResolver()

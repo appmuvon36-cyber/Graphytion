@@ -81,8 +81,12 @@ def apply_brand_tokens(
             "brandKitLogo": True,
             "props": {
                 "assetId": asset_id, "fit": "contain", "position": "center",
-                "opacity": 1, "widthPercent": 16, "heightPercent": 12,
-                "anchor": "top-right", "marginPercent": 4,
+                "opacity": float(logo_layout.get("opacity", 1)),
+                "widthPercent": float(logo_layout.get("width_percent", 16)),
+                "heightPercent": float(logo_layout.get("height_percent", 12)),
+                "anchor": logo_layout.get("anchor", "top-right"),
+                "marginPercent": float(logo_layout.get("margin_percent", 4)),
+                "fit": logo_layout.get("fit", "contain"),
             },
         })
         refs = result.setdefault("assetRefs", [])

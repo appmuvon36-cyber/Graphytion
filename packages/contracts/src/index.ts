@@ -260,3 +260,30 @@ export const ProjectAssetApiSchema = z.object({
   thumbnail_url: z.string().url().nullable().optional(),
 }).strict();
 export type ProjectAssetApi = z.infer<typeof ProjectAssetApiSchema>;
+
+
+export const ConversationThreadApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID.nullable(), title: z.string(),
+  status: z.enum(['active','archived']), metadata: z.record(z.string(),z.unknown()),
+  last_message_at: Timestamp.nullable(), created_at: Timestamp, updated_at: Timestamp,
+}).strict();
+export const ConversationMessageApiSchema = z.object({
+  id: UUID, sequence_no: z.number().int().positive(),
+  role: z.enum(['system','user','assistant','tool']), content: z.string(),
+  metadata: z.record(z.string(),z.unknown()), provenance: z.array(z.record(z.string(),z.unknown())),
+  created_at: Timestamp,
+}).strict();
+export const MemoryItemApiSchema = z.object({
+  id: UUID, workspace_id: UUID, project_id: UUID.nullable(),
+  scope: z.enum(['personal','project']),
+  memory_type: z.enum(['preference','context','fact','decision','episodic','procedural']),
+  title: z.string(), content: z.string(),
+  source_type: z.enum(['conversation','project','user_input','agent_output','import']),
+  source_id: z.string().nullable(), provenance: z.record(z.string(),z.unknown()),
+  tags: z.array(z.string()), importance: z.number(), confidence: z.number(),
+  expires_at: Timestamp.nullable(), last_accessed_at: Timestamp.nullable(),
+  created_at: Timestamp, updated_at: Timestamp,
+}).strict();
+export type ConversationThreadApi = z.infer<typeof ConversationThreadApiSchema>;
+export type ConversationMessageApi = z.infer<typeof ConversationMessageApiSchema>;
+export type MemoryItemApi = z.infer<typeof MemoryItemApiSchema>;

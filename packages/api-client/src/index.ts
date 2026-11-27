@@ -1,4 +1,4 @@
-import type { RenderJobApi } from '@graphytion/contracts';
+import type { RenderJobApi, ConversationThreadApi, ConversationMessageApi, MemoryItemApi } from '@graphytion/contracts';
 
 export type MediaGenerationApi = {
   id: string;
@@ -195,5 +195,36 @@ export function createApiClient(options: ApiClientOptions) {
       request<RenderCancelResponseApi>(`renders/${id}/cancel`, { method: 'POST' }),
     downloadRender: (id: string) =>
       request<RenderDownloadResponseApi>(`renders/${id}/download`),
+    listConversations: (workspaceId: string) =>
+      request<{ data: ConversationThreadApi[] }>(`workspaces/${workspaceId}/conversations`),
+    createConversation: (workspaceId: string, body: { title?: string; project_id?: string | null; metadata?: Record<string, unknown> }) =>
+      request<{ data: ConversationThreadApi }>(`workspaces/${workspaceId}/conversations`, { method: 'POST', body: JSON.stringify(body) }),
+    listConversationMessages: (conversationId: string) =>
+      request<{ data: ConversationMessageApi[] }>(`conversations/${conversationId}/messages`),
+    addConversationMessage: (conversationId: string, body: { content: string; metadata?: Record<string, unknown> }) =>
+      request<{ data: ConversationMessageApi }>(`conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+    listMemories: (workspaceId: string, params: { query?: string; project_id?: string; limit?: number } = {}) => {
+      const query = new URLSearchParams();
+      if (params.query) query.set('query', params.query);
+      if (params.project_id) query.set('project_id', params.project_id);
+      if (params.limit) query.set('limit', String(params.limit));
+      return request<{ data: MemoryItemApi[] }>(`workspaces/${workspaceId}/memories?${query.toString()}`);
+    },
+    createMemory: (workspaceId: string, body: {
+      scope: 'personal' | 'project'; memory_type: 'preference' | 'context' | 'fact' | 'decision' | 'episodic' | 'procedural';
+      project_id?: string | null; title: string; content: string;
+      source_type: 'conversation' | 'project' | 'user_input' | 'agent_output' | 'import';
+      source_id?: string | null; provenance?: Record<string, unknown>; tags?: string[];
+      importance?: number; confidence?: number; expires_at?: string | null;
+    }) => request<{ data: MemoryItemApi }>(`workspaces/${workspaceId}/memories`, { method: 'POST', body: JSON.stringify(body) }),
+    getProjectMemoryContext: (projectId: string, query = '', conversationId?: string) => {
+      const params = new URLSearchParams();
+      if (query) params.set('query', query);
+      if (conversationId) params.set('conversation_id', conversationId);
+      return request<{ data: { memory: MemoryItemApi[]; conversation: ConversationMessageApi[]; provenance: Array<Record<string, unknown>> } }>(
+        `projects/${projectId}/memory-context?${params.toString()}`
+      );
+    },
+    deleteMemory: (memoryId: string) => request<void>(`memories/${memoryId}`, { method: 'DELETE' }),
   };
 }

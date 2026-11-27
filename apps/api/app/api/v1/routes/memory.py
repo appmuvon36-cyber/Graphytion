@@ -76,7 +76,7 @@ async def create_conversation(
     row = (await db.execute(text("""
         insert into public.conversation_threads(workspace_id,project_id,owner_user_id,title,metadata)
         values(:workspace,:project,:actor,:title,cast(:metadata as jsonb))
-        returning id,workspace_id,project_id,title,status,metadata,created_at,updated_at
+        returning id,workspace_id,project_id,title,status,metadata,last_message_at,created_at,updated_at
     """), {
         "workspace": workspace_id, "project": payload.project_id, "actor": actor,
         "title": payload.title.strip(), "metadata": json.dumps(payload.metadata),
@@ -168,7 +168,7 @@ async def create_memory(
           cast(:expires as timestamptz)
         )
         returning id,workspace_id,project_id,scope,memory_type,title,content,source_type,
-          source_id,provenance,tags,importance,confidence,expires_at,created_at
+          source_id,provenance,tags,importance,confidence,expires_at,last_accessed_at,created_at,updated_at
     """), {
         "workspace": workspace_id, "project": payload.project_id, "actor": actor,
         "scope": payload.scope, "type": payload.memory_type, "title": payload.title.strip(),

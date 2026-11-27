@@ -8,6 +8,7 @@ import { TemplateBrandPanel } from './template-brand-panel';
 import type {CompositionSnapshot,ResolvedCompositionAssets} from '@graphytion/motion-components';
 import type {
   CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
+  ConversationThreadApi, ConversationMessageApi, MemoryItemApi,
 } from '@graphytion/contracts';
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
@@ -71,6 +72,17 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [conversations, setConversations] = useState<ConversationThreadApi[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState('');
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessageApi[]>([]);
+  const [conversationDraft, setConversationDraft] = useState('');
+  const [conversationTitle, setConversationTitle] = useState('Creative discussion');
+  const [memories, setMemories] = useState<MemoryItemApi[]>([]);
+  const [memoryTitle, setMemoryTitle] = useState('');
+  const [memoryContent, setMemoryContent] = useState('');
+  const [memoryType, setMemoryType] = useState<MemoryItemApi['memory_type']>('context');
+  const [memoryScope, setMemoryScope] = useState<'personal'|'project'>('project');
+  const [memoryQuery, setMemoryQuery] = useState('');
 
   const call = useCallback(async <T,>(request: string | (() => Promise<T>), init: RequestInit = {}) => {
     try { return typeof request === 'function' ? await request() : await api.request<T>(request, init); }
@@ -96,6 +108,11 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
       setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
+      const conversationResult = await api.listConversations(p.data.workspace_id);
+      setConversations(conversationResult.data);
+      setSelectedConversation(current => current || conversationResult.data[0]?.id || '');
+      const memoryResult = await api.listMemories(p.data.workspace_id, { project_id: projectId, limit: 30 });
+      setMemories(memoryResult.data);
       // Keep other project panels usable, but never translate a failed media
       // request into a misleading empty state.
       try {
@@ -112,6 +129,17 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   }, [api, call, projectId, selectedBrief, selectedScript]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!selectedConversation) { setConversationMessages([]); return; }
+    let active = true;
+    void api.listConversationMessages(selectedConversation).then(result => {
+      if (active) setConversationMessages(result.data);
+    }).catch(error => {
+      if (active) setError(error instanceof Error ? error.message : 'Conversation history unavailable');
+    });
+    return () => { active = false; };
+  }, [api, selectedConversation]);
 
   useEffect(() => {
     if (!mediaGenerations.some(item => ['queued','processing','cancel_requested'].includes(item.status))) return;
@@ -132,17 +160,77 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     return () => window.clearInterval(timer);
   }, [api, load, mediaGenerations, projectId]);
 
+  async function createConversation() {
+    if (!project) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api.createConversation(project.workspace_id, {
+        title: conversationTitle, project_id: projectId, metadata: { source: 'customer_studio' },
+      });
+      setConversations(current => [result.data, ...current]);
+      setSelectedConversation(result.data.id);
+      setConversationMessages([]);
+      setNotice('Conversation tersimpan dan terhubung ke project.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Gagal membuat conversation'); }
+    finally { setBusy(false); }
+  }
+
+  async function sendConversationMessage() {
+    if (!selectedConversation || !conversationDraft.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await api.addConversationMessage(selectedConversation, { content: conversationDraft.trim() });
+      setConversationDraft('');
+      const result = await api.listConversationMessages(selectedConversation);
+      setConversationMessages(result.data);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Gagal menyimpan pesan'); }
+    finally { setBusy(false); }
+  }
+
+  async function saveMemory() {
+    if (!project || !memoryTitle.trim() || !memoryContent.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await api.createMemory(project.workspace_id, {
+        scope: memoryScope, memory_type: memoryType,
+        project_id: memoryScope === 'project' ? projectId : null,
+        title: memoryTitle.trim(), content: memoryContent.trim(),
+        source_type: 'user_input', provenance: { source: 'customer_studio', created_by_user: true },
+      });
+      setMemoryTitle(''); setMemoryContent('');
+      const result = await api.listMemories(project.workspace_id, { project_id: projectId, limit: 30 });
+      setMemories(result.data);
+      setNotice('Memory tersimpan dan siap digunakan Agent Runtime.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Gagal menyimpan memory'); }
+    finally { setBusy(false); }
+  }
+
+  async function searchMemoryContext() {
+    if (!project) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api.getProjectMemoryContext(projectId, memoryQuery, selectedConversation || undefined);
+      setMemories(result.data.memory);
+      setConversationMessages(result.data.conversation);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Memory context unavailable'); }
+    finally { setBusy(false); }
+  }
+
   async function generateStage(stage: 'brief' | 'script' | 'storyboard') {
     setBusy(true); setError(''); setNotice('');
     try {
-      const body = stage === 'brief' ? { input_prompt: prompt }
-        : stage === 'script' ? { brief_id: selectedBrief }
-        : { script_id: selectedScript };
+      const body = stage === 'brief' ? { input_prompt: prompt, conversation_id: selectedConversation || null }
+        : stage === 'script' ? { brief_id: selectedBrief, conversation_id: selectedConversation || null }
+        : { script_id: selectedScript, conversation_id: selectedConversation || null };
       const result = await call<{data:{run_id:string;status:string;artifact_type?:string}}>('/projects/' + projectId + '/creative-runs/' + stage, {
         method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
       });
       setNotice('Creative run ' + result.data.run_id + ' diterima dengan status ' + result.data.status + '.');
       await load();
+      if (selectedConversation) {
+        const history = await api.listConversationMessages(selectedConversation);
+        setConversationMessages(history.data);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Creative generation tidak dapat dijalankan.');
     } finally { setBusy(false); }
@@ -523,6 +611,54 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       <button onClick={() => void load()} disabled={busy} style={{...button,background:'#edf3f9',color:'#173f72'}}>Refresh data</button>
     </header>
     <TemplateBrandPanel projectId={projectId} onApplied={(snapshot,assets,version)=>{setPreviewSnapshot(snapshot);setPreviewResolvedAssets(assets);setTimelineVersion(version);setTimelineDirty(false);void loadTimelineHistory();}} />
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>00 · Conversation & Persistent Memory</h2>
+      <div style={{display:'grid',gridTemplateColumns:'minmax(180px,1fr) auto',gap:8}}>
+        <input aria-label="Conversation title" value={conversationTitle} onChange={e=>setConversationTitle(e.target.value)} style={field}/>
+        <button type="button" disabled={busy||!conversationTitle.trim()} onClick={()=>void createConversation()} style={button}>New conversation</button>
+      </div>
+      <select aria-label="Project conversation" value={selectedConversation} onChange={e=>setSelectedConversation(e.target.value)} style={{...field,marginTop:8}}>
+        <option value="">No conversation selected</option>
+        {conversations.map(item=><option key={item.id} value={item.id}>{item.title} · {item.status}</option>)}
+      </select>
+      <div style={{display:'grid',gap:6,maxHeight:220,overflowY:'auto',padding:'10px 0'}}>
+        {conversationMessages.map(message=><article key={message.id} style={{padding:9,border:'1px solid #edf0f5',borderRadius:8}}>
+          <div style={{fontSize:11,color:'#68788e',fontWeight:700}}>{message.role} · #{message.sequence_no}</div>
+          <div style={{fontSize:13,whiteSpace:'pre-wrap'}}>{message.content}</div>
+        </article>)}
+        {conversationMessages.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada pesan. Pesan dan hasil creative run akan tersimpan pada conversation terpilih.</p>}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:8}}>
+        <textarea aria-label="Conversation message" rows={2} value={conversationDraft} onChange={e=>setConversationDraft(e.target.value)} placeholder="Tambahkan konteks atau catatan untuk project ini…" style={field}/>
+        <button type="button" disabled={busy||!selectedConversation||!conversationDraft.trim()} onClick={()=>void sendConversationMessage()} style={button}>Save message</button>
+      </div>
+      <div style={{borderTop:'1px solid #edf0f5',marginTop:14,paddingTop:12}}>
+        <strong style={{fontSize:13}}>Persistent memory</strong>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:8,marginTop:8}}>
+          <select aria-label="Memory scope" value={memoryScope} onChange={e=>setMemoryScope(e.target.value as 'personal'|'project')} style={field}>
+            <option value="project">Project memory</option><option value="personal">Personal memory</option>
+          </select>
+          <select aria-label="Memory type" value={memoryType} onChange={e=>setMemoryType(e.target.value as MemoryItemApi['memory_type'])} style={field}>
+            {(['preference','context','fact','decision','episodic','procedural'] as const).map(v=><option key={v} value={v}>{v}</option>)}
+          </select>
+        </div>
+        <input aria-label="Memory title" value={memoryTitle} onChange={e=>setMemoryTitle(e.target.value)} placeholder="Memory title" style={{...field,marginTop:8}}/>
+        <textarea aria-label="Memory content" rows={2} value={memoryContent} onChange={e=>setMemoryContent(e.target.value)} placeholder="Reusable context or preference (jangan masukkan password, API key, atau credential)…" style={{...field,marginTop:8}}/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:8,marginTop:8}}>
+          <input aria-label="Memory search" value={memoryQuery} onChange={e=>setMemoryQuery(e.target.value)} placeholder="Cari memory relevan…" style={field}/>
+          <button type="button" disabled={busy} onClick={()=>void searchMemoryContext()} style={{...button,background:'#edf3f9',color:'#173f72'}}>Retrieve context</button>
+        </div>
+        <button type="button" disabled={busy||!memoryTitle.trim()||!memoryContent.trim()} onClick={()=>void saveMemory()} style={{...button,marginTop:8}}>Save memory</button>
+        <div style={{display:'grid',gap:6,marginTop:10}}>
+          {memories.map(item=><article key={item.id} style={{padding:8,border:'1px solid #edf0f5',borderRadius:8}}>
+            <strong style={{fontSize:12}}>{item.title} · {item.scope}/{item.memory_type}</strong>
+            <p style={{fontSize:12,color:'#68788e',margin:'4px 0'}}>{item.content}</p>
+            <small style={{color:'#8a97a8'}}>Importance {item.importance.toFixed(2)} · Confidence {item.confidence.toFixed(2)} · {item.source_type}</small>
+          </article>)}
+          {memories.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada memory untuk project ini.</p>}
+        </div>
+      </div>
+    </section>
     {error && <p role="alert" style={{padding:12,background:'#fff1f0',color:'#b42318',borderRadius:9}}>{error}</p>}
     {notice && <p role="status" style={{padding:12,background:'#ecfdf3',color:'#176b45',borderRadius:9}}>{notice}</p>}
     <section style={panel}>

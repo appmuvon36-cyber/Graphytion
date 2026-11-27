@@ -263,8 +263,7 @@ async def heartbeat_media_generation_job(generation_id: UUID, request: Request,
                                           db: AsyncSession = DbSession):
     _require_worker(request)
     status = (await db.execute(text("""
-        select status,requested_by from public.media_generation_jobs
-        where id=:id and worker_id=:worker
+        select * from private.graphytion_media_generation_status(:id,:worker)
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if status is None:
         raise HTTPException(409, "Media generation lease is no longer owned")
@@ -282,13 +281,16 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
                                     request: Request, worker_id: str = Query(min_length=1, max_length=128),
                                     db: AsyncSession = DbSession):
     _require_worker(request)
+    owner = await db.scalar(text("select private.graphytion_media_generation_owner(:id,:worker)"), {"id": generation_id, "worker": worker_id})
+    if owner is None:
+        raise HTTPException(409, "Media generation lease is no longer owned")
+    await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
         select id,requested_by,workspace_id,media_type,attempt_count,max_attempts,status
         from public.media_generation_jobs where id=:id and worker_id=:worker for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if row is None:
         raise HTTPException(409, "Media generation lease is no longer owned")
-    await set_rls_subject(db, str(row["requested_by"]))
     if row["status"] == "cancel_requested":
         await db.execute(text("""
             update public.media_generation_jobs set status='cancelled',completed_at=now(),
@@ -324,13 +326,16 @@ async def complete_media_generation_cancel(generation_id: UUID, request: Request
                                             worker_id: str = Query(min_length=1, max_length=128),
                                             db: AsyncSession = DbSession):
     _require_worker(request)
+    owner = await db.scalar(text("select private.graphytion_media_generation_owner(:id,:worker)"), {"id": generation_id, "worker": worker_id})
+    if owner is None:
+        raise HTTPException(409, "Media cancellation is no longer pending")
+    await set_rls_subject(db, str(owner))
     row = (await db.execute(text("""
         select requested_by,workspace_id,media_type,status from public.media_generation_jobs
         where id=:id and worker_id=:worker for update
     """), {"id": generation_id, "worker": worker_id})).mappings().first()
     if row is None or row["status"] != "cancel_requested":
         raise HTTPException(409, "Media cancellation is no longer pending")
-    await set_rls_subject(db, str(row["requested_by"]))
     await db.execute(text("""
         update public.media_generation_jobs set status='cancelled',completed_at=now(),
           worker_id=null,lease_expires_at=null,updated_at=now() where id=:id
@@ -349,10 +354,7 @@ async def complete_media_generation_artifact(
     worker_id: str = Query(min_length=1, max_length=128), db: AsyncSession = DbSession,
 ):
     _require_worker(request)
-    owner = (await db.execute(text("""
-        select requested_by from public.media_generation_jobs
-        where id=:id and worker_id=:worker and status='processing'
-    """), {"id": generation_id, "worker": worker_id})).scalar_one_or_none()
+    owner = await db.scalar(text("select private.graphytion_media_generation_owner(:id,:worker)"), {"id": generation_id, "worker": worker_id})
     if owner is None:
         raise HTTPException(409, "Media generation lease is no longer owned")
     row = (await db.execute(text("""
@@ -437,7 +439,7 @@ async def complete_media_generation_artifact(
     except Exception:
         await db.rollback()
         try:
-            await SupabaseStorage().delete(bucket=BUCKET, object_path=path)
+            await SupabaseStorage().remove(bucket=BUCKET, object_path=path)
         except Exception:
             pass
         raise

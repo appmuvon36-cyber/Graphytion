@@ -165,6 +165,7 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
 @router.get("/media-generations/{generation_id}")
 async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession):
     actor = _actor(claims)
+    await set_rls_subject(db, str(actor))
     row = (await db.execute(text("""
         select * from public.media_generation_jobs where id=:id
     """), {"id": generation_id})).mappings().first()
@@ -200,6 +201,7 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
 async def cancel_media_generation(generation_id: UUID, request: Request, claims: AuthenticatedClaims,
                                   db: AsyncSession = DbSession):
     actor = _actor(claims)
+    await set_rls_subject(db, str(actor))
     row = (await db.execute(text("""
         select id,project_id,workspace_id,status,media_type from public.media_generation_jobs
         where id=:id for update

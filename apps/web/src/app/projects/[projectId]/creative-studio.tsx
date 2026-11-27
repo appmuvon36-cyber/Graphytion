@@ -369,7 +369,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       if (!visualPrompt) {
         try {
           const scenes = JSON.parse(sceneJson) as Array<{title?:string;visual_direction?:{description?:string;movement?:string;composition?:string}}>;
-          visualPrompt = scenes.map(scene=>[scene.title,scene.visual_direction?.description,scene.visual_direction?.movement,scene.visual_direction?.composition].filter(Boolean).join(' — ')).filter(Boolean).join('\n');
+          visualPrompt = scenes.map(scene=>[scene.visual_direction?.description,scene.visual_direction?.movement,scene.visual_direction?.composition].filter(Boolean).join(' — ')).filter(Boolean).join('\n');
         } catch { /* Missing visual direction is reported below. */ }
       }
       const narration = voiceText.trim() || parsedScriptSegments.map(segment=>segment.text).join('\n');

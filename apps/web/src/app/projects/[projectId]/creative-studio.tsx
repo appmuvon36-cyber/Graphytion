@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
+import type { MediaGenerationApi } from '@graphytion/api-client';
 import { TimelineEditor } from '@graphytion/motion-components';
 import { TemplateBrandPanel } from './template-brand-panel';
 import type {CompositionSnapshot,ResolvedCompositionAssets} from '@graphytion/motion-components';
@@ -38,6 +39,12 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [previewStoryboardId, setPreviewStoryboardId] = useState('');
   const [assets, setAssets] = useState<ProjectAssetApi[]>([]);
   const [voiceovers,setVoiceovers]=useState<VoiceoverItem[]>([]);
+  const [mediaGenerations,setMediaGenerations]=useState<MediaGenerationApi[]>([]);
+  const [mediaPrompt,setMediaPrompt]=useState('');
+  const [mediaType,setMediaType]=useState<'image'|'video'>('image');
+  const [mediaAspectRatio,setMediaAspectRatio]=useState('1:1');
+  const [mediaDurationSeconds,setMediaDurationSeconds]=useState(8);
+  const [mediaResolution,setMediaResolution]=useState('720p');
   const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
   const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});
   const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
@@ -73,7 +80,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [p, b, s, sb, runResult, renderResult, assetResult, voiceResult, subtitleResult] = await Promise.all([
+      const [p, b, s, sb, runResult, renderResult, assetResult, voiceResult, subtitleResult, mediaResult] = await Promise.all([
         call<{data: VideoProjectApi}>('/projects/' + projectId),
         call<{data: CreativeBriefApi[]}>('/projects/' + projectId + '/briefs'),
         call<{data: VideoScriptApi[]}>('/projects/' + projectId + '/scripts'),
@@ -83,9 +90,10 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data: ProjectAssetApi[]}>('/projects/' + projectId + '/assets'),
         call<{data:VoiceoverItem[]}>('/projects/'+projectId+'/voiceovers'),
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
+        api.listMediaGenerations(projectId),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
-      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
+      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data); setMediaGenerations(mediaResult.data);
       if (!selectedBrief && b.data[0]) setSelectedBrief(b.data[0].id);
       if (!selectedScript && s.data[0]) setSelectedScript(s.data[0].id);
     } catch (e) { setError(e instanceof Error ? e.message : 'Gagal memuat creative workspace'); }
@@ -180,6 +188,48 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       setNotice('Project asset deleted from private storage.'); await load();
     } catch (e) { setError(e instanceof Error ? e.message : 'Asset deletion failed'); }
     finally { setBusy(false); }
+  }
+
+  async function generateMedia(event: React.FormEvent) {
+    event.preventDefault();
+    if (!mediaPrompt.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await api.createMediaGeneration(projectId, {
+        media_type: mediaType, provider_key: 'gemini',
+        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
+        prompt: mediaPrompt.trim(),
+        generation_config: mediaType === 'image'
+          ? { aspect_ratio: mediaAspectRatio }
+          : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds, resolution: mediaResolution },
+      }, crypto.randomUUID());
+      setNotice('Media generation ' + result.data.generation_id + ' diterima · ' + result.data.status);
+      setMediaPrompt(''); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Media generation gagal dikirim.'); }
+    finally { setBusy(false); }
+  }
+
+  async function cancelMedia(item: MediaGenerationApi) {
+    setBusy(true); setError('');
+    try { const result = await api.cancelMediaGeneration(item.id); setNotice('Media job ' + result.data.status + '.'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Media job tidak dapat dibatalkan.'); }
+    finally { setBusy(false); }
+  }
+
+  async function retryMedia(item: MediaGenerationApi) {
+    setBusy(true); setError('');
+    try { const result = await api.retryMediaGeneration(item.id, crypto.randomUUID()); setNotice('Media generation queued kembali · ' + result.data.generation_id); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Media job tidak dapat diulang.'); }
+    finally { setBusy(false); }
+  }
+
+  async function downloadGeneratedMedia(item: MediaGenerationApi) {
+    setError('');
+    try {
+      const result = await api.getMediaGeneration(item.id);
+      if (!result.data.artifact?.signed_url) throw new Error('Artifact belum tersedia.');
+      window.location.assign(result.data.artifact.signed_url);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Artifact belum dapat diunduh.'); }
   }
 
   async function regenerateScene(sceneId: string) {
@@ -510,7 +560,45 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       {assets.length===0&&<p style={{color:'#68788e'}}>No project assets uploaded.</p>}
     </section>
     <section style={panel}>
-      <h2 style={{marginTop:0}}>07 · Voice-over & TTS</h2>
+      <h2 style={{marginTop:0}}>07 · Image & Video Generation</h2>
+      <p style={{fontSize:12,color:'#68788e'}}>Image dan video generation diproses melalui Media Worker existing. Artifact tervalidasi otomatis masuk ke Project Assets.</p>
+      <form onSubmit={generateMedia} style={{display:'grid',gap:9}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
+          <select aria-label="Media type" value={mediaType} onChange={event=>{const value=event.target.value as 'image'|'video';setMediaType(value);setMediaAspectRatio(value==='image'?'1:1':'16:9');}} style={field}>
+            <option value="image">Image generation</option><option value="video">Video generation</option>
+          </select>
+          <select aria-label="Aspect ratio" value={mediaAspectRatio} onChange={event=>setMediaAspectRatio(event.target.value)} style={field}>
+            {mediaType==='image'?<><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape</option><option value="9:16">9:16 Portrait</option><option value="4:3">4:3</option><option value="3:4">3:4</option></>:<><option value="16:9">16:9 Landscape</option><option value="9:16">9:16 Portrait</option></>}
+          </select>
+          {mediaType==='video'&&<>
+            <select aria-label="Video duration" value={mediaDurationSeconds} onChange={event=>setMediaDurationSeconds(Number(event.target.value))} style={field}>
+              {[3,4,5,6,8,10,12,15].map(value=><option key={value} value={value}>{value} seconds</option>)}
+            </select>
+            <select aria-label="Video resolution" value={mediaResolution} onChange={event=>setMediaResolution(event.target.value)} style={field}>
+              <option value="360p">360p</option><option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option>
+            </select>
+          </>}
+        </div>
+        <textarea aria-label="Media generation prompt" rows={4} required maxLength={32000} value={mediaPrompt} onChange={event=>setMediaPrompt(event.target.value)} placeholder="Describe subject, style, composition, lighting, and motion…" style={field}/>
+        <button disabled={busy||!mediaPrompt.trim()} style={button}>Generate {mediaType}</button>
+      </form>
+      <div style={{marginTop:14}}>
+        {mediaGenerations.map(item=><div key={item.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'9px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}>
+          <div style={{minWidth:0}}>
+            <strong>{item.media_type.toUpperCase()} · {item.model_key} · {item.status}</strong>
+            <p style={{fontSize:11,color:'#68788e',margin:'3px 0'}}>{item.error_code||item.id} · Attempt {item.attempt_count} · Provider cost {item.provider_cost_status||'unpriced'}</p>
+          </div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {item.status==='completed'&&<button type="button" onClick={()=>void downloadGeneratedMedia(item)} style={button}>Open artifact</button>}
+            {['queued','processing','cancel_requested'].includes(item.status)&&<button type="button" disabled={busy} onClick={()=>void cancelMedia(item)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}
+            {item.status==='failed'&&<button type="button" disabled={busy} onClick={()=>void retryMedia(item)} style={button}>Retry</button>}
+          </div>
+        </div>)}
+        {mediaGenerations.length===0&&<p style={{fontSize:12,color:'#68788e'}}>Belum ada image/video generation.</p>}
+      </div>
+    </section>
+    <section style={panel}>
+      <h2 style={{marginTop:0}}>08 · Voice-over & TTS</h2>
       <p style={{fontSize:13,color:'#68788e'}}>Provider-independent TTS lifecycle. Jika credentials belum tersedia, request akan tersimpan sebagai provider_unavailable dan tidak menghasilkan audio palsu.</p>
       <form onSubmit={generateVoiceover} style={{display:'grid',gap:8}}>
         <textarea aria-label="Voice-over text" rows={4} required value={voiceText} onChange={e=>setVoiceText(e.target.value)} placeholder="Masukkan narasi voice-over…" style={field}/>

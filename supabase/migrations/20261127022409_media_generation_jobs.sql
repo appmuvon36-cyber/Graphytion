@@ -73,7 +73,7 @@ grant select,insert,update on public.media_generation_jobs to graphytion_api;
 create or replace function private.graphytion_claim_media_generation_job(
   p_worker_id text
 ) returns setof public.media_generation_jobs
-language plpgsql security definer set search_path='' as $$$
+language plpgsql security definer set search_path='' as $$
 declare claimed_id uuid;
 begin
   if p_worker_id is null or length(p_worker_id)<1 or length(p_worker_id)>128 then
@@ -93,7 +93,7 @@ end $$;
 
 create or replace function private.graphytion_heartbeat_media_generation_job(
   p_job_id uuid,p_worker_id text
-) returns boolean language sql security definer set search_path='' as $$$
+) returns boolean language sql security definer set search_path='' as $$
   update public.media_generation_jobs set lease_expires_at=now()+interval '5 minutes',updated_at=now()
   where id=p_job_id and worker_id=p_worker_id and status='processing'
   returning true;
@@ -136,7 +136,7 @@ begin
   where j.status in ('processing','cancel_requested')
     and j.lease_expires_at < now()
   returning j.id,j.status;
-end $;
+end $$;
 
 revoke all on function private.graphytion_claim_media_generation_job(text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_heartbeat_media_generation_job(uuid,text) from public,anon,authenticated,service_role;

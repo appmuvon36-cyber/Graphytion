@@ -28,7 +28,7 @@ MAX_VIDEO_BYTES = 512 * 1024 * 1024
 
 class MediaGenerationCreate(BaseModel):
     media_type: Literal["image", "video"]
-    provider_key: Literal["gemini"] = "gemini"
+    provider_key: Literal["gemini", "google_agent_platform"] = "gemini"
     model_key: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=32000)
     generation_config: dict[str, Any] = Field(default_factory=dict)
@@ -70,24 +70,31 @@ def _require_worker(request: Request) -> None:
 def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
     config = dict(payload.generation_config)
     if payload.media_type == "image":
+        if payload.provider_key != "gemini":
+            raise HTTPException(422, "Image generation requires the Gemini API-key provider")
         if payload.model_key != "gemini-3.1-flash-image":
             raise HTTPException(422, "Unsupported Gemini image model")
         ratio = config.get("aspect_ratio", "1:1")
         if ratio not in {"1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"}:
             raise HTTPException(422, "Unsupported image aspect ratio")
+        image_size = config.get("image_size", "1K")
+        if image_size not in {"512", "1K", "2K", "4K"}:
+            raise HTTPException(422, "Unsupported image size")
         config["aspect_ratio"] = ratio
+        config["image_size"] = image_size
         config["output_format"] = "png"
     else:
-        if payload.model_key not in {"gemini-omni-1.2-flash", "gemini-omni-1.1-flash"}:
-            raise HTTPException(422, "Unsupported Gemini video model")
+        if payload.provider_key != "google_agent_platform":
+            raise HTTPException(422, "Video generation requires Google Agent Platform OAuth")
+        if payload.model_key != "gemini-omni-flash-preview":
+            raise HTTPException(422, "Unsupported Google Agent Platform video model")
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
         resolution = config.get("resolution", "720p")
-        if ratio not in {"16:9", "9:16"} or duration not in range(3, 16):
-            raise HTTPException(422, "Unsupported video aspect ratio or duration")
-        if resolution not in {"360p", "720p", "1080p", "4k"}:
-            raise HTTPException(422, "Unsupported video resolution")
-        config.update({"aspect_ratio": ratio, "duration_seconds": duration, "resolution": resolution})
+        if ratio not in {"16:9", "9:16"} or duration not in range(3, 11):
+            raise HTTPException(422, "Google Omni Flash supports 3-10 second videos")
+        config.update({"aspect_ratio": ratio, "duration_seconds": duration})
+        config.pop("resolution", None)
     return config
 
 

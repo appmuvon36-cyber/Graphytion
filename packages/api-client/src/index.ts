@@ -1,3 +1,37 @@
+export type MediaGenerationApi = {
+  id: string;
+  project_id: string;
+  media_type: 'image' | 'video';
+  provider_key: string;
+  model_key: string;
+  status: 'queued' | 'processing' | 'cancel_requested' | 'completed' | 'failed' | 'cancelled';
+  error_code?: string | null;
+  attempt_count: number;
+  generation_config?: Record<string, unknown>;
+  provider_provenance?: Record<string, unknown>;
+  provider_usage?: Record<string, unknown> | null;
+  provider_cost_status?: 'priced' | 'unpriced';
+  provider_cost_microusd?: number | null;
+  created_at?: string;
+  completed_at?: string | null;
+  artifact?: {
+    id: string;
+    file_name: string;
+    content_type: string;
+    size_bytes: number;
+    sha256: string;
+    signed_url: string;
+  } | null;
+};
+
+export type MediaGenerationCreate = {
+  media_type: 'image' | 'video';
+  provider_key?: 'gemini';
+  model_key: string;
+  prompt: string;
+  generation_config?: Record<string, unknown>;
+};
+
 export type ApiClientOptions = {
   baseUrl: string;
   fetcher?: typeof fetch;
@@ -102,5 +136,21 @@ export function createApiClient(options: ApiClientOptions) {
         headers: key ? { 'Idempotency-Key': key } : undefined,
       }),
     delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+    createMediaGeneration: (projectId: string, body: MediaGenerationCreate, key: string) =>
+      request<{ data: { generation_id: string; status: string; replayed?: boolean } }>(
+        `projects/${projectId}/media-generations`,
+        { method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key } },
+      ),
+    listMediaGenerations: (projectId: string) =>
+      request<{ data: MediaGenerationApi[] }>(`projects/${projectId}/media-generations`),
+    getMediaGeneration: (id: string) =>
+      request<{ data: MediaGenerationApi }>(`media-generations/${id}`),
+    cancelMediaGeneration: (id: string) =>
+      request<{ data: { generation_id: string; status: string } }>(`media-generations/${id}/cancel`, { method: 'POST' }),
+    retryMediaGeneration: (id: string, key: string) =>
+      request<{ data: { generation_id: string; status: string } }>(
+        `media-generations/${id}/retry`,
+        { method: 'POST', headers: { 'Idempotency-Key': key } },
+      ),
   };
 }

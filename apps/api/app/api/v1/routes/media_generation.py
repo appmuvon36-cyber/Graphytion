@@ -569,18 +569,19 @@ async def complete_media_generation_artifact(
                "job": generation_id, "provenance": json.dumps(provenance),
                "generation_metadata": json.dumps({"prompt_sha256": hashlib.sha256(row["prompt"].encode("utf-8")).hexdigest(), "generation_config": row["generation_config"]})})
         provider_cost = None
+        provider_price = None
         if usage:
             input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", usage.get("total_input_tokens")) )
             output_tokens = usage.get("output_tokens", usage.get("completion_tokens", usage.get("total_output_tokens")) )
             if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-                price = (await db.execute(text("""
+                provider_price = (await db.execute(text("""
                     select id,input_microusd_per_million,output_microusd_per_million
                     from public.ai_model_prices where provider_key=:provider and model_key=:model
                       and is_active=true and effective_at<=now()
                     order by effective_at desc,created_at desc limit 1
                 """), {"provider": row["provider_key"], "model": row["model_key"]})).mappings().first()
-                if price:
-                    provider_cost = round(input_tokens * int(price["input_microusd_per_million"]) / 1000000) + round(output_tokens * int(price["output_microusd_per_million"]) / 1000000)
+                if provider_price:
+                    provider_cost = round(input_tokens * int(provider_price["input_microusd_per_million"]) / 1000000) + round(output_tokens * int(provider_price["output_microusd_per_million"]) / 1000000)
         await db.execute(text("""
             update public.media_generation_jobs set status='completed',asset_id=:asset,
               output_mime_type=:mime,output_size_bytes=:size,output_sha256=:sha,
@@ -604,7 +605,7 @@ async def complete_media_generation_artifact(
         """), {"id": row["quota_reservation_id"]})).mappings().first() if row["quota_reservation_id"] else None
         quota_debit = int(reservation["consumed_microusd"]) if reservation else None
         cost_price = (await db.execute(text("""
-            select microusd_per_unit,unit_name
+            select id,microusd_per_unit,unit_name,effective_at
             from public.quota_operation_prices
             where price_kind='operational' and operation_key=:operation
               and media_type=:type and provider_key=:provider and model_key=:model
@@ -621,10 +622,22 @@ async def complete_media_generation_artifact(
         economics_status = "complete" if margin is not None else ("partial" if any(value is not None for value in (quota_debit, provider_cost, operational_cost)) else "unpriced")
         await db.execute(text("""
             update public.media_generation_jobs set operational_cost_microusd=:operational,
-              quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics
+              quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics,
+              provider_price_id=:provider_price_id,operational_price_id=:operational_price_id,
+              price_snapshot=cast(:price_snapshot as jsonb),
+              quota_reconciliation_status=case when :reconciled then 'complete' else 'pending' end,
+              quota_reconciled_at=case when :reconciled then now() else null end,
+              currency='USD'
             where id=:id
         """), {"operational": operational_cost, "debit": quota_debit, "margin": margin,
-               "economics": economics_status, "id": generation_id})
+               "economics": economics_status, "id": generation_id,
+               "provider_price_id": provider_price["id"] if provider_price else None,
+               "operational_price_id": cost_price["id"] if cost_price else None,
+               "price_snapshot": json.dumps({
+                   "provider": ({"id": str(provider_price["id"]), "input_microusd_per_million": int(provider_price["input_microusd_per_million"]), "output_microusd_per_million": int(provider_price["output_microusd_per_million"]) } if provider_price else None),
+                   "operational": ({"id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]), "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat()} if cost_price else None)
+               }),
+               "reconciled": provider_cost is not None and operational_cost is not None})
         await db.execute(text("""
             insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
             values(:actor,:workspace,'media_generation.completed','media_generation',:id,:request,cast(:metadata as jsonb))

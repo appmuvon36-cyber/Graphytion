@@ -593,7 +593,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     </section>
     <section style={panel}>
       <h2 style={{marginTop:0}}>07 · Image & Video Generation</h2>
-      <p style={{fontSize:12,color:'#68788e'}}>Image dan video generation diproses melalui Media Worker existing. Artifact tervalidasi otomatis masuk ke Project Assets.</p>
+      <p style={{fontSize:12,color:'#68788e'}}>Personal usage gratis tanpa reservation atau debit quota. Image/video diproses melalui Media Worker existing dan artifact tervalidasi otomatis masuk ke Project Assets.</p>
       {mediaLoadError&&<p role="status" style={{fontSize:12,color:'#9b4a12'}}>Media generation belum siap: {mediaLoadError}</p>}
       <form onSubmit={generateMedia} style={{display:'grid',gap:9}}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8}}>
@@ -610,7 +610,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
             <select aria-label="Video duration" value={mediaDurationSeconds} onChange={event=>setMediaDurationSeconds(Number(event.target.value))} style={field}>
               {[3,4,5,6,8,10,12,15].map(value=><option key={value} value={value}>{value} seconds</option>)}
             </select>
-            <span style={{fontSize:12,color:'#68788e',alignSelf:'center'}}>Google Omni Flash · native output quality</span>
+            <select aria-label="Video resolution" value={mediaResolution} onChange={event=>setMediaResolution(event.target.value)} style={field}>
+              <option value="360p">360p</option><option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option>
+            </select>
           </>}
         </div>
         <textarea aria-label="Media generation prompt" rows={4} required maxLength={32000} value={mediaPrompt} onChange={event=>setMediaPrompt(event.target.value)} placeholder="Describe subject, style, composition, lighting, and motion…" style={field}/>

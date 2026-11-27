@@ -499,10 +499,11 @@ async def _dispatch_subtitles(
     """), {"run": envelope.run_id})).mappings().first()
     if audio_row:
         audio_asset_id = audio_asset_id or (str(audio_row["asset_id"]) if audio_row["asset_id"] else None)
-        alignment = audio_row["alignment_result"] or {}
+        alignment = audio_row["alignment_result"] if isinstance(audio_row["alignment_result"], dict) else {}
         raw_words = alignment.get("words", []) if audio_row["alignment_status"] == "available" else []
+        word_source = raw_words if isinstance(raw_words, list) else []
         normalized_words: list[dict[str, Any]] = []
-        for word in raw_words if isinstance(raw_words, list) else []:
+        for word in word_source:
             if (not isinstance(word, dict) or not isinstance(word.get("start_ms"), int)
                 or not isinstance(word.get("end_ms"), int) or not isinstance(word.get("text"), str)
                 or word["start_ms"] < 0 or word["end_ms"] <= word["start_ms"] or not word["text"].strip()):
@@ -514,6 +515,7 @@ async def _dispatch_subtitles(
             })
         if normalized_words and all(
             normalized_words[index]["start_ms"] >= normalized_words[index-1]["start_ms"]
+            and normalized_words[index]["end_ms"] >= normalized_words[index-1]["end_ms"]
             for index in range(1, len(normalized_words))
         ):
             aligned_segments: list[SubtitleSegment] = []

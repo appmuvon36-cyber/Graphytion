@@ -114,7 +114,8 @@ class CreativePipeline:
         self._gateway = gateway
 
     async def _run(
-        self, agent_key: str, model: type[StrictModel], payload: dict[str, Any], idempotency_key: str
+        self, agent_key: str, model: type[StrictModel], payload: dict[str, Any], idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None,
     ) -> tuple[StrictModel, ModelResult, int]:
         version, prompt = PROMPT_REGISTRY[agent_key]
         result = await self._gateway.generate(
@@ -123,6 +124,8 @@ class CreativePipeline:
             user_payload=payload,
             output_schema=model.model_json_schema(),
             idempotency_key=idempotency_key,
+            provider_key=provider_key,
+            model_key=model_key,
         )
         return model.model_validate(result.output), result, version
 
@@ -145,11 +148,12 @@ class CreativePipeline:
     async def write_script(
         self, *, approved_brief: dict[str, Any], source_material: list[dict[str, Any]] | None,
         idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None,
     ) -> tuple[ScriptOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "scriptwriter", ScriptOutput,
             {"approved_brief": approved_brief, "source_material": source_material or []},
-            idempotency_key,
+            idempotency_key, provider_key=provider_key, model_key=model_key,
         )
         return output, {
             "agent_key": "scriptwriter", "prompt_version": version,

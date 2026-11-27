@@ -19,6 +19,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("graphytion.media-worker")
 API_BASE = os.environ.get("GRAPHYTION_API_BASE_URL", "").rstrip("/")
 TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 WORKER_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:10]}"
 POLL_INTERVAL_SECONDS = max(1, int(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "3")))
 
@@ -27,6 +28,8 @@ class Worker:
     def __init__(self) -> None:
         if not API_BASE or not TOKEN:
             raise RuntimeError("GRAPHYTION_API_BASE_URL and INTERNAL_WORKER_TOKEN are required")
+        if not GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY is required by the existing Media Worker")
         self.http = httpx.AsyncClient(
             base_url=API_BASE,
             headers={"Authorization": "Bearer " + TOKEN},
@@ -90,10 +93,9 @@ class Worker:
         if not job:
             return False
         job_id = job["id"]
-        provider = GeminiMediaProvider(os.environ.get("GEMINI_API_KEY", ""))
-        configured = provider.configured() if job["media_type"] == "image" else provider.video_configured()
-        if not configured:
-            error_code = "GEMINI_IMAGE_PROVIDER_NOT_CONFIGURED" if job["media_type"] == "image" else "GOOGLE_AGENT_PLATFORM_CREDENTIALS_NOT_CONFIGURED"
+        provider = GeminiMediaProvider(GEMINI_API_KEY)
+        if not provider.configured():
+            error_code = "GEMINI_API_KEY_NOT_CONFIGURED"
             await self.api(
                 f"/internal/media-generation-jobs/{job_id}/failed",
                 method="POST", params={"worker_id": WORKER_ID},
@@ -103,6 +105,14 @@ class Worker:
         cancel_event = asyncio.Event()
         heartbeat_task = asyncio.create_task(self.media_generation_heartbeat(job_id, cancel_event))
         cancel_wait = asyncio.create_task(cancel_event.wait())
+
+        async def persist_provider_operation(operation_id: str) -> None:
+            await self.api(
+                f"/internal/media-generation-jobs/{job_id}/provider-operation",
+                method="POST", params={"worker_id": WORKER_ID},
+                json={"provider_operation_id": operation_id},
+            )
+
         generation_task = asyncio.create_task(
             provider.generate_image(
                 prompt=job["prompt"], model=job["model_key"],
@@ -116,6 +126,8 @@ class Worker:
                 duration_seconds=(job.get("generation_config") or {}).get("duration_seconds", 8),
                 resolution=(job.get("generation_config") or {}).get("resolution", "720p"),
                 configuration=job.get("generation_config") or {},
+                cancel_event=cancel_event,
+                on_operation=persist_provider_operation,
             )
         )
         try:
@@ -123,11 +135,17 @@ class Worker:
                 {generation_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED,
             )
             if cancel_wait in done and cancel_event.is_set():
-                generation_task.cancel()
-                try:
-                    await generation_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+                if job["media_type"] == "video":
+                    try:
+                        await generation_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                else:
+                    generation_task.cancel()
+                    try:
+                        await generation_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 await self.api(
                     f"/internal/media-generation-jobs/{job_id}/cancelled",
                     method="POST", params={"worker_id": WORKER_ID},
@@ -221,7 +239,7 @@ class Worker:
         job_id = job["id"]
         provider_key = job.get("provider_key", "openai")
         if provider_key == "gemini":
-            provider = GeminiTTSProvider(os.environ.get("GEMINI_API_KEY", ""))
+            provider = GeminiTTSProvider(GEMINI_API_KEY)
             model_default = os.environ.get("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts")
         elif provider_key == "openai":
             provider = OpenAITTSProvider(os.environ.get("OPENAI_API_KEY", ""))

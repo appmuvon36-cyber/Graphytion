@@ -51,8 +51,9 @@ async def assemble_agent_context(
 ) -> dict[str, Any]:
     """Build bounded, tenant-scoped context; expired and deleted memories are excluded."""
     memories = (await db.execute(text("""
-        select id,scope,memory_type,title,content,provenance,importance,confidence,
-          project_id,updated_at
+        select id::text as id,scope,memory_type,title,content,provenance,
+          importance::float8 as importance,confidence::float8 as confidence,
+          project_id::text as project_id,updated_at::text as updated_at
         from public.memory_items
         where workspace_id=:workspace and deleted_at is null
           and (expires_at is null or expires_at>now())
@@ -73,7 +74,7 @@ async def assemble_agent_context(
     messages: list[dict[str, Any]] = []
     if conversation_id is not None:
         rows = (await db.execute(text("""
-            select role,content,metadata,created_at from public.conversation_messages
+            select role,content,metadata,created_at::text as created_at from public.conversation_messages
             where thread_id=:thread and owner_user_id=:actor
             order by sequence_no desc limit :limit
         """), {

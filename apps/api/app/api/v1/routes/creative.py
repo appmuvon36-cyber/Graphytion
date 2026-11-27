@@ -15,6 +15,7 @@ from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.config import settings
 from app.services.creative_pipeline import creative_pipeline
 from app.services.agent_tools import agent_tool_registry
+from app.services.memory_engine import assemble_agent_context, append_message
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -602,6 +603,7 @@ class CreativeRunRequest(BaseModel):
     scene_id: UUID | None = None
     revision_instruction: str | None = Field(default=None, min_length=3, max_length=2000)
     source_material: list[dict[str, Any]] = Field(default_factory=list)
+    conversation_id: UUID | None = None
     approved_component_candidates: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -620,6 +622,20 @@ async def _process_creative_run(
         tool = await agent_tool_registry.authorize(
             db=db, actor=actor, workspace_id=workspace_id, project_id=project_id,
             stage=stage, payload=payload.model_dump(exclude_none=True),
+        )
+        if payload.conversation_id is not None:
+            conversation_exists = await db.scalar(text("""
+                select exists(select 1 from public.conversation_threads
+                where id=:conversation and workspace_id=:workspace and project_id=:project
+                  and owner_user_id=:actor and status='active')
+            """), {"conversation": payload.conversation_id, "workspace": workspace_id,
+                   "project": project_id, "actor": actor})
+            if not conversation_exists:
+                raise HTTPException(status_code=404, detail="Conversation not found in this project")
+        memory_context = await assemble_agent_context(
+            db, actor_id=actor, workspace_id=workspace_id, project_id=project_id,
+            query=payload.input_prompt or payload.revision_instruction or stage,
+            conversation_id=payload.conversation_id,
         )
         if stage == "brief":
             if not payload.input_prompt:
@@ -643,7 +659,8 @@ async def _process_creative_run(
                     input_prompt=payload.input_prompt,
                     project_settings=dict(project),
                     source_material=payload.source_material,
-                    idempotency_key=str(run["id"]), provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
+                    idempotency_key=str(run["id"]), memory_context=memory_context,
+                    provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -688,7 +705,7 @@ async def _process_creative_run(
                 output, provenance = await creative_pipeline.write_script(
                     approved_brief=dict(brief["normalized_brief"]),
                     source_material=payload.source_material,
-                    idempotency_key=str(run["id"]),
+                    idempotency_key=str(run["id"]), memory_context=memory_context,
                     provider_key=tool.configuration.get("provider_key"),
                     model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
@@ -743,7 +760,8 @@ async def _process_creative_run(
             else:
                 arc, arc_meta = await creative_pipeline.direct_story(
                     approved_brief=brief_payload, approved_script=script_payload,
-                    idempotency_key=f"{run['id']}:story-arc", provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
+                    idempotency_key=f"{run['id']}:story-arc", memory_context=memory_context,
+                    provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -761,7 +779,8 @@ async def _process_creative_run(
                     approved_brief=brief_payload, approved_script=script_payload,
                     story_arc=arc.model_dump(),
                     approved_component_candidates=payload.approved_component_candidates,
-                    idempotency_key=f"{run['id']}:storyboard", provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
+                    idempotency_key=f"{run['id']}:storyboard", memory_context=memory_context,
+                    provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -867,7 +886,7 @@ async def _process_creative_run(
                     approved_script=approved_script,
                     current_scene=current_scene,
                     revision_instruction=payload.revision_instruction,
-                    idempotency_key=str(run["id"]),
+                    idempotency_key=str(run["id"]), memory_context=memory_context,
                     provider_key=tool.configuration.get("provider_key"),
                     model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
@@ -919,6 +938,19 @@ async def _process_creative_run(
         await _record_version(db, workspace_id=workspace_id, project_id=project_id,
             artifact_type=artifact_type, artifact_id=artifact_id, version=version,
             actor=actor, snapshot=safe_snapshot, summary=f"{stage.title()} generated by creative pipeline")
+        if payload.conversation_id is not None:
+            message_exists = await db.scalar(text("""
+                select exists(select 1 from public.conversation_messages
+                where thread_id=:thread and metadata->>'production_run_id'=:run)
+            """), {"thread": payload.conversation_id, "run": str(run["id"])})
+            if not message_exists:
+                await append_message(
+                    db, thread_id=payload.conversation_id, actor_id=actor, role="assistant",
+                    content=f"{stage.title()} completed. Artifact type: {artifact_type}.",
+                    metadata={"production_run_id": str(run["id"]), "artifact_id": str(artifact_id)},
+                    provenance=[{"production_run_id": str(run["id"]), "artifact_type": artifact_type,
+                                 "artifact_id": str(artifact_id), "version": version}],
+                )
         usage_items = (
             [provenance] if isinstance(provenance, dict) and "provider_key" in provenance
             else [item for item in provenance.values() if isinstance(item, dict) and "provider_key" in item]
@@ -1071,6 +1103,15 @@ async def execute_creative_stage(
     workspace_id = await _project_scope(db, project_id, actor, "project.update")
     if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
         raise HTTPException(status_code=400, detail="Idempotency-Key header must contain 16-128 characters")
+    if payload.conversation_id is not None:
+        conversation_exists = await db.scalar(text("""
+            select exists(select 1 from public.conversation_threads
+            where id=:conversation and workspace_id=:workspace and project_id=:project
+              and owner_user_id=:actor and status='active')
+        """), {"conversation": payload.conversation_id, "workspace": workspace_id,
+               "project": project_id, "actor": actor})
+        if not conversation_exists:
+            raise HTTPException(status_code=404, detail="Conversation not found in this project")
 
     stage_status = "queued"
     input_snapshot = {
@@ -1079,6 +1120,7 @@ async def execute_creative_stage(
         "scene_id": str(payload.scene_id) if payload.scene_id else None,
         "revision_instruction": payload.revision_instruction,
         "source_material": payload.source_material,
+        "conversation_id": str(payload.conversation_id) if payload.conversation_id else None,
         "approved_component_candidates": payload.approved_component_candidates,
     }
     run = (await db.execute(text("""

@@ -8,7 +8,7 @@ import { TemplateBrandPanel } from './template-brand-panel';
 import type {CompositionSnapshot,ResolvedCompositionAssets} from '@graphytion/motion-components';
 import type {
   CreativeBriefApi, VideoScriptApi, StoryboardApi, VideoProjectApi, ProductionRunApi, RenderJobApi, ProjectAssetApi,
-  ConversationThreadApi, ConversationMessageApi, MemoryItemApi,
+  ConversationThreadApi, ConversationMessageApi, MemoryItemApi, ProductionWorkflowApi,
 } from '@graphytion/contracts';
 
 const apiBase = typeof window !== 'undefined' ? window.location.origin + '/api' : 'http://localhost:3000/api';
@@ -30,6 +30,9 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [scripts, setScripts] = useState<VideoScriptApi[]>([]);
   const [boards, setBoards] = useState<StoryboardApi[]>([]);
   const [runs, setRuns] = useState<CreativeRunItem[]>([]);
+  const [workflowRunId,setWorkflowRunId]=useState('');
+  const [workflow,setWorkflow]=useState<ProductionWorkflowApi|null>(null);
+  const [workflowLoadError,setWorkflowLoadError]=useState('');
   const [renders, setRenders] = useState<RenderItem[]>([]);
   const [previewSnapshot, setPreviewSnapshot] = useState<CompositionSnapshot | null>(null);
   const [previewResolvedAssets,setPreviewResolvedAssets]=useState<ResolvedCompositionAssets>({});
@@ -107,7 +110,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         call<{data:SubtitleTrackItem[]}>('/projects/'+projectId+'/subtitles'),
       ]);
       setProject(p.data); setBriefs(b.data); setScripts(s.data); setBoards(sb.data);
-      setRuns(runResult.data); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
+      setRuns(runResult.data); setWorkflowRunId(current=>current&&runResult.data.some(item=>item.id===current)?current:(runResult.data[0]?.id??'')); setRenders(renderResult.data); setAssets(assetResult.data); setVoiceovers(voiceResult.data); setSubtitleTracks(subtitleResult.data);
       const conversationResult = await api.listConversations(p.data.workspace_id);
       setConversations(conversationResult.data);
       setSelectedConversation(current => current || conversationResult.data[0]?.id || '');
@@ -129,6 +132,25 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   }, [api, call, projectId, selectedBrief, selectedScript]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!workflowRunId) { setWorkflow(null); setWorkflowLoadError(''); return; }
+    let active = true;
+    const refresh = async () => {
+      try {
+        const result = await api.getProductionWorkflow(workflowRunId);
+        if (active) { setWorkflow(result.data); setWorkflowLoadError(''); }
+      } catch (e) {
+        if (active) {
+          setWorkflow(null);
+          setWorkflowLoadError(e instanceof ApiClientError && e.status === 404 ? '' : (e instanceof Error ? e.message : 'Workflow state unavailable'));
+        }
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 10000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [api, workflowRunId]);
 
   useEffect(() => {
     if (!selectedConversation) { setConversationMessages([]); return; }
@@ -316,6 +338,57 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     finally { setBusy(false); }
   }
 
+  const readyWorkflowStep = (type: string) =>
+    workflow?.steps.find(step => step.step_type === type && step.status === 'ready');
+
+  async function createWorkflow() {
+    if (!workflowRunId) return;
+    setBusy(true); setError('');
+    try {
+      await api.createProductionWorkflow(workflowRunId, [
+        { key:'creative_review', step_type:'creative', requires_approval:true },
+        { key:'media_generation', step_type:'media_generation', depends_on:['creative_review'] },
+        { key:'asset_persistence', step_type:'asset_persistence', depends_on:['media_generation'] },
+        { key:'voiceover', step_type:'voiceover', depends_on:['creative_review'] },
+        { key:'subtitle', step_type:'subtitle', depends_on:['voiceover'] },
+        { key:'timeline', step_type:'timeline', depends_on:['asset_persistence','subtitle'] },
+        { key:'composition', step_type:'composition', depends_on:['timeline'] },
+        { key:'render', step_type:'render', depends_on:['composition'] },
+        { key:'quality_check', step_type:'quality_check', depends_on:['render'] },
+        { key:'delivery', step_type:'delivery', depends_on:['quality_check'] },
+      ]);
+      const refreshed = await api.getProductionWorkflow(workflowRunId);
+      setWorkflow(refreshed.data); setNotice('Production workflow persisted. Setujui creative review untuk membuka tahap berikutnya.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Workflow could not be created'); }
+    finally { setBusy(false); }
+  }
+
+  async function approveWorkflowStep(stepId: string) {
+    if (!workflowRunId) return;
+    setBusy(true); setError('');
+    try { await api.approveProductionStep(workflowRunId,stepId); setWorkflow((await api.getProductionWorkflow(workflowRunId)).data); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Approval failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function completeWorkflowStep(stepId: string) {
+    if (!workflowRunId) return;
+    setBusy(true); setError('');
+    try {
+      await api.completeProductionStep(workflowRunId,stepId,{acknowledged_in_customer_studio:true});
+      setWorkflow((await api.getProductionWorkflow(workflowRunId)).data);
+    } catch(e) { setError(e instanceof Error ? e.message : 'Step completion failed'); }
+    finally { setBusy(false); }
+  }
+
+  async function cancelWorkflow() {
+    if (!workflowRunId) return;
+    setBusy(true); setError('');
+    try { await api.cancelProductionWorkflow(workflowRunId); setWorkflow((await api.getProductionWorkflow(workflowRunId)).data); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Workflow cancellation failed'); }
+    finally { setBusy(false); }
+  }
+
   async function generateMedia(event: React.FormEvent) {
     event.preventDefault();
     if (!mediaPrompt.trim()) return;
@@ -329,6 +402,8 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
         generation_config: mediaType === 'image'
           ? { aspect_ratio: mediaAspectRatio, image_size: mediaImageSize }
           : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds, resolution: mediaResolution },
+        ...(readyWorkflowStep('media_generation') && workflowRunId
+          ? { production_run_id: workflowRunId, parent_step_id: readyWorkflowStep('media_generation')!.id } : {}),
       }, crypto.randomUUID());
       setNotice('Media generation ' + result.data.generation_id + ' diterima · ' + result.data.status);
       setMediaPrompt(''); await load();
@@ -408,7 +483,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     try{
       const result=await call<{data:{voiceover_id:string;status:string;provider_configured:boolean}}>('/projects/'+projectId+'/voiceovers',{
         method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},
-        body:JSON.stringify({text:voiceText,provider_key:voiceProvider,model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID',...(selectedVoiceSubtitleSegmentId?{subtitle_segment_id:selectedVoiceSubtitleSegmentId}:{})}),
+        body:JSON.stringify({text:voiceText,provider_key:voiceProvider,model_key:voiceModel,voice_key:voiceKey,language:project?.default_language||'id-ID',...(selectedVoiceSubtitleSegmentId?{subtitle_segment_id:selectedVoiceSubtitleSegmentId}:{}),...(readyWorkflowStep('voiceover')&&workflowRunId?{production_run_id:workflowRunId,parent_step_id:readyWorkflowStep('voiceover')!.id}:{})}),
       });
       setNotice(result.data.status==='provider_unavailable'?'Voiceover job tersimpan, tetapi provider credentials belum dikonfigurasi. Tidak ada audio yang dibuat.':'Voiceover job queued · '+result.data.voiceover_id);
       await load();
@@ -534,7 +609,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     setTimelineSaving(true);setError('');
     try{
       const result=await call<{data:{timeline_id:string;version:number;compiled_hash:string;resolved_assets:ResolvedCompositionAssets}}>('/projects/'+projectId+'/timeline',{
-        method:'PUT',body:JSON.stringify({snapshot:snapshotToSave,expected_version:timelineVersion}),
+        method:'PUT',body:JSON.stringify({snapshot:snapshotToSave,expected_version:timelineVersion,...(readyWorkflowStep('timeline')&&workflowRunId?{production_run_id:workflowRunId,parent_step_id:readyWorkflowStep('timeline')!.id}:{})}),
       });
       setTimelineVersion(result.data.version);
       setPreviewResolvedAssets(result.data.resolved_assets||{});
@@ -548,7 +623,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     if(!previewSnapshot)return;
     setBusy(true);setError('');setNotice('');
     try{
-      const result=await call(() => api.createRender(projectId,{snapshot:previewSnapshot},crypto.randomUUID()));
+      const result=await call(() => api.createRender(projectId,{snapshot:previewSnapshot,...(readyWorkflowStep('render')&&workflowRunId?{production_run_id:workflowRunId,parent_step_id:readyWorkflowStep('render')!.id}:{})},crypto.randomUUID()));
       setNotice('Current timeline render queued · '+result.data.render_job_id);
       await load();
     }catch(e){setError(e instanceof Error?e.message:'Timeline render submission failed');}
@@ -715,6 +790,33 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       <h2 style={{marginTop:0}}>04 · Creative runs</h2>
       {runs.map(run=><div key={run.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{run.current_stage || 'Creative pipeline'} · {run.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {run.progress_percent ?? 0}% · {run.error_code || run.id}</p></div>{['queued','planning','scripting','storyboarding'].includes(run.status)&&<button type="button" disabled={busy} onClick={()=>void cancelRun(run.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div>)}
       {runs.length===0&&<p style={{color:'#68788e'}}>Belum ada creative run.</p>}
+      <div style={{borderTop:'1px solid #edf0f5',marginTop:10,paddingTop:12}}>
+        <h3 style={{fontSize:14,margin:'0 0 8px'}}>Unified Production Workflow</h3>
+        <select aria-label="Production Run for workflow" value={workflowRunId} onChange={event=>setWorkflowRunId(event.target.value)} style={field}>
+          <option value="">Select a Production Run</option>
+          {runs.map(run=><option key={run.id} value={run.id}>{run.current_stage||'Production'} · {run.status} · {run.id.slice(0,8)}</option>)}
+        </select>
+        {workflowLoadError&&<p role="status" style={{fontSize:12,color:'#9b4a12'}}>{workflowLoadError}</p>}
+        {!workflow&&workflowRunId&&<button type="button" disabled={busy} onClick={()=>void createWorkflow()} style={{...button,marginTop:8}}>Initialize persisted workflow</button>}
+        {workflow&&<>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap',marginTop:10}}>
+            <span style={{fontSize:12,color:'#68788e'}}>Steps {workflow.steps.filter(step=>step.status==='completed').length}/{workflow.steps.length} completed · {String(workflow.summary?.status??'active')}</span>
+            <button type="button" disabled={busy} onClick={()=>void cancelWorkflow()} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel workflow</button>
+          </div>
+          {workflow.steps.map(step=><div key={step.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}>
+            <div style={{minWidth:0}}>
+              <strong style={{fontSize:12}}>{step.step_key} · {step.status}</strong>
+              <p style={{fontSize:10,color:'#68788e',margin:'2px 0'}}>{step.step_type} · {step.child_job_id?step.child_job_type+' '+step.child_job_id.slice(0,8):'No child job'} · {step.dependencies.map(item=>item.step_key).join(', ')||'root'}</p>
+              {step.error_code&&<p style={{fontSize:10,color:'#b42318',margin:0}}>{step.error_code} · {step.error_message_safe||''}</p>}
+            </div>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+              {step.status==='waiting_approval'&&<button type="button" disabled={busy} onClick={()=>void approveWorkflowStep(step.id)} style={button}>Approve</button>}
+              {step.status==='ready'&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void completeWorkflowStep(step.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Mark complete</button>}
+              {step.status==='failed'&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void api.retryProductionStep(workflowRunId,step.id).then(()=>api.getProductionWorkflow(workflowRunId).then(x=>setWorkflow(x.data))).catch(e=>setError(e instanceof Error?e.message:'Step retry failed'))} style={button}>Retry</button>}
+            </div>
+          </div>)}
+        </>}
+      </div>
     </section>
     <section style={panel}>
       <h2 style={{marginTop:0}}>05 · Render jobs</h2>

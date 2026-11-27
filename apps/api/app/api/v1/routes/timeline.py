@@ -67,6 +67,13 @@ async def save_timeline(project_id:UUID,payload:TimelineSave,request:Request,cla
  row=(await db.execute(text("""insert into public.video_timelines(workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,snapshot,compiled_hash,created_by,production_run_id,parent_step_id)
  values(:workspace,:project,:version,2,:fps,:width,:height,:duration,cast(:snapshot as jsonb),:hash,:actor,:run,:step)
  returning id,version,created_at"""),{"workspace":workspace,"project":project_id,"version":version,"fps":snapshot["fps"],"width":snapshot["width"],"height":snapshot["height"],"duration":snapshot["durationFrames"],"snapshot":json.dumps(snapshot),"hash":digest,"actor":actor,"run":payload.production_run_id,"step":payload.parent_step_id})).mappings().one()
+ if payload.production_run_id is not None and payload.parent_step_id is not None:
+  await db.execute(text("""update public.production_run_steps set status='completed',
+   output_refs=cast(:outputs as jsonb),completed_at=now(),updated_at=now()
+   where id=:step and production_run_id=:run and status in ('ready','running')"""),
+   {"outputs":json.dumps({"timeline_id":str(row["id"]),"version":version,"compiled_hash":digest}),
+    "step":payload.parent_step_id,"run":payload.production_run_id})
+  await db.execute(text("select private.graphytion_sync_production_run(:run)"),{"run":payload.production_run_id})
  await db.execute(text("""insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id,metadata)
  values(:actor,:workspace,'timeline.version.saved','video_timeline',:id,:request,cast(:metadata as jsonb))"""),{"actor":actor,"workspace":workspace,"id":row["id"],"request":request.state.request_id,"metadata":json.dumps({"version":version,"hash":digest,"clips":len(snapshot["clips"]),"tracks":len(snapshot["tracks"])})})
  await db.commit()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import Any
 from uuid import UUID
@@ -11,6 +11,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.workspace_authorization import WorkspacePermissionResolver
+from app.services.agent_registry import STAGE_AGENT_KEYS, agent_registry
 
 HANDLER_STAGE = {
     "creative.generate_brief": "brief",
@@ -104,6 +105,8 @@ class AgentToolRegistry:
             not isinstance(model_key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", model_key)
         ):
             raise HTTPException(409, "Tool configuration contains an invalid model key")
+        if row["agent_key"] not in STAGE_AGENT_KEYS.get(stage, ()):
+            raise HTTPException(409, "Registered tool points to an agent outside its stage registry")
         return AgentTool(
             id=row["id"], key=row["tool_key"], agent_key=row["agent_key"],
             stage=stage, handler_key=handler, description=row["description"],
@@ -143,6 +146,19 @@ class AgentToolRegistry:
             if exc.status_code == 403:
                 return False
             raise
+
+    async def _authorize_stage_agents(
+        self, *, db: AsyncSession, actor: UUID, workspace_id: UUID,
+        tool: AgentTool, resource_id: str | None = None,
+    ) -> None:
+        for agent_key in STAGE_AGENT_KEYS.get(tool.stage, ()):
+            profile = await agent_registry.resolve(db=db, agent_key=agent_key, stage=tool.stage)
+            agent_tool = replace(tool, agent_key=profile.agent_key, permission=profile.permission_key)
+            if not await self._allowed(
+                db=db, actor=actor, workspace_id=workspace_id,
+                tool=agent_tool, resource_id=resource_id,
+            ):
+                raise HTTPException(403, f"Agent execution permission denied for {profile.agent_key}")
 
     async def for_stage(self, *, db: AsyncSession, workspace_id: UUID, stage: str) -> AgentTool:
         if stage not in HANDLER_STAGE.values():
@@ -190,7 +206,15 @@ class AgentToolRegistry:
             tool = self._tool(row)
             if tool.stage in result:
                 continue
-            if await self._allowed(db=db, actor=actor, workspace_id=workspace_id, tool=tool):
+            try:
+                await self._authorize_stage_agents(
+                    db=db, actor=actor, workspace_id=workspace_id, tool=tool,
+                )
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    continue
+                raise
+            else:
                 result[tool.stage] = {
                     "id": str(tool.id), "key": tool.key, "agent_key": tool.agent_key,
                     "stage": tool.stage, "handler_key": tool.handler_key,
@@ -214,9 +238,10 @@ class AgentToolRegistry:
             raise HTTPException(404, "Project is not available in this workspace")
         resource_fields = {"script": "brief_id", "storyboard": "script_id", "scene": "scene_id"}
         resource_id = str(payload[resource_fields[stage]]) if stage in resource_fields and payload.get(resource_fields[stage]) else None
-        if not await self._allowed(db=db, actor=actor, workspace_id=workspace_id,
-                                   tool=tool, resource_id=resource_id):
-            raise HTTPException(403, "Agent tool permission denied")
+        await self._authorize_stage_agents(
+            db=db, actor=actor, workspace_id=workspace_id,
+            tool=tool, resource_id=resource_id,
+        )
         resource_checks = {
             "script": ("select id from public.creative_briefs where id=:id and project_id=:project and workspace_id=:workspace and status='approved'", "brief_id"),
             "storyboard": ("select id from public.video_scripts where id=:id and project_id=:project and workspace_id=:workspace and status='approved'", "script_id"),

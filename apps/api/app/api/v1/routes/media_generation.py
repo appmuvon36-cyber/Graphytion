@@ -375,6 +375,50 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
             if operational_cost is None and cost_price:
                 units = int((job["generation_config"] or {}).get("duration_seconds", 1)) if job["media_type"] == "video" else 1
                 operational_cost = int(cost_price["microusd_per_unit"]) * units
+            snapshot = dict(job["price_snapshot"] or {})
+            if provider_price:
+                snapshot["provider"] = {
+                    "id": str(provider_price["id"]),
+                    "input_microusd_per_million": int(provider_price["input_microusd_per_million"]),
+                    "output_microusd_per_million": int(provider_price["output_microusd_per_million"]),
+                }
+            if cost_price:
+                snapshot["operational"] = {
+                    "id": str(cost_price["id"]), "microusd_per_unit": int(cost_price["microusd_per_unit"]),
+                    "unit_name": cost_price["unit_name"], "effective_at": cost_price["effective_at"].isoformat(),
+                }
+            await db.execute(text("""
+                update public.media_generation_jobs set
+                  provider_cost_microusd=coalesce(:provider_cost,provider_cost_microusd),
+                  estimated_provider_cost_microusd=coalesce(:estimated,estimated_provider_cost_microusd),
+                  provider_cost_status=case when coalesce(:provider_cost,provider_cost_microusd) is null then 'unpriced' else 'priced' end,
+                  provider_price_id=coalesce(:provider_price_id,provider_price_id),
+                  operational_cost_microusd=coalesce(:operational,operational_cost_microusd),
+                  operational_price_id=coalesce(:operational_price_id,operational_price_id),
+                  quota_debit_microusd=0,margin_microusd=null,
+                  economics_status=case
+                    when coalesce(:provider_cost,provider_cost_microusd) is not null
+                      and coalesce(:operational,operational_cost_microusd) is not null then 'complete'
+                    when coalesce(:estimated,estimated_provider_cost_microusd) is not null
+                      or coalesce(:provider_cost,provider_cost_microusd) is not null
+                      or coalesce(:operational,operational_cost_microusd) is not null then 'partial'
+                    else 'unpriced' end,
+                  quota_reconciliation_status=case
+                    when coalesce(:provider_cost,provider_cost_microusd) is not null
+                      and coalesce(:operational,operational_cost_microusd) is not null then 'complete'
+                    else 'pending' end,
+                  quota_reconciled_at=case
+                    when coalesce(:provider_cost,provider_cost_microusd) is not null
+                      and coalesce(:operational,operational_cost_microusd) is not null then now()
+                    else null end,
+                  price_snapshot=cast(:snapshot as jsonb),updated_at=now()
+                where id=:id
+            """), {
+                "provider_cost": provider_cost, "estimated": estimated_provider_cost,
+                "provider_price_id": provider_price["id"] if provider_price else None,
+                "operational": operational_cost, "operational_price_id": cost_price["id"] if cost_price else None,
+                "snapshot": json.dumps(snapshot), "id": job["id"],
+            })
             # A legacy quota hold is released only when actual provider cost is known.
             if provider_cost is not None and job["quota_reservation_id"] is not None:
                 await release_fixed_operation(

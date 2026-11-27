@@ -218,11 +218,11 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
       const result = await api.createMediaGeneration(projectId, {
         media_type: mediaType,
         provider_key: mediaType === 'image' ? 'gemini' : 'google_agent_platform',
-        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-flash-preview',
+        model_key: mediaType === 'image' ? 'gemini-3.1-flash-image' : 'gemini-omni-1.2-flash',
         prompt: mediaPrompt.trim(),
         generation_config: mediaType === 'image'
           ? { aspect_ratio: mediaAspectRatio, image_size: mediaImageSize }
-          : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds },
+          : { aspect_ratio: mediaAspectRatio, duration_seconds: mediaDurationSeconds, resolution: mediaResolution },
       }, crypto.randomUUID());
       setNotice('Media generation ' + result.data.generation_id + ' diterima · ' + result.data.status);
       setMediaPrompt(''); await load();
@@ -597,7 +597,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
           </select>}
           {mediaType==='video'&&<>
             <select aria-label="Video duration" value={mediaDurationSeconds} onChange={event=>setMediaDurationSeconds(Number(event.target.value))} style={field}>
-              {[3,4,5,6,8,10].map(value=><option key={value} value={value}>{value} seconds</option>)}
+              {[3,4,5,6,8,10,12,15].map(value=><option key={value} value={value}>{value} seconds</option>)}
             </select>
             <span style={{fontSize:12,color:'#68788e',alignSelf:'center'}}>Google Omni Flash · native output quality</span>
           </>}

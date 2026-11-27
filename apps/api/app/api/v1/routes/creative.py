@@ -6,11 +6,13 @@ from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from redis.asyncio import Redis
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
+from app.core.config import settings
 from app.services.workspace_authorization import WorkspacePermissionResolver
 from app.services.creative_pipeline import creative_pipeline
 
@@ -23,6 +25,29 @@ def _actor(claims: dict[str, Any]) -> UUID:
         return UUID(str(claims["sub"]))
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=401, detail="Invalid authenticated subject") from exc
+
+
+async def _notify_creative_worker(run_id: UUID) -> None:
+    if not settings.redis_url_value:
+        return
+    client = Redis.from_url(
+        settings.redis_url_value,
+        decode_responses=True,
+        socket_connect_timeout=1.5,
+        socket_timeout=3,
+    )
+    try:
+        await client.lpush("graphytion:creative:jobs", str(run_id))
+    except Exception:
+        # The run is already committed in PostgreSQL. A lost wake-up must never
+        # turn a successful enqueue into an API failure; workers still poll PG.
+        import logging
+        logging.getLogger("graphytion.creative").warning(
+            "creative_queue_wakeup_failed; PostgreSQL polling remains authoritative",
+            exc_info=True,
+        )
+    finally:
+        await client.aclose()
 
 
 async def _project_scope(db: AsyncSession, project_id: UUID, actor: UUID, permission: str) -> UUID:
@@ -1055,8 +1080,9 @@ async def execute_creative_stage(
         values (:run,'stage.queued',cast(:payload as jsonb),1)
     """), {"run": run["id"], "payload": json.dumps({"stage": stage})})
     await db.commit()
+    await _notify_creative_worker(run["id"])
 
-    # The creative worker polls the committed production_runs row directly.
+    # PostgreSQL owns the job; Redis only shortens worker wake-up latency.
     return {"data": {"run_id": str(run["id"]), "status": "queued"}}
 
 

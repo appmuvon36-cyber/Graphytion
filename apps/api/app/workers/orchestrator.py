@@ -549,37 +549,46 @@ async def _dispatch_timeline(
         db, project_id=run["project_id"], workspace_id=run["workspace_id"],
         asset_ids=asset_ids, expires_in=300, snapshot=snapshot,
     )
-    if existing_id:
-        timeline_id, version = existing_id, int(expected_version or 1)
-    else:
-        await db.execute(text("select pg_advisory_xact_lock(hashtext(:project))"), {"project": str(run["project_id"])})
-        current = int(await db.scalar(text("select max(version) from public.video_timelines where project_id=:project"), {"project": run["project_id"]}) or 0)
-        if expected_version is not None and expected_version != current:
-            raise StepInputError("Timeline changed after the production request was prepared")
-        version = current + 1
-        timeline_id = await db.scalar(text("""
-            insert into public.video_timelines(
-              workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,
-              snapshot,compiled_hash,created_by,production_run_id,parent_step_id
-            ) values(:workspace,:project,:version,2,:fps,:width,:height,:duration,
-              cast(:snapshot as jsonb),:hash,:actor,:run,:step) returning id
-        """), {
-            "workspace": run["workspace_id"], "project": run["project_id"], "version": version,
-            "fps": snapshot["fps"], "width": snapshot["width"], "height": snapshot["height"],
-            "duration": snapshot["durationFrames"], "snapshot": _canonical(snapshot),
-            "hash": digest, "actor": run["requested_by"], "run": envelope.run_id,
-            "step": envelope.step_id,
-        })
+    await db.execute(text("select pg_advisory_xact_lock(hashtext(:project))"), {"project": str(run["project_id"])})
+    current = int(await db.scalar(text("select max(version) from public.video_timelines where project_id=:project"), {"project": run["project_id"]}) or 0)
+    if expected_version is not None and expected_version != current:
+        raise StepInputError("Timeline changed after the production request was prepared")
+    version = current + 1
+    timeline_id = await db.scalar(text("""
+        insert into public.video_timelines(
+          workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,
+          snapshot,compiled_hash,created_by,production_run_id,parent_step_id
+        ) values(:workspace,:project,:version,2,:fps,:width,:height,:duration,
+          cast(:snapshot as jsonb),:hash,:actor,:run,:step) returning id
+    """), {
+        "workspace": run["workspace_id"], "project": run["project_id"], "version": version,
+        "fps": snapshot["fps"], "width": snapshot["width"], "height": snapshot["height"],
+        "duration": snapshot["durationFrames"], "snapshot": _canonical(snapshot),
+        "hash": digest, "actor": run["requested_by"], "run": envelope.run_id,
+        "step": envelope.step_id,
+    })
     await _finish_without_child(db, step, {
         "timeline_id": str(timeline_id), "version": version, "compiled_hash": digest,
-        "snapshot": snapshot,
     })
 
 
 async def _dispatch_render(
     db: AsyncSession, step: dict[str, Any], envelope: StepEnvelope, run: dict[str, Any]
 ) -> None:
-    snapshot, timeline_id, version = await _load_snapshot(db, step, envelope, run)
+    timeline_output = envelope.dependency_outputs.get("timeline", {})
+    linked_timeline_id = timeline_output.get("timeline_id")
+    if linked_timeline_id:
+        timeline = (await db.execute(text("""
+            select id,version,snapshot from public.video_timelines
+            where id=:timeline and production_run_id=:run
+              and project_id=:project and workspace_id=:workspace
+        """), {"timeline": linked_timeline_id, "run": envelope.run_id,
+               "project": run["project_id"], "workspace": run["workspace_id"]})).mappings().first()
+        if timeline is None:
+            raise StepInputError("Timeline dependency reference is missing or outside this Production Run")
+        snapshot, timeline_id, version = dict(timeline["snapshot"]), timeline["id"], int(timeline["version"])
+    else:
+        snapshot, timeline_id, version = await _load_snapshot(db, step, envelope, run)
     snapshot.pop("contentHash", None)
     digest = _validate_snapshot(snapshot)
     snapshot["contentHash"] = digest

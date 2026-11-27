@@ -154,7 +154,7 @@ class GeminiMediaProvider:
             if status not in self.TERMINAL_STATUSES:
                 body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
             elif status != "completed":
-                raise RuntimeError(f"GEMINI_IMAGE_{status.upper()}")
+                raise RuntimeError(f"GEMINI_INTERACTION_{status.upper()}")
 
         image_block = next(
             (item for item in self._output_blocks(body)
@@ -226,7 +226,7 @@ class GeminiMediaProvider:
             if status not in self.TERMINAL_STATUSES:
                 body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
             elif status != "completed":
-                raise RuntimeError(f"GEMINI_VIDEO_{status.upper()}")
+                raise RuntimeError(f"GEMINI_INTERACTION_{status.upper()}")
         video_block = next(
             (item for item in self._output_blocks(body)
              if item.get("type") == "video" and item.get("data")),

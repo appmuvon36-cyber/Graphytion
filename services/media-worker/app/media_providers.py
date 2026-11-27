@@ -91,9 +91,10 @@ class GeminiMediaProvider:
                 status = str(body.get("status", "")).lower()
                 if status in self.TERMINAL_STATUSES:
                     if status != "completed":
-                        error = body.get("error") or {}
-                        code = error.get("code") or status.upper()
-                        raise RuntimeError(f"GEMINI_INTERACTION_{code}")
+                        # Persist a stable terminal code independent of provider
+                        # diagnostic wording so API retry/recovery can distinguish
+                        # a confirmed terminal operation from an unknown outcome.
+                        raise RuntimeError(f"GEMINI_INTERACTION_{status.upper()}")
                     return body
                 if cancel_event is not None and cancel_event.is_set():
                     try:

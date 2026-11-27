@@ -4,15 +4,16 @@ import hashlib
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.services.supabase_storage import SupabaseStorage
+from app.core.database import set_rls_subject
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -34,6 +35,7 @@ def _actor(claims: dict[str, Any]) -> UUID:
 
 
 async def _project_workspace(db: AsyncSession, project_id: UUID, actor: UUID, permission: str) -> UUID:
+    await set_rls_subject(db, str(actor))
     workspace_id = await db.scalar(text("""
         select workspace_id from public.video_projects
         where id=:project and status <> 'deleted'
@@ -171,17 +173,22 @@ async def upload_project_asset(
 async def list_project_assets(
     project_id: UUID,
     claims: AuthenticatedClaims,
+    scope: Literal["project", "workspace"] = Query(default="project"),
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
-    await _project_workspace(db, project_id, actor, "project.read")
+    workspace_id = await _project_workspace(db, project_id, actor, "project.read")
     rows = (await db.execute(text("""
         select id,project_id,workspace_id,uploaded_by,file_name,content_type,
-               size_bytes,sha256,status,created_at
+               size_bytes,sha256,status,asset_family_id,version_number,supersedes_asset_id,
+               source_type,source_provider,source_job_id,provenance,usage_rights_status,
+               license_type,commercial_use_allowed,attribution,created_at
         from public.project_assets
-        where project_id=:project and status='active'
+        where workspace_id=:workspace and status='active'
+          and (:scope='workspace' or project_id=:project)
         order by created_at desc
-    """), {"project": project_id})).mappings().all()
+        limit 500
+    """), {"workspace": workspace_id, "project": project_id, "scope": scope})).mappings().all()
     return {"data": [dict(row) for row in rows]}
 
 
@@ -192,6 +199,7 @@ async def download_project_asset(
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
+    await set_rls_subject(db, str(actor))
     row = (await db.execute(text("""
         select id,project_id,bucket,object_path,status
         from public.project_assets where id=:asset
@@ -216,6 +224,7 @@ async def delete_project_asset(
     db: AsyncSession = DbSession,
 ):
     actor = _actor(claims)
+    await set_rls_subject(db, str(actor))
     row = (await db.execute(text("""
         select id,project_id,workspace_id,bucket,object_path,status
         from public.project_assets where id=:asset

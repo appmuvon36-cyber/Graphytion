@@ -60,10 +60,10 @@ async def assemble_agent_context(
           and ((scope='personal' and owner_user_id=:actor)
             or (scope='project' and project_id=:project))
           and (nullif(btrim(:query),'') is null
-            or (title ilike '%' || :query || '%' or content ilike '%' || :query || '%' or array_to_string(tags,' ') ilike '%' || :query || '%'))
+            or to_tsvector('simple',concat_ws(' ',title,content,array_to_string(tags,' '))) @@ websearch_to_tsquery('simple',:query))
         order by
           case when nullif(btrim(:query),'') is not null
-            then case when title ilike '%' || :query || '%' then 1 else 0 end
+            then ts_rank_cd(to_tsvector('simple',concat_ws(' ',title,content,array_to_string(tags,' '))),websearch_to_tsquery('simple',:query))
             else 0 end desc,
           importance desc,updated_at desc
         limit :limit

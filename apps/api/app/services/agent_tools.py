@@ -47,6 +47,7 @@ class AgentToolRegistry:
     """Explicit allowlist for model-backed creative tools; no dynamic code execution."""
 
     def __init__(self) -> None:
+        self._permissions = WorkspacePermissionResolver()
         specs = (
             AgentTool("creative.generate_brief", "prompt_interpreter", "brief",
                       "Interpret a user prompt into a structured creative brief.",
@@ -128,9 +129,5 @@ class AgentToolRegistry:
                 raise HTTPException(status_code=404, detail="Agent tool resource is not available in this project")
         return tool
 
-    def __init_permissions(self) -> None:
-        self._permissions = WorkspacePermissionResolver()
-
 
 agent_tool_registry = AgentToolRegistry()
-agent_tool_registry.__init_permissions()

@@ -59,8 +59,8 @@ async def create_voiceover(project_id:UUID,payload:VoiceoverCreate,request:Reque
  actor=_actor(claims);workspace=await _scope(db,project_id,actor,"project.update")
  if payload.production_run_id is not None:
   run_ok=await db.scalar(text("select exists(select 1 from public.production_runs where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"),{"run":payload.production_run_id,"workspace":workspace,"project":project_id,"actor":actor})
-  step_ok=await db.scalar(text("select exists(select 1 from public.production_run_steps where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project and status in ('ready','running'))"),{"step":payload.parent_step_id,"run":payload.production_run_id,"workspace":workspace,"project":project_id}) if payload.parent_step_id else False
-  if not run_ok or (payload.parent_step_id is not None and not step_ok):raise HTTPException(404,"Production run or step not found in this project")
+  step_row=(await db.execute(text("select id,child_job_id,status from public.production_run_steps where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project and status='ready' for update"),{"step":payload.parent_step_id,"run":payload.production_run_id,"workspace":workspace,"project":project_id})).mappings().first() if payload.parent_step_id else None
+  if not run_ok or (payload.parent_step_id is not None and (not step_row or step_row["child_job_id"])):raise HTTPException(404,"Production run or step not found in this project")
  elif payload.parent_step_id is not None:raise HTTPException(422,"parent_step_id requires production_run_id")
  if not idempotency_key or not 16<=len(idempotency_key)<=128:raise HTTPException(400,"Idempotency-Key must contain 16-128 characters")
  if payload.scene_id:

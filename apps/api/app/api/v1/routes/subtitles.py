@@ -37,6 +37,8 @@ class SubtitleTrackInput(BaseModel):
     format: str = Field(default="webvtt", pattern=r"^(webvtt|srt)$")
     style_config: dict[str, Any] = Field(default_factory=dict)
     segments: list[SubtitleSegmentInput] = Field(default_factory=list, max_length=5000)
+    production_run_id: UUID | None = None
+    parent_step_id: UUID | None = None
 
 
 class SubtitleImport(BaseModel):
@@ -277,20 +279,40 @@ async def _create_track(
     payload: SubtitleTrackInput, request: Request,
 ) -> Any:
     _validate_segments(payload.segments)
+    if payload.production_run_id is not None:
+        run_ok = await db.scalar(text("""select exists(select 1 from public.production_runs
+          where id=:run and workspace_id=:workspace and project_id=:project and requested_by=:actor)"""),
+          {"run": payload.production_run_id, "workspace": workspace, "project": project, "actor": actor})
+        step_row = (await db.execute(text("""select id,status from public.production_run_steps
+          where id=:step and production_run_id=:run and workspace_id=:workspace and project_id=:project
+            and step_type='subtitle' and status='ready' for update"""),
+          {"step": payload.parent_step_id, "run": payload.production_run_id, "workspace": workspace, "project": project})).mappings().first() if payload.parent_step_id else None
+        if not run_ok or (payload.parent_step_id is not None and not step_row):
+            raise HTTPException(404, "Production run or subtitle step not found in this project")
+    elif payload.parent_step_id is not None:
+        raise HTTPException(422, "parent_step_id requires production_run_id")
     track = (
         await db.execute(
             text("""insert into public.subtitle_tracks
-            (workspace_id,project_id,language,format,style_config,created_by)
-            values(:workspace,:project,:language,:format,cast(:style as jsonb),:actor)
+            (workspace_id,project_id,language,format,style_config,created_by,production_run_id,parent_step_id)
+            values(:workspace,:project,:language,:format,cast(:style as jsonb),:actor,:run,:step)
             returning id,version,created_at"""),
             {
                 "workspace": workspace, "project": project, "language": payload.language,
                 "format": payload.format, "style": json.dumps(payload.style_config), "actor": actor,
+                "run": payload.production_run_id, "step": payload.parent_step_id,
             },
         )
     ).mappings().one()
     for segment in payload.segments:
         await _insert_segment(db, track["id"], segment, actor, request)
+    if payload.production_run_id is not None and payload.parent_step_id is not None:
+        await db.execute(text("""update public.production_run_steps set status='completed',
+          output_refs=cast(:outputs as jsonb),completed_at=now(),updated_at=now()
+          where id=:step and production_run_id=:run and status in ('ready','running')"""),
+          {"outputs": json.dumps({"subtitle_track_id": str(track["id"]), "segment_count": len(payload.segments)}),
+           "step": payload.parent_step_id, "run": payload.production_run_id})
+        await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": payload.production_run_id})
     await db.execute(
         text("""insert into public.audit_logs
         (actor_user_id,workspace_id,action,resource_type,resource_id,request_id)

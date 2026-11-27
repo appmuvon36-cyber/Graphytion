@@ -579,7 +579,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     event.preventDefault();setBusy(true);setError('');
     try{
       const result=await call<{data:{id:string;segment_count:number}}>('/projects/'+projectId+'/subtitles/import',{
-        method:'POST',body:JSON.stringify({language:project?.default_language||'id-ID',format:subtitleFormat,content:subtitleImport,style_config:{position:'bottom'}}),
+        method:'POST',body:JSON.stringify({language:project?.default_language||'id-ID',format:subtitleFormat,content:subtitleImport,style_config:{position:'bottom'},...(readyWorkflowStep('subtitle')&&workflowRunId?{production_run_id:workflowRunId,parent_step_id:readyWorkflowStep('subtitle')!.id}:{})}),
       });
       setNotice('Subtitle track imported · '+result.data.segment_count+' segments');setSubtitleImport('');await load();
     }catch(e){setError(e instanceof Error?e.message:'Subtitle import failed');}

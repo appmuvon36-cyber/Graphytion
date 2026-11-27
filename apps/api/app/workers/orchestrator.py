@@ -7,8 +7,8 @@ import logging
 import os
 import socket
 from datetime import datetime, timezone
-from typing import Any, Literal
 from types import SimpleNamespace
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError

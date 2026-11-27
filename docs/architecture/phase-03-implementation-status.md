@@ -284,3 +284,19 @@ Latest source implementation after the priority reset:
 - Before releasing a retryable TTS job back to PostgreSQL, the worker waits for the provider `Retry-After` value when numeric, otherwise applies bounded exponential backoff derived from the persisted attempt count (1–60 seconds). The worker heartbeat remains active during the wait.
 - Retry budget enforcement remains in the FastAPI failure callback and PostgreSQL `audio_generations.max_attempts`; the worker does not fabricate job state.
 - No schema migration, production DB mutation, secret change, or deployment was performed. Source was committed and re-fetched; runtime provider behavior and type/build checks remain unverified.
+## Durable creative retry scheduling — 2026-11-27
+
+- Added additive migration `202611270004_durable_creative_retry_schedule.sql`: `production_runs.available_at` and `agent_tasks.available_at` default to `now()`, plus a due-queue index.
+- The creative claim function now claims queued runs only when `available_at <= now()`. Expired active leases retain the existing recovery path.
+- Creative stage failures with transient HTTP statuses (`408`, `429`, `502`, `503`, `504`) now persist bounded exponential retry availability in PostgreSQL. Task/run state and workflow event carry the scheduled delay.
+- Removed the worker's duplicate retry transition. `_process_creative_run` is the single owner of persisted domain retry/failure transitions; the worker no longer attempts to mutate a run after its lease has already been released.
+- The migration is committed but NOT applied to Supabase production. No production data, secrets, or deployments were changed.
+
+## Media worker provider retry correction — 2026-11-27
+
+- TTS provider HTTP `408`, `425`, `429`, and `5xx` responses are classified as transient; permanent provider/configuration errors remain terminal.
+- Before a transient job is released back to PostgreSQL, the media worker waits for a numeric `Retry-After` value when provided, otherwise bounded exponential backoff from persisted attempt count (1–60 seconds), while maintaining the lease heartbeat.
+- Retry budget enforcement remains in the FastAPI failure callback and PostgreSQL `audio_generations.max_attempts`.
+- Source-only implementation. Runtime execution, provider calls, typecheck/build, and migration application were not performed.
+
+**Latest source HEAD:** `3ad2d677c47c4793324dd783a0a5e8d5915952e2`. Phase 03 remains OPEN.

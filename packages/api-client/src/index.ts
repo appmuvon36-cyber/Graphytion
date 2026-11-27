@@ -26,7 +26,7 @@ export type MediaGenerationApi = {
 
 export type MediaGenerationCreate = {
   media_type: 'image' | 'video';
-  provider_key?: 'gemini';
+  provider_key?: 'gemini' | 'google_agent_platform';
   model_key: string;
   prompt: string;
   generation_config?: Record<string, unknown>;

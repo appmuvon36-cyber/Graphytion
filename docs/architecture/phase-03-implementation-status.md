@@ -472,3 +472,42 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 - Render artifact registration is transactional with render job completion and Project Asset insertion. If database metadata persistence fails after upload, the API rolls back and attempts to remove the deterministic Storage object so the job can safely retry.
 - No new Supabase schema changes were required in this continuation. The existing 31 applied migrations, tenant RLS, and private Storage buckets remain unchanged.
 - Railway production builds/deployments for the affected web, API, media-worker and render-worker code paths succeeded. API health returned 200; API logs show worker heartbeat and media/render claim/recovery endpoints returning 200; web logged Ready; media worker logged started; render worker logged started. These are operational checks only, not proof of actual Gemini output or MP4 render completion.
+
+
+## Unified Production Completion Continuation — 2026-11-27
+
+Evidence baseline: source HEAD `ac7be36b5cf0d5a4d64a60406672809556ad70bf` before this tracker update. This section supersedes older migration-count and production-orchestration notes above where they differ.
+
+### Implemented / integrated in this continuation
+
+- **Unified Production Orchestrator:** persisted run/step/dependency state remains PostgreSQL-authoritative. Approval gates, dependency readiness, safe retry, cancellation/failure propagation, idempotency, checkpoints, execution events and recovery are backed by the existing orchestration schema and API. Child-job status changes now refresh the owning Production Run through database triggers on `agent_tasks`, `media_generation_jobs`, `audio_generations`, `render_jobs`, `project_assets`, `subtitle_tracks`, `video_timelines` and `render_artifacts`.
+- **Agent lineage:** the Customer Studio workflow now creates a persisted `agent` step before creative review and links the run's existing `agent_task` to that step. Human/manual completion is restricted to an approved `creative` review gate; media, audio, subtitle, timeline and render steps cannot be manually marked complete to bypass their child-job/artifact evidence. Safe retry now refreshes the persisted run aggregate.
+- **Production lineage:** composite scope foreign keys link run, workspace, project and parent step across agent tasks, media generation, audio generation, subtitles, timelines, render jobs, render sidecars and project assets. Step dependencies and reused/generated asset links have relational FKs. A direct schema check found zero missing FK-leading indexes.
+- **Render artifact metadata:** the render worker already sends ffprobe-derived metadata. The API now validates duration, dimensions, video/audio codec and container against the immutable composition snapshot/render profile, then persists output metadata on `render_jobs`. This allows QC/delivery aggregation to rely on verified persisted metadata rather than an assumed render success.
+- **Agent Intelligence:** the canonical registry contains five enabled creative agents (Prompt Interpreter, Scriptwriter, Story Director, Storyboard/Visual Director and Scene Visual Director). Four dynamic tool registry entries are present. Registry-backed permission checks, model routing, project/conversation/memory context, structured output validation and audit/provenance are shared by the creative pipeline.
+- **Customer Studio:** the workflow template includes the linked agent step and review gate. Typed API client methods cover workflow state, approvals, retry, cancellation, child attachment, media generation, render and memory interactions. Backend state remains authoritative; no frontend direct database path was added.
+- **Secure artifact storage:** `project-assets` and `render-artifacts` buckets are private. Render downloads use the existing authorized/signed delivery path. The final render is registered as a project asset; preview and thumbnail sidecars remain linked to the render/run.
+- **Migration hygiene:** 45 production migration records are applied and match 45 versioned SQL files in the repository. The two new production-run trigger migrations were renamed to the exact versions recorded by Supabase. All 13 checked orchestration/agent/media/render tables have RLS enabled; a direct FK/index audit returned zero missing FK indexes.
+- **Personal-use mode:** no new billing, subscription, wallet or quota-pricing dependency was added. Gemini Developer API direct remains configured with `GEMINI_API_KEY`; no Vertex/ADC/service-account integration was introduced.
+
+### Production deployment evidence
+
+Existing production services only; no additional service or database was created:
+
+| Service | Latest deployment | Status |
+|---|---|---|
+| `@graphytion/api` | `5cbf51e4-57c9-454e-bd77-e0cdce3a6751` | SUCCESS |
+| `@graphytion/web` | `1a3e3ed3-e57e-4778-be99-6e041a2c3b96` | SUCCESS |
+| `@graphytion/media-worker` | `bb6020ca-fcda-4c2e-92c7-485aeafb6677` | SUCCESS |
+| `@graphytion/render-worker` | `59d052b0-a3ca-4492-ade7-6da23e394cea` | SUCCESS |
+
+- Render Worker internal API base was aligned to `http://graphytionapi.railway.internal:8080/api/v1`; after correcting the prefix, API logs show render-worker `recover` and `claim` requests returning HTTP 200. Transient connection-refused errors occurred during worker/API restarts; the existing retry loops recovered and subsequent claims/heartbeats returned HTTP 200.
+- Required environment-variable names were checked without exposing values. `GEMINI_API_KEY` is present on API and Media Worker; internal worker-token and API-base variables are present on the worker services.
+- The repository has a `services/ai-worker` source directory, but the Railway project has no separate AI Worker service. The active creative worker remains embedded in the existing API process. No new Railway service was created, in accordance with the no-additional-service constraint.
+
+### Remaining verification boundary / Phase 03 remains OPEN
+
+- Customer Studio initiates child-job creation when a persisted step becomes ready; the orchestrator persists and validates readiness/completion, but it is not a hands-free background planner that invents media/TTS/subtitle/render payloads without a user action. This preserves explicit creative inputs and approval gates.
+- No production run, media/audio job, timeline, render job, render sidecar or project asset existed at verification time (all corresponding row counts were zero). No synthetic rows were inserted.
+- Per the explicit instruction, no Gemini generation, TTS generation or Remotion rendering was executed. Therefore no real MP4, preview or thumbnail artifact can be certified, and no end-to-end runtime acceptance claim is made.
+- Build/deployment, schema, RLS, FK/index and worker/API connectivity checks are verified; actual media-to-MP4 artifact delivery remains unverified until a permitted real production run is performed.

@@ -135,7 +135,14 @@ async function refreshTokens(request: NextRequest): Promise<TokenPayload | null>
     undefined,
     true,
   );
-  if (!response.ok) return null;
+  if (!response.ok) {
+    // A transient Auth/API outage must never be interpreted as a revoked
+    // session. Preserve the refresh cookie and let the browser retry.
+    if (response.status >= 500) {
+      throw new Error(`Supabase Auth refresh temporarily unavailable (HTTP ${response.status})`);
+    }
+    return null;
+  }
   return (await response.json()) as TokenPayload;
 }
 
@@ -195,11 +202,18 @@ export async function handleSessionProxy(
         ? await upstream('/me', { method: 'GET' }, tokens.access_token)
         : null;
     }
+    if (response && response.status >= 500) {
+      return NextResponse.json(
+        { error: { message: 'Session verification is temporarily unavailable. Retry without signing out.' } },
+        { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '5' } },
+      );
+    }
     const result = NextResponse.json(
       { authenticated: Boolean(response?.ok) },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
     if (tokens) setSessionCookies(result, tokens);
+    // Clear cookies only after a definitive invalid/expired session response.
     if (!response?.ok) clearSessionCookies(result);
     ensureCsrf(result, request);
     return result;

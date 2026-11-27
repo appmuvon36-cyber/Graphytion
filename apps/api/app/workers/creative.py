@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import HTTPException
+from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.api.v1.routes.creative import CreativeRunRequest, _process_creative_run
 from app.core.database import SessionLocal, set_rls_subject
 
@@ -183,19 +185,44 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
 
 
 async def run_worker() -> None:
-    logger.info("creative_worker_started", extra={"worker_id": WORKER_ID, "queue": "postgresql"})
-    while True:
-        try:
-            processed = False
-            while await _claim_and_execute(None):
-                processed = True
-            if not processed:
-                await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("creative_worker_database_poll_failed")
-            await asyncio.sleep(3)
+    redis_client = (
+        Redis.from_url(
+            settings.redis_url_value,
+            decode_responses=True,
+            socket_connect_timeout=1.5,
+            socket_timeout=3,
+        )
+        if settings.redis_url_value else None
+    )
+    logger.info(
+        "creative_worker_started",
+        extra={"worker_id": WORKER_ID, "queue": "postgresql_with_optional_redis_wakeup"},
+    )
+    try:
+        while True:
+            try:
+                processed = False
+                while await _claim_and_execute(None):
+                    processed = True
+                if not processed:
+                    # Redis is only a wake-up signal. Every wake-up is followed by
+                    # an authoritative PostgreSQL claim; missed signals are harmless.
+                    if redis_client is not None:
+                        try:
+                            await redis_client.blpop("graphytion:creative:jobs", timeout=2)
+                        except Exception:
+                            logger.warning("creative_redis_wakeup_unavailable_polling_postgres", exc_info=True)
+                            await asyncio.sleep(2)
+                    else:
+                        await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("creative_worker_database_poll_failed")
+                await asyncio.sleep(3)
+    finally:
+        if redis_client is not None:
+            await redis_client.aclose()
 
 
 def main() -> None:

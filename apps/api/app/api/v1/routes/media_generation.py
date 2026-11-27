@@ -197,6 +197,49 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
     }}
 
 
+@router.post("/media-generations/{generation_id}/retry", status_code=202)
+async def retry_media_generation(
+    generation_id: UUID, request: Request, claims: AuthenticatedClaims,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await set_rls_subject(db, str(actor))
+    if not idempotency_key or not 16 <= len(idempotency_key) <= 128:
+        raise HTTPException(400, "Idempotency-Key must contain 16-128 characters")
+    row = (await db.execute(text("""
+        select id,project_id,workspace_id,media_type,status
+        from public.media_generation_jobs where id=:id for update
+    """), {"id": generation_id})).mappings().first()
+    if row is None:
+        raise HTTPException(404, "Media generation not found")
+    await _scope(db, row["project_id"], actor, "project.update")
+    if row["status"] != "failed":
+        raise HTTPException(409, "Only failed media generation jobs can be retried")
+    operation = "image_generation" if row["media_type"] == "image" else "video_generation"
+    resource_type = operation
+    reservation = await reserve_fixed_operation(
+        db, workspace_id=row["workspace_id"], project_id=row["project_id"],
+        resource_type=resource_type, resource_id=generation_id,
+        operation_key=operation, units=1,
+        idempotency_key=f"media-generation:{generation_id}:retry:{idempotency_key}",
+    )
+    await db.execute(text("""
+        update public.media_generation_jobs set status='queued',error_code=null,
+          attempt_count=0,max_attempts=3,worker_id=null,lease_expires_at=null,
+          quota_reservation_id=:reservation,completed_at=null,updated_at=now()
+        where id=:id and status='failed'
+    """), {"id": generation_id, "reservation": reservation})
+    await db.execute(text("""
+        insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
+        values(:actor,:workspace,'media_generation.retried','media_generation',:id,:request)
+    """), {"actor": actor, "workspace": row["workspace_id"], "id": generation_id,
+           "request": request.state.request_id})
+    await db.commit()
+    await notify_worker("media", str(generation_id))
+    return {"data": {"generation_id": str(generation_id), "status": "queued"}}
+
+
 @router.post("/media-generations/{generation_id}/cancel")
 async def cancel_media_generation(generation_id: UUID, request: Request, claims: AuthenticatedClaims,
                                   db: AsyncSession = DbSession):

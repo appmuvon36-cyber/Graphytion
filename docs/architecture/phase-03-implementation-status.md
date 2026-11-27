@@ -399,3 +399,15 @@ The following are deliberately NOT marked complete:
 - Runtime evidence covers successful service startup, API-embedded creative worker startup, and Media/Render Worker heartbeat/claim/recovery polling. No actual user generation, TTS, image/video, or render job was executed, per the no-customer/no-external-test instruction.
 
 These blockers prevent declaring Graphytion fully complete. Continue implementation in the existing four-service architecture; do not add services or databases to close them.
+
+
+## Media generation, dynamic agent routing, Brand Kit and asset lifecycle continuation — 2026-11-27
+
+- Media Worker image/video provider adapters and persisted media-job lifecycle are now implemented in source. Video routing uses Google Agent Platform OAuth, and the model contract was corrected to the currently supported `gemini-omni-1.2-flash` model (3–15 seconds, 360p/720p/1080p/4K); the deprecated Omni Flash preview model is no longer selected by Customer Studio.
+- Customer Studio exposes image size, video duration and video resolution controls and submits typed API requests to FastAPI. A missing video-resolution state was corrected.
+- Dynamic tool execution now consumes the active registered tool's provider/model configuration and agent routing identity through the structured LLM gateway. Handler execution remains a strict server-side allowlist; arbitrary executable code is not accepted. Permission discovery, grant/update/revoke, audit visibility and execution-time authorization remain enforced.
+- Brand Kit logo layout configuration (fit, width, height, opacity, anchor and safe-area margin) is applied to the actual composition image clip. Brand Kit identity/version metadata is pinned into the composition snapshot.
+- Workspace asset listing now exposes provenance/version fields when the corresponding migration is present. Explicit version upload is migration-gated. Asset deletion refuses to proceed when composition-reference tables are not available and prevents deleting referenced Brand Kit, template, timeline or completed-generation assets.
+- New migrations 22408–22413 are committed in the repository. They have NOT been applied to the Graphytion Supabase production database in this continuation. The Graphytion Supabase project is not available through the currently connected Supabase accounts; do not infer that the database schema is current from committed migration files.
+- Railway Media Worker currently has `GEMINI_API_KEY`, but its variable inventory does not include `GOOGLE_CLOUD_PROJECT` or Google service-account credentials. Therefore image provider configuration is present by variable name, but video generation remains credential-blocked until the existing Media Worker receives the required Google Cloud project and service-account/ADC configuration.
+- No migration was executed, no Railway variables were changed, no deployment was run, and no provider/customer/render transaction was executed in this continuation. CI source verification is pending; no runtime success is claimed.

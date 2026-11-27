@@ -67,7 +67,7 @@ def _migration_missing(exc: ProgrammingError) -> bool:
 
 
 def _migration_required() -> HTTPException:
-    return HTTPException(503, "Graphytion media generation migrations 22409-22413 must be applied before this workflow is available")
+    return HTTPException(503, "Graphytion media generation migrations 22409-22414 must be applied before this workflow is available")
 
 
 def _require_worker(request: Request) -> None:

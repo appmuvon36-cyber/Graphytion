@@ -153,7 +153,7 @@ async def create_media_generation(
         # Provider and internal operating costs are tracked separately on the job.
         await db.execute(text("""
             update public.media_generation_jobs
-            set quota_debit_microusd=0,quota_reconciliation_status='pending',
+            set quota_debit_microusd=0,quota_reconciliation_status='not_required',
                 economics_status='unpriced',updated_at=now()
             where id=:id
         """), {"id": row["id"]})
@@ -274,6 +274,7 @@ async def retry_media_generation(
         update public.media_generation_jobs set status='queued',error_code=null,last_error=null,last_error_class=null,
           attempt_count=0,retry_count=0,next_retry_at=now(),worker_id=null,lease_expires_at=null,
           quota_reservation_id=:reservation,quota_debit_microusd=case when :reservation is null then 0 else quota_debit_microusd end,
+          quota_reconciliation_status=case when :reservation is null then 'not_required' else 'pending' end,
           provider_operation_status='not_started',completed_at=null,updated_at=now()
         where id=:id and status='failed'
     """), {"id": generation_id, "reservation": reservation})
@@ -406,14 +407,7 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
                       or coalesce(:provider_cost,provider_cost_microusd) is not null
                       or coalesce(:operational,operational_cost_microusd) is not null then 'partial'
                     else 'unpriced' end,
-                  quota_reconciliation_status=case
-                    when coalesce(:provider_cost,provider_cost_microusd) is not null
-                      and coalesce(:operational,operational_cost_microusd) is not null then 'complete'
-                    else 'pending' end,
-                  quota_reconciled_at=case
-                    when coalesce(:provider_cost,provider_cost_microusd) is not null
-                      and coalesce(:operational,operational_cost_microusd) is not null then now()
-                    else null end,
+                  quota_reconciliation_status='not_required',quota_reconciled_at=null,
                   price_snapshot=cast(:snapshot as jsonb),updated_at=now()
                 where id=:id
             """), {
@@ -454,8 +448,7 @@ async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbS
                   operational_price_id=coalesce(:operational_price_id,operational_price_id),
                   quota_debit_microusd=0,margin_microusd=null,
                   economics_status=case when :provider_cost is not null then 'complete' else 'partial' end,
-                  quota_reconciliation_status=case when :provider_cost is not null then 'complete' else 'pending' end,
-                  quota_reconciled_at=case when :provider_cost is not null then now() else null end,
+                  quota_reconciliation_status='not_required',quota_reconciled_at=null,
                   price_snapshot=cast(:snapshot as jsonb),updated_at=now()
                 where id=:id
             """), {
@@ -760,8 +753,7 @@ async def complete_media_generation_artifact(
               quota_debit_microusd=:debit,margin_microusd=:margin,economics_status=:economics,
               provider_price_id=:provider_price_id,operational_price_id=:operational_price_id,
               price_snapshot=cast(:price_snapshot as jsonb),
-              quota_reconciliation_status=case when :reconciled then 'complete' else 'pending' end,
-              quota_reconciled_at=case when :reconciled then now() else null end,
+              quota_reconciliation_status='not_required',quota_reconciled_at=null,
               currency='USD'
             where id=:id
         """), {"operational": operational_cost, "debit": quota_debit, "margin": margin,

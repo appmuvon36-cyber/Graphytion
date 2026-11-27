@@ -434,3 +434,15 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 - Runtime render output and Asset Library display remain unverified until a real render is performed; this was intentionally not run under the owner's no-real-test rule.
 
 **Implementation commits:** `aafed8b7cd806ab410da0171595252b4eb4273a8`, `cea3f121e7ad0303360427cf09b5b9c833143ae2`, `c783eeb0a67a2efb68f51e9ee4d8251ea6e62f82`. Phase 03 remains OPEN pending remaining integration and runtime evidence.
+
+
+## Production database and render integration verification — 2026-11-27
+
+- Supabase production project `xtjwmezfzexvupbfsdqt` now records 30 migrations. All 30 applied migration records have an exact matching versioned SQL file in `supabase/migrations/`; 26 legacy migration filenames were aligned to their actual applied versions without changing SQL bodies.
+- Applied the missing `dynamic_agent_tool_registry` migration as version `20261127073738` because the existing FastAPI admin tool-registry routes depend on those three tables. RLS is enabled on all three tables; the four global creative tool definitions are configuration, not synthetic user records.
+- Two migrations remain intentionally unapplied: `20261127022411_runtime_price_book_read_policies.sql` (unused pricing read policy in personal mode) and `20261127022413_google_agent_platform_video_provider.sql` (conflicts with the chosen direct Gemini Developer API provider identity). Neither is a Remotion dependency.
+- Production schema inspection confirms `render_jobs`, `render_attempts`, `render_artifacts`, `video_timelines`, and `project_assets` exist with RLS enabled. Their tenant policies scope operations through `graphytion_api` and `private.graphytion_is_workspace_member(workspace_id)`.
+- Both `project-assets` and `render-artifacts` storage buckets are private. `project_assets` supports render metadata fields used by the new output registration.
+- Runtime database inspection: 5 active global render profiles, 8 enabled motion components, one recent online render worker heartbeat and one recent online media worker heartbeat. No synthetic render jobs or assets were inserted; render jobs/assets and render quota reservations remain zero.
+- Source commits for Remotion delivery and typed API integration: `aafed8b7cd806ab410da0171595252b4eb4273a8`, `cea3f121e7ad0303360427cf09b5b9c833143ae2`, `c783eeb0a67a2efb68f51e9ee4d8251ea6e62f82`, `0164761ae256deb04a6cd114d06756c2e66da679`, `b83caee955fc5858b1dbf955e29eaa78024b89be`, `7a76bbb56466e6f7a46be6492d198b37e7c63d8e`. Migration alignment and registry migration commits: `0539573cab1c6a13caae031db1c8058a0a44a861`, `f1f1f6af1db08a394d5557b42f254e0461ba0c48`.
+- No real render or Gemini generation was run. Output MP4 validity and final Asset Library display remain unverified at runtime by design.

@@ -84,7 +84,7 @@ def validate_snapshot(snapshot:dict[str,Any])->str:
   if track_kind not in expected[key]:raise HTTPException(422,"Motion component is incompatible with its timeline track")
   if not isinstance(clip.get("trimStartFrames",0),int) or clip.get("trimStartFrames",0)<0 or not _number(clip.get("playbackRate",1),.1,4):raise HTTPException(422,"Clip trim or playback speed is invalid")
   for transition in (clip.get("transitionIn"),clip.get("transitionOut")):
-   if transition is not None and (not isinstance(transition,dict) or transition.get("type") not in {"cut","fade","dissolve","wipe","slide","zoom"} or not isinstance(transition.get("durationFrames"),int) or not 0<=transition["durationFrames"]<=clip["durationFrames"] or transition.get("direction","left") not in {"left","right","up","down"}):raise HTTPException(422,"Transition configuration is invalid")
+   if transition is not None and (not isinstance(transition,dict) or transition.get("type") not in {"cut","fade","dissolve","crossfade","wipe","slide","zoom"} or not isinstance(transition.get("durationFrames"),int) or not 0<=transition["durationFrames"]<=clip["durationFrames"] or transition.get("direction","left") not in {"left","right","up","down"}):raise HTTPException(422,"Transition configuration is invalid")
   keyframes=clip.get("keyframes",{})
   if not isinstance(keyframes,dict) or set(keyframes)-{"opacity","scale","translateX","translateY","rotate","volume"}:raise HTTPException(422,"Keyframe properties are invalid")
   for property_name,frames in keyframes.items():

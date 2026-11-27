@@ -179,6 +179,16 @@ async function processJob(jobId?: string): Promise<boolean> {
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
         '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', previewPath,
       ], {timeout: renderTimeoutMs, maxBuffer: 2*1024*1024});
+      const previewProbe = await execFile('ffprobe', ['-v','error','-show_entries','format=format_name,duration:stream=codec_type,codec_name,width,height','-of','json',previewPath], {timeout:30000, maxBuffer:1024*1024});
+      const previewMetadata = JSON.parse(previewProbe.stdout) as {format?:{format_name?:string;duration?:string};streams?:Array<{codec_type?:string;codec_name?:string;width?:number;height?:number}>};
+      const previewVideo = previewMetadata.streams?.find(stream => stream.codec_type === 'video');
+      const previewFormats = previewMetadata.format?.format_name?.split(',') ?? [];
+      const previewDuration = Number(previewMetadata.format?.duration);
+      const expectedPreviewWidth = Math.max(2, Math.floor(claimed.timeline_snapshot.width / 4) * 2);
+      const expectedPreviewHeight = Math.max(2, Math.floor(claimed.timeline_snapshot.height / 4) * 2);
+      if (!previewFormats.includes('mp4') || previewVideo?.codec_name !== 'h264' || previewVideo.width !== expectedPreviewWidth || previewVideo.height !== expectedPreviewHeight || !Number.isFinite(previewDuration) || Math.abs(previewDuration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05) {
+        throw new Error('Preview rendition metadata does not match the immutable composition snapshot');
+      }
       const previewBytes = await readFile(previewPath);
       const previewForm = new FormData();
       previewForm.set('file', new Blob([Uint8Array.from(previewBytes)], {type:'video/mp4'}), 'preview.mp4');

@@ -16,7 +16,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routes.media_generation import MediaGenerationCreate, _validate_config
-from app.api.v1.routes.render import RenderCreate, _validate_snapshot
+from app.api.v1.routes.render import _validate_snapshot
 from app.api.v1.routes.voiceover import VoiceoverCreate
 from app.core.database import SessionLocal, set_rls_subject
 from app.services.brand_kit import apply_brand_tokens

@@ -122,7 +122,7 @@ async def reserve_fixed_operation(
         raise HTTPException(status_code=422, detail="Quota usage units must be positive")
     price = (await db.execute(text("""
         select microusd_per_unit,unit_name from public.quota_operation_prices
-        where operation_key=:operation and is_active=true and effective_at<=now()
+        where operation_key=:operation and price_kind='quota' and is_active=true and effective_at<=now()
         order by effective_at desc,created_at desc limit 1
     """), {"operation": operation_key})).mappings().first()
     if price is None:

@@ -1047,9 +1047,10 @@ async def list_media_operational_cost_prices(
     actor = _actor(claims)
     await _require_platform_admin(db, actor)
     rows = (await db.execute(text("""
-        select id,media_type,provider_key,model_key,microusd_per_unit,unit_name,
+        select id,media_type,provider_key,model_key,operation_key,microusd_per_unit,unit_name,
                effective_at,is_active,notes,created_at
-        from public.media_operational_cost_prices
+        from public.quota_operation_prices
+        where price_kind='operational'
         order by media_type,provider_key,model_key,effective_at desc
         limit 500
     """))).mappings().all()
@@ -1075,15 +1076,16 @@ async def set_media_operational_cost_price(
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model):
         raise HTTPException(422, "Invalid model key")
     await db.execute(text("""
-        update public.media_operational_cost_prices set is_active=false
-        where media_type=:media and provider_key=:provider and model_key=:model and is_active=true
+        update public.quota_operation_prices set is_active=false
+        where price_kind='operational' and media_type=:media and provider_key=:provider and model_key=:model and is_active=true
     """), {"media": media, "provider": provider, "model": model})
     row = (await db.execute(text("""
-        insert into public.media_operational_cost_prices(
-          media_type,provider_key,model_key,microusd_per_unit,unit_name,notes,created_by
-        ) values(:media,:provider,:model,:rate,:unit,:notes,:actor)
-        returning id,media_type,provider_key,model_key,microusd_per_unit,unit_name,effective_at,is_active
-    """), {"media": media, "provider": provider, "model": model,
+        insert into public.quota_operation_prices(
+          operation_key,price_kind,media_type,provider_key,model_key,microusd_per_unit,unit_name,notes,created_by
+        ) values(:operation,'operational',:media,:provider,:model,:rate,:unit,:notes,:actor)
+        returning id,operation_key,price_kind,media_type,provider_key,model_key,microusd_per_unit,unit_name,effective_at,is_active
+    """), {"operation": "image_generation" if media == "image" else "video_generation",
+           "media": media, "provider": provider, "model": model,
            "rate": payload.microusd_per_unit, "unit": payload.unit_name,
            "notes": payload.notes, "actor": actor})).mappings().one()
     await _audit(db, request, actor, "platform.media_operational_cost.updated",

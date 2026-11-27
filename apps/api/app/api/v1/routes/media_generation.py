@@ -545,7 +545,8 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
         """), {"id": generation_id})
         status = "cancelled"
     else:
-        status = "queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] and row["retry_count"] < row["max_retries"] else "failed"
+        terminal_provider_failure = payload.error_code in {"GEMINI_INTERACTION_FAILED", "GEMINI_INTERACTION_CANCELLED", "GEMINI_VIDEO_FAILED", "GEMINI_VIDEO_CANCELLED"}
+        status = "failed" if terminal_provider_failure else ("queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] and row["retry_count"] < row["max_retries"] else "failed")
         await db.execute(text("""
             update public.media_generation_jobs set status=:status,error_code=:error,last_error=:error,
               last_error_class=case when :error like '%NOT_CONFIGURED%' or :error like '%UNSUPPORTED%' then 'configuration' when :status='queued' then 'transient' else 'permanent' end,

@@ -231,7 +231,7 @@ create or replace function private.graphytion_pending_media_reconciliation_jobs(
 returns setof public.media_generation_jobs
 language sql security definer set search_path='' as $
   select j.* from public.media_generation_jobs j
-  where j.status='completed' and j.quota_reconciliation_status='pending'
+  where j.status in ('completed','failed','cancelled') and j.quota_reconciliation_status='pending'
     and j.quota_reservation_id is not null
   order by j.completed_at asc
   for update skip locked

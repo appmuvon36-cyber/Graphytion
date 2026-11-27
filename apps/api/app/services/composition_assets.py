@@ -27,6 +27,7 @@ async def resolve_project_assets(db:AsyncSession,*,project_id:UUID,workspace_id:
   for ref in snapshot.get("assetRefs",[]):
    row=indexed[str(UUID(str(ref["assetId"])))]
    kind=ref.get("kind")
+   if kind=="image" and not row["content_type"].startswith("image/"):raise HTTPException(422,"Image asset reference has an incompatible MIME type")
    if kind=="font" and not row["content_type"].startswith("font/"):raise HTTPException(422,"Font asset reference has an incompatible MIME type")
    if kind=="audio" and not row["content_type"].startswith("audio/"):raise HTTPException(422,"Audio asset reference has an incompatible MIME type")
    if kind=="video" and not row["content_type"].startswith("video/"):raise HTTPException(422,"Video asset reference has an incompatible MIME type")

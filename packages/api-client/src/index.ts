@@ -1,3 +1,5 @@
+import type { RenderJobApi } from '@graphytion/contracts';
+
 export type MediaGenerationApi = {
   id: string;
   project_id: string;
@@ -43,6 +45,24 @@ export type MediaGenerationCreate = {
   model_key: string;
   prompt: string;
   generation_config?: Record<string, unknown>;
+};
+
+export type RenderCreateRequestApi = {
+  snapshot: unknown;
+  render_profile_id?: string | null;
+  composition_version?: string;
+};
+
+export type RenderCreateResponseApi = {
+  data: { render_job_id: string; status: string; timeline_hash?: string; replayed?: boolean };
+};
+
+export type RenderCancelResponseApi = {
+  data: { render_job_id: string; status: string };
+};
+
+export type RenderDownloadResponseApi = {
+  data: { signed_url: string; expires_in: number };
 };
 
 export type ApiClientOptions = {
@@ -165,5 +185,15 @@ export function createApiClient(options: ApiClientOptions) {
         `media-generations/${id}/retry`,
         { method: 'POST', headers: { 'Idempotency-Key': key } },
       ),
+    listRenders: (projectId: string) =>
+      request<{ data: RenderJobApi[] }>(`projects/${projectId}/renders`),
+    createRender: (projectId: string, body: RenderCreateRequestApi, key: string) =>
+      request<RenderCreateResponseApi>(`projects/${projectId}/renders`, {
+        method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': key },
+      }),
+    cancelRender: (id: string) =>
+      request<RenderCancelResponseApi>(`renders/${id}/cancel`, { method: 'POST' }),
+    downloadRender: (id: string) =>
+      request<RenderDownloadResponseApi>(`renders/${id}/download`),
   };
 }

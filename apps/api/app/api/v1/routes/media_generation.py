@@ -457,7 +457,7 @@ async def fail_media_generation_job(generation_id: UUID, payload: MediaGeneratio
         status = "queued" if payload.retryable and row["attempt_count"] < row["max_attempts"] and row["retry_count"] < row["max_retries"] else "failed"
         await db.execute(text("""
             update public.media_generation_jobs set status=:status,error_code=:error,last_error=:error,
-              last_error_class=case when :status='queued' then 'transient' else 'permanent_or_exhausted' end,
+              last_error_class=case when :error like '%NOT_CONFIGURED%' or :error like '%UNSUPPORTED%' then 'configuration' when :status='queued' then 'transient' else 'permanent' end,
               retry_count=retry_count + case when :status='queued' then 1 else 0 end,
               next_retry_at=case when :status='queued' then now()+make_interval(secs => least(300,(5*power(2,least(attempt_count,6)))::integer)) else null end,
               provider_operation_status=case when provider_job_id is not null then 'unknown' when :status='failed' then 'failed' else 'not_started' end,
@@ -589,6 +589,7 @@ async def complete_media_generation_artifact(
               provider_usage=cast(:usage as jsonb),
               provider_cost_microusd=:provider_cost,
               provider_cost_status=case when :provider_cost is null then 'unpriced' else 'priced' end,
+              provider_operation_status='completed',provider_operation_last_polled_at=now(),
               completed_at=now(),worker_id=null,lease_expires_at=null,updated_at=now()
             where id=:id and status='processing' and worker_id=:worker
         """), {"asset": asset_id, "mime": mime, "size": len(content), "sha": digest,

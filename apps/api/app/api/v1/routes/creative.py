@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.config import settings
 from app.services.creative_pipeline import creative_pipeline
+from app.services.agent_tools import agent_tool_registry
 from app.services.workspace_authorization import WorkspacePermissionResolver
 
 router = APIRouter()
@@ -616,6 +617,10 @@ async def _process_creative_run(
     task: UUID,
 ) -> dict[str, Any]:
     try:
+        await agent_tool_registry.authorize(
+            db=db, actor=actor, workspace_id=workspace_id, project_id=project_id,
+            stage=stage, payload=payload.model_dump(exclude_none=True),
+        )
         if stage == "brief":
             if not payload.input_prompt:
                 raise HTTPException(status_code=422, detail="input_prompt is required for brief generation")
@@ -1028,6 +1033,15 @@ async def _process_creative_run(
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=500, detail="Creative stage failed") from exc
+
+
+@router.get("/projects/{project_id}/agent-tools")
+async def discover_agent_tools(
+    project_id: UUID, claims: AuthenticatedClaims, db: AsyncSession = DbSession,
+):
+    actor = _actor(claims)
+    await _project_scope(db, project_id, actor, "project.read")
+    return {"data": agent_tool_registry.discover()}
 
 
 @router.post("/projects/{project_id}/creative-runs/{stage}", status_code=202)

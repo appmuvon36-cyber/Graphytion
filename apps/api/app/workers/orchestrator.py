@@ -215,8 +215,12 @@ async def _finish_without_child(
                    completed_at=now(),worker_id=null,lease_expires_at=null,
                    heartbeat_at=null,external_operation_state='completed',updated_at=now()
              where id=:step and worker_id=:worker and status='running'
+               and exists(select 1 from public.production_runs r
+                 where r.id=:run and r.status not in ('cancel_requested','cancelled')
+                   and r.cancel_requested_at is null)
         """),
-        {"outputs": _canonical(outputs), "step": step["id"], "worker": WORKER_ID},
+        {"outputs": _canonical(outputs), "step": step["id"], "worker": WORKER_ID,
+         "run": step["production_run_id"]},
     )
     await _append_event(
         db, step["production_run_id"], "step.completed",
@@ -695,7 +699,8 @@ async def _fail_step(
         if not current or current["worker_id"] != WORKER_ID:
             await db.rollback()
             return
-        retry = retryable and current["attempt_count"] < current["max_attempts"]
+        cancelled = isinstance(error, StepCancelledError)
+        retry = retryable and not cancelled and current["attempt_count"] < current["max_attempts"]
         delay = min(300, 2 ** min(int(current["attempt_count"]), 8))
         safe_message = str(error).replace("\n", " ")[:500]
         await db.execute(text("""
@@ -721,8 +726,8 @@ async def _fail_step(
             "step.cancelled" if cancelled else ("step.retry" if retry else "step.failed"), {
             "step_id": str(step["id"]), "step_key": step["step_key"],
             "worker_id": WORKER_ID, "retryable": retry, "retry_delay_seconds": delay if retry else None,
-            "error_code": "STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED",
-            "error_class": "transient" if retry else "permanent",
+            "error_code": "RUN_CANCELLED" if cancelled else ("STEP_INPUT_INVALID" if isinstance(error, (StepInputError, ValidationError)) else "STEP_EXECUTION_FAILED"),
+            "error_class": "cancelled" if cancelled else ("transient" if retry else "permanent"),
         })
         await db.execute(text("select private.graphytion_sync_production_run(:run)"), {"run": current["production_run_id"]})
         await db.commit()

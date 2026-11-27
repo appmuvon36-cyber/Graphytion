@@ -148,7 +148,7 @@ class CreativePipeline:
     async def write_script(
         self, *, approved_brief: dict[str, Any], source_material: list[dict[str, Any]] | None,
         idempotency_key: str,
-        provider_key: str | None = None, model_key: str | None = None,
+        provider_key: str | None = None, model_key: str | None = None, route_agent_key: str | None = None,
     ) -> tuple[ScriptOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "scriptwriter", ScriptOutput,
@@ -165,11 +165,12 @@ class CreativePipeline:
     async def direct_story(
         self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
         idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None, route_agent_key: str | None = None,
     ) -> tuple[StoryArcOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "story_director", StoryArcOutput,
             {"approved_brief": approved_brief, "approved_script": approved_script},
-            idempotency_key,
+            idempotency_key, provider_key=provider_key, model_key=model_key, route_agent_key=route_agent_key,
         )
         return output, {
             "agent_key": "story_director", "prompt_version": version,
@@ -182,13 +183,14 @@ class CreativePipeline:
         self, *, approved_brief: dict[str, Any], approved_script: dict[str, Any],
         story_arc: dict[str, Any], approved_component_candidates: list[str],
         idempotency_key: str,
+        provider_key: str | None = None, model_key: str | None = None, route_agent_key: str | None = None,
     ) -> tuple[StoryboardOutput, dict[str, Any]]:
         output, result, version = await self._run(
             "storyboard_director", StoryboardOutput,
             {"approved_brief": approved_brief, "approved_script": approved_script,
              "story_arc": story_arc,
              "approved_component_candidates": approved_component_candidates},
-            idempotency_key,
+            idempotency_key, provider_key=provider_key, model_key=model_key, route_agent_key=route_agent_key,
         )
         return output, {
             "agent_key": "storyboard_director", "prompt_version": version,
@@ -210,7 +212,7 @@ class CreativePipeline:
                 "current_scene": current_scene,
                 "revision_instruction": revision_instruction,
             },
-            idempotency_key,
+            idempotency_key, provider_key=provider_key, model_key=model_key, route_agent_key=route_agent_key,
         )
         return output, {
             "agent_key": "scene_regenerator", "prompt_version": version,

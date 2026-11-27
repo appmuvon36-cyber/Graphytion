@@ -231,6 +231,11 @@ async function processJob(jobId?: string): Promise<boolean> {
     const mime = extension === 'webm' ? 'video/webm' : 'video/mp4';
     const form = new FormData();
     form.set('file', new Blob([Uint8Array.from(bytes)], {type:mime}), 'output.'+extension);
+    form.set('duration_seconds', String(duration));
+    form.set('width', String(video.width));
+    form.set('height', String(video.height));
+    form.set('video_codec', String(video.codec_name));
+    if (audio?.codec_name) form.set('audio_codec', audio.codec_name);
     await api(`internal/render-jobs/${claimed.id}/artifact?worker_id=${encodeURIComponent(workerId)}`, {
       method: 'POST',
       body: form,

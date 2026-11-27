@@ -242,8 +242,6 @@ export function createApiClient(options: ApiClientOptions) {
       request<{ data: { step_id: string; status: string; state: Record<string, unknown> } }>(
         `creative-runs/${runId}/steps/${stepId}/complete`, { method: 'POST', body: JSON.stringify({ output_refs }) },
       ),
-    retryProductionStep: (runId: string, stepId: string) =>
-      request<{ data: { step_id: string; status: string; attempt_count: number } }>(`creative-runs/${runId}/steps/${stepId}/retry`, { method: 'POST' }),
     bindProductionStepAsset: (runId: string, stepId: string, asset_id: string, usage_role: 'input'|'reference'|'source'|'preview' = 'input') =>
       request<{ data: { id: string; asset_id: string; usage_role: string; created_at: string } }>(
         `creative-runs/${runId}/steps/${stepId}/assets`, { method: 'POST', body: JSON.stringify({ asset_id, usage_role }) },

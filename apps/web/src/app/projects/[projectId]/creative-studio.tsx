@@ -825,7 +825,6 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
             <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
               {step.status==='waiting_approval'&&<button type="button" disabled={busy} onClick={()=>void approveWorkflowStep(step.id)} style={button}>Approve</button>}
               {step.status==='ready'&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void completeWorkflowStep(step.id)} style={{...button,background:'#edf3f9',color:'#173f72'}}>Mark complete</button>}
-              {step.status==='failed'&&!step.child_job_id&&<button type="button" disabled={busy} onClick={()=>void api.retryProductionStep(workflowRunId,step.id).then(()=>api.getProductionWorkflow(workflowRunId).then(x=>setWorkflow(x.data))).catch(e=>setError(e instanceof Error?e.message:'Step retry failed'))} style={button}>Retry</button>}
             </div>
           </div>)}
         </>}

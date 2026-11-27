@@ -46,6 +46,8 @@ class SubtitleImport(BaseModel):
     format: str = Field(pattern=r"^(webvtt|srt)$")
     content: str = Field(min_length=1, max_length=2_000_000)
     style_config: dict[str, Any] = Field(default_factory=dict)
+    production_run_id: UUID | None = None
+    parent_step_id: UUID | None = None
 
 
 class SegmentPatch(BaseModel):
@@ -664,7 +666,9 @@ async def import_subtitles(
     track = await _create_track(
         db, project_id, workspace, actor,
         SubtitleTrackInput(language=payload.language, format=payload.format,
-                           style_config=payload.style_config, segments=segments),
+                           style_config=payload.style_config, segments=segments,
+                           production_run_id=payload.production_run_id,
+                           parent_step_id=payload.parent_step_id),
         request,
     )
     return {"data": {"id": str(track["id"]), "version": track["version"], "segment_count": len(segments)}}

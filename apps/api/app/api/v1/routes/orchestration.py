@@ -328,6 +328,10 @@ async def cancel_production_workflow(
         where production_run_id=:run and status='queued'
     """), {"run": run_id})
     await db.execute(text("""
+        update public.audio_generations set cancel_requested_at=coalesce(cancel_requested_at,now()),updated_at=now()
+        where production_run_id=:run and status='running'
+    """), {"run": run_id})
+    await db.execute(text("""
         update public.render_jobs set status='cancelled',completed_at=now(),worker_id=null,lease_expires_at=null
         where production_run_id=:run and status='queued'
     """), {"run": run_id})

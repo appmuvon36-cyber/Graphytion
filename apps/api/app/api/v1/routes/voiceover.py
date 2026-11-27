@@ -107,7 +107,7 @@ async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncS
  if not row:raise HTTPException(404,"Voiceover job not found")
  await _scope(db,row["project_id"],actor,"project.update")
  if row["status"] not in {"provider_unavailable","failed"}:raise HTTPException(409,"Only unavailable or failed voiceover jobs can be retried")
- await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null where id=:id"),{"id":voiceover_id})
+ await db.execute(text("update public.audio_generations set status='queued',error_code=null,attempt_count=0,worker_id=null,lease_expires_at=null,cancel_requested_at=null where id=:id"),{"id":voiceover_id})
  await db.commit()
  await notify_worker("media", str(voiceover_id))
  # PostgreSQL remains durable; Redis is a best-effort wake-up signal.
@@ -117,17 +117,24 @@ async def retry_voiceover(voiceover_id:UUID,claims:AuthenticatedClaims,db:AsyncS
 @router.post("/voiceovers/{voiceover_id}/cancel")
 async def cancel_voiceover(voiceover_id:UUID,request:Request,claims:AuthenticatedClaims,db:AsyncSession=DbSession):
  actor=_actor(claims)
- row=(await db.execute(text("select id,project_id,workspace_id,status from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
+ row=(await db.execute(text("select id,project_id,workspace_id,status,cancel_requested_at from public.audio_generations where id=:id"),{"id":voiceover_id})).mappings().first()
  if row is None:raise HTTPException(404,"Voiceover job not found")
  await _scope(db,row["project_id"],actor,"project.update")
- if row["status"]!="queued":
-  raise HTTPException(409,"Only queued voiceover jobs can be cancelled; running provider requests are not interrupted")
- await db.execute(text("update public.audio_generations set status='cancelled',completed_at=now() where id=:id and status='queued'"),{"id":voiceover_id})
+ if row["status"]=="queued":
+  status="cancelled"
+  await db.execute(text("update public.audio_generations set status='cancelled',completed_at=now() where id=:id and status='queued'"),{"id":voiceover_id})
+ elif row["status"]=="running":
+  status="cancel_requested"
+  await db.execute(text("update public.audio_generations set cancel_requested_at=coalesce(cancel_requested_at,now()) where id=:id and status='running'"),{"id":voiceover_id})
+ elif row["status"]=="cancelled":
+  status="cancelled"
+ else:
+  raise HTTPException(409,"Voiceover job cannot be cancelled from its current state")
  await db.execute(text("""insert into public.audit_logs(actor_user_id,workspace_id,action,resource_type,resource_id,request_id)
-  values(:actor,:workspace,'voiceover.cancelled','audio_generation',:id,:request_id)"""),
+  values(:actor,:workspace,'voiceover.cancel_requested','audio_generation',:id,:request_id)"""),
   {"actor":actor,"workspace":row["workspace_id"],"id":voiceover_id,"request_id":request.state.request_id})
  await db.commit()
- return {"data":{"voiceover_id":str(voiceover_id),"status":"cancelled"}}
+ return {"data":{"voiceover_id":str(voiceover_id),"status":status}}
 
 
 @router.post("/internal/media-jobs/claim")
@@ -142,14 +149,18 @@ async def heartbeat_media_job(generation_id:UUID,request:Request,worker_id:str=Q
  _require_worker(request)
  owner=await db.scalar(text("select private.graphytion_heartbeat_media_job(:id,:worker)"),{"id":generation_id,"worker":worker_id})
  if not owner:raise HTTPException(409,"Media job lease is no longer owned")
- await set_rls_subject(db,str(owner));await db.commit();return {"data":{"generation_id":str(generation_id),"lease_extended":True}}
+ await set_rls_subject(db,str(owner))
+ state=(await db.execute(text("select status,cancel_requested_at from public.audio_generations where id=:id and worker_id=:worker"),{"id":generation_id,"worker":worker_id})).mappings().first()
+ if not state:raise HTTPException(409,"Media job lease is no longer owned")
+ await db.commit()
+ return {"data":{"generation_id":str(generation_id),"lease_extended":True,"status":state["status"],"cancel_requested":state["cancel_requested_at"] is not None}}
 @router.post("/internal/media-jobs/{generation_id}/artifact",status_code=201)
 async def complete_media_artifact(generation_id:UUID,request:Request,file:UploadFile,waveform_file:UploadFile|None=File(default=None),alignment_json:str|None=Form(default=None),media_metadata:str|None=Form(default=None),worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
  _require_worker(request)
  owner=await db.scalar(text("select private.graphytion_media_job_owner(:id,:worker)"),{"id":generation_id,"worker":worker_id})
  if not owner:raise HTTPException(409,"Media job lease is no longer owned")
  await set_rls_subject(db,str(owner))
- row=(await db.execute(text("select * from public.audio_generations where id=:id and worker_id=:worker and status='running'"),{"id":generation_id,"worker":worker_id})).mappings().first()
+ row=(await db.execute(text("select * from public.audio_generations where id=:id and worker_id=:worker and status='running' and cancel_requested_at is null"),{"id":generation_id,"worker":worker_id})).mappings().first()
  if not row:raise HTTPException(409,"Media job lease is no longer owned")
  content=await file.read(MAX_AUDIO_BYTES+1)
  valid=file.content_type=="audio/mpeg" and (content.startswith(b"ID3") or (len(content)>1 and content[0]==0xFF and content[1]&0xE0==0xE0))
@@ -206,19 +217,37 @@ async def complete_media_artifact(generation_id:UUID,request:Request,file:Upload
    except Exception:pass
   raise HTTPException(502,"Voiceover artifact persistence failed") from exc
  return {"data":{"generation_id":str(generation_id),"asset_id":str(asset_id),"status":"completed","size_bytes":len(content),"sha256":digest,"alignment_status":alignment["status"],"waveform_persisted":bool(waveform_content)}}
+@router.post("/internal/media-jobs/{generation_id}/cancelled")
+async def cancel_media_job_acknowledged(
+ generation_id:UUID,request:Request,worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession
+):
+ _require_worker(request)
+ owner=await db.scalar(text("select private.graphytion_media_job_owner(:id,:worker)"),{"id":generation_id,"worker":worker_id})
+ if not owner:raise HTTPException(409,"Media job lease is no longer owned")
+ await set_rls_subject(db,str(owner))
+ row=(await db.execute(text("""update public.audio_generations
+  set status='cancelled',completed_at=now(),worker_id=null,lease_expires_at=null
+  where id=:id and worker_id=:worker and status='running' and cancel_requested_at is not null
+  returning id"""),{"id":generation_id,"worker":worker_id})).scalar_one_or_none()
+ if row is None:raise HTTPException(409,"Voiceover cancellation was not requested")
+ await db.commit()
+ return {"data":{"generation_id":str(generation_id),"status":"cancelled"}}
+
+
 @router.post("/internal/media-jobs/{generation_id}/failed")
 async def fail_media_job(generation_id:UUID,payload:VoiceoverFailure,request:Request,worker_id:str=Query(min_length=1,max_length=128),db:AsyncSession=DbSession):
  _require_worker(request)
  owner=await db.scalar(text("select private.graphytion_media_job_owner(:id,:worker)"),{"id":generation_id,"worker":worker_id})
  if not owner:raise HTTPException(409,"Media job lease is no longer owned")
  await set_rls_subject(db,str(owner))
- row=(await db.execute(text("select id,requested_by,attempt_count,max_attempts from public.audio_generations where id=:id and worker_id=:worker and status='running'"),{"id":generation_id,"worker":worker_id})).mappings().first()
+ row=(await db.execute(text("select id,requested_by,attempt_count,max_attempts,cancel_requested_at from public.audio_generations where id=:id and worker_id=:worker and status='running'"),{"id":generation_id,"worker":worker_id})).mappings().first()
  if not row:raise HTTPException(409,"Media job lease is no longer owned")
- retry=payload.retryable and row["attempt_count"]<row["max_attempts"]
- await db.execute(text("update public.audio_generations set status=:status,error_code=:code,worker_id=null,lease_expires_at=null where id=:id"),{"status":"queued" if retry else "failed","code":payload.error_code[:100],"id":generation_id})
+ retry=payload.retryable and row["attempt_count"]<row["max_attempts"] and row["cancel_requested_at"] is None
+ status="cancelled" if row["cancel_requested_at"] is not None else ("queued" if retry else "failed")
+ await db.execute(text("update public.audio_generations set status=:status,error_code=case when :status='cancelled' then null else :code end,completed_at=case when :status='cancelled' then now() else null end,worker_id=null,lease_expires_at=null where id=:id"),{"status":status,"code":payload.error_code[:100],"id":generation_id})
  await db.commit()
- # The worker discovers retryable rows through PostgreSQL polling.
- return {"data":{"generation_id":str(generation_id),"status":"queued" if retry else "failed"}}
+ # PostgreSQL remains the durable queue; cancellation is terminal and never retried.
+ return {"data":{"generation_id":str(generation_id),"status":status}}
 @router.post("/internal/media-jobs/recover")
 async def recover_media_jobs(request:Request,db:AsyncSession=DbSession):
  _require_worker(request)

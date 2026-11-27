@@ -182,6 +182,7 @@ async def list_renders(
     rows = (await db.execute(text("""
         select id,project_id,workspace_id,requested_by,status,composition_id,composition_version,timeline_hash,
                progress_percent,output_bucket,output_path,output_size_bytes,output_sha256,
+               output_duration_seconds,output_width,output_height,output_video_codec,output_audio_codec,output_container,
                error_code,error_message_safe,started_at,completed_at,created_at
         from public.render_jobs where project_id=:project
         order by created_at desc limit :limit offset :offset

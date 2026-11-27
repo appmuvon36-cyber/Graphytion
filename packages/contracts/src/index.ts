@@ -247,6 +247,10 @@ export const RenderJobApiSchema = z.object({
   composition_id: z.string(), composition_version: z.string(), timeline_hash: z.string().length(64),
   progress_percent: z.number(), output_bucket: z.string().nullable(), output_path: z.string().nullable(),
   output_size_bytes: z.number().int().nullable(), output_sha256: z.string().nullable(),
+  output_duration_seconds: z.number().nullable().optional(),
+  output_width: z.number().int().nullable().optional(), output_height: z.number().int().nullable().optional(),
+  output_video_codec: z.string().nullable().optional(), output_audio_codec: z.string().nullable().optional(),
+  output_container: z.enum(['mp4','webm']).nullable().optional(),
   error_code: z.string().nullable(), error_message_safe: z.string().nullable(),
   started_at: Timestamp.nullable(), completed_at: Timestamp.nullable(), created_at: Timestamp,
 }).strict();

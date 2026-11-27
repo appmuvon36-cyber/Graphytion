@@ -114,6 +114,37 @@ class Worker:
                 params={"worker_id": WORKER_ID},
             )
 
+    async def audio_generation_heartbeat(
+        self, generation_id: str, cancel_event: asyncio.Event,
+        lease_lost_event: asyncio.Event,
+    ) -> None:
+        while not self.stop.is_set() and not cancel_event.is_set():
+            await asyncio.sleep(30)
+            try:
+                state = await self.api(
+                    f"/internal/media-jobs/{generation_id}/heartbeat",
+                    method="POST", params={"worker_id": WORKER_ID},
+                )
+                if state.get("cancel_requested"):
+                    cancel_event.set()
+                    return
+                if state.get("status") != "running":
+                    lease_lost_event.set()
+                    cancel_event.set()
+                    return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 409:
+                    lease_lost_event.set()
+                    cancel_event.set()
+                    return
+                log.warning("audio_generation_heartbeat_http_error", extra={
+                    "generation_id": generation_id, "status_code": exc.response.status_code,
+                })
+                await asyncio.sleep(5)
+            except Exception:
+                log.exception("audio_generation_heartbeat_failed", extra={"generation_id": generation_id})
+                await asyncio.sleep(5)
+
     async def fail(self, generation_id: str, code: str, retryable: bool) -> None:
         try:
             await self.api(
@@ -364,15 +395,33 @@ class Worker:
             await self.fail(job_id, "TTS_PROVIDER_NOT_CONFIGURED", False)
             return True
 
-        heartbeat_task = asyncio.create_task(self.heartbeat(job_id))
+        cancel_event = asyncio.Event()
+        lease_lost_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            self.audio_generation_heartbeat(job_id, cancel_event, lease_lost_event)
+        )
+        cancel_wait = asyncio.create_task(cancel_event.wait())
         try:
-            audio, mime = await provider.synthesize(
+            synthesis_task = asyncio.create_task(provider.synthesize(
                 text=job["input_text"],
                 voice=job["voice_key"],
                 model=job.get("model_key") or model_default,
                 language=job.get("language") or "id-ID",
                 style=(job.get("generation_config") or {}).get("style"),
+            ))
+            done, _ = await asyncio.wait(
+                {synthesis_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED
             )
+            if cancel_wait in done:
+                synthesis_task.cancel()
+                await asyncio.gather(synthesis_task, return_exceptions=True)
+                if not lease_lost_event.is_set():
+                    await self.api(
+                        f"/internal/media-jobs/{job_id}/cancelled",
+                        method="POST", params={"worker_id": WORKER_ID},
+                    )
+                return True
+            audio, mime = await synthesis_task
             try:
                 alignment = await provider.align_words(audio=audio)
             except Exception:
@@ -384,6 +433,13 @@ class Worker:
                     "words": [],
                 }
             metadata, waveform = await asyncio.to_thread(analyze_audio_bytes, audio)
+            if cancel_event.is_set():
+                if not lease_lost_event.is_set():
+                    await self.api(
+                        f"/internal/media-jobs/{job_id}/cancelled",
+                        method="POST", params={"worker_id": WORKER_ID},
+                    )
+                return True
             await self.api(
                 f"/internal/media-jobs/{job_id}/artifact",
                 method="POST",
@@ -420,7 +476,12 @@ class Worker:
             log.exception("voiceover_generation_failed", extra={"generation_id": job_id})
             await self.fail(job_id, "TTS_GENERATION_FAILED", True)
         finally:
+            cancel_wait.cancel()
             heartbeat_task.cancel()
+            try:
+                await cancel_wait
+            except asyncio.CancelledError:
+                pass
             try:
                 await heartbeat_task
             except asyncio.CancelledError:

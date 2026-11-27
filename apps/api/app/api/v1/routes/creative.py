@@ -970,31 +970,38 @@ async def _process_creative_run(
         """), {"task": task, "worker": run["worker_id"]})).mappings().first()
         retryable = (
             isinstance(exc, HTTPException)
-            and exc.status_code in (502, 504)
+            and exc.status_code in (408, 429, 502, 503, 504)
             and task_state is not None
             and task_state["attempt_count"] < task_state["max_attempts"]
         )
+        retry_delay_seconds = min(
+            2 ** max(int(task_state["attempt_count"]) - 1, 0), 60
+        ) if retryable else 0
         if retryable:
             retry_transition = await db.execute(text("""
                 update public.production_runs set status='queued',error_code=:code,
-                    error_message_safe=:message,worker_id=null,lease_expires_at=null
+                    error_message_safe=:message,
+                    available_at=now()+make_interval(secs => :delay),
+                    worker_id=null,lease_expires_at=null
                 where id=:run and worker_id=:worker returning id
             """), {"code": safe_code, "message": str(safe_message)[:500],
-                   "run": run["id"], "worker": run["worker_id"]})
+                   "delay": retry_delay_seconds, "run": run["id"], "worker": run["worker_id"]})
             if retry_transition.scalar_one_or_none() is None:
                 await db.rollback()
                 raise HTTPException(status_code=409, detail="Creative worker lease was lost before retry scheduling")
             await db.execute(text("""
                 update public.agent_tasks set status='retry_wait',error_code=:code,
-                    error_detail_internal=:detail,lease_expires_at=null,worker_id=null
+                    error_detail_internal=:detail,
+                    available_at=now()+make_interval(secs => :delay),
+                    lease_expires_at=null,worker_id=null
                 where id=:task and worker_id=:worker
             """), {"code": safe_code, "detail": str(exc)[:1000],
-                   "task": task, "worker": run["worker_id"]})
+                   "delay": retry_delay_seconds, "task": task, "worker": run["worker_id"]})
             await db.execute(text("""
                 insert into public.workflow_events(production_run_id,event_type,event_payload,sequence_number)
                 values (:run,'stage.retry_scheduled',cast(:payload as jsonb),
                   (select coalesce(max(sequence_number),0)+1 from public.workflow_events where production_run_id=:run))
-            """), {"run": run["id"], "payload": json.dumps({"stage": stage, "error_code": safe_code})})
+            """), {"run": run["id"], "payload": json.dumps({"stage": stage, "error_code": safe_code, "retry_after_seconds": retry_delay_seconds})})
             await db.commit()
             raise
         failure_transition = await db.execute(text("""

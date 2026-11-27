@@ -163,7 +163,10 @@ async def _claim_and_execute(run_id: str | None = None) -> bool:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
             await db.rollback()
-            if retryable and int(claimed["attempt_count"]) < int(claimed.get("max_attempts", 3)):
+            max_attempts = await db.scalar(text("""
+                select max_attempts from public.production_runs where id=:run
+            """), {"run": claimed["run_id"]})
+            if retryable and int(claimed["attempt_count"]) < int(max_attempts or 3):
                 await asyncio.sleep(min(2 ** max(int(claimed["attempt_count"]) - 1, 0), 15))
                 next_status = "queued"
                 task_status = "retry_wait"

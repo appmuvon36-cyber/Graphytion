@@ -227,6 +227,20 @@ begin
   returning j.id,j.status;
 end $$;
 
+create or replace function private.graphytion_pending_media_reconciliation_jobs(p_limit integer default 50)
+returns setof public.media_generation_jobs
+language sql security definer set search_path='' as $
+  select j.* from public.media_generation_jobs j
+  where j.status='completed' and j.quota_reconciliation_status='pending'
+    and j.quota_reservation_id is not null
+  order by j.completed_at asc
+  for update skip locked
+  limit least(greatest(coalesce(p_limit,50),1),100)
+$;
+
+revoke all on function private.graphytion_pending_media_reconciliation_jobs(integer) from public,anon,authenticated,service_role;
+grant execute on function private.graphytion_pending_media_reconciliation_jobs(integer) to graphytion_api;
+
 revoke all on function private.graphytion_claim_media_generation_job(text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_heartbeat_media_generation_job(uuid,text) from public,anon,authenticated,service_role;
 revoke all on function private.graphytion_media_generation_owner(uuid,text) from public,anon,authenticated,service_role;

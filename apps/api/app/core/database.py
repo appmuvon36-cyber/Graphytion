@@ -24,28 +24,31 @@ engine = create_async_engine(
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+async def set_rls_runtime_role(session: AsyncSession) -> None:
+    # RLS policies are deliberately scoped to graphytion_runtime. Explicitly
+    # assume that inherited role instead of relying on implicit membership.
+    has_runtime_role = (
+        await session.execute(
+            text("""
+                select exists (
+                    select 1
+                    from pg_roles r
+                    where r.rolname='graphytion_runtime'
+                      and pg_has_role(current_user,r.oid,'MEMBER')
+                )
+            """)
+        )
+    ).scalar_one()
+    if not has_runtime_role:
+        raise RuntimeError(
+            "Database session is not a member of graphytion_runtime"
+        )
+    await session.execute(text("SET ROLE graphytion_runtime"))
+
+
 async def set_rls_subject(session: AsyncSession, user_id: str | None) -> None:
     if user_id is not None:
-        # RLS policies are deliberately scoped to graphytion_runtime. Explicitly
-        # assume that inherited role for each authenticated request instead of
-        # relying on implicit membership inheritance from graphytion_api.
-        has_runtime_role = (
-            await session.execute(
-                text("""
-                    select exists (
-                        select 1
-                        from pg_roles r
-                        where r.rolname='graphytion_runtime'
-                          and pg_has_role(current_user,r.oid,'MEMBER')
-                    )
-                """)
-            )
-        ).scalar_one()
-        if not has_runtime_role:
-            raise RuntimeError(
-                "Authenticated database session is not a member of graphytion_runtime"
-            )
-        await session.execute(text("SET ROLE graphytion_runtime"))
+        await set_rls_runtime_role(session)
 
     await session.execute(
         text("""

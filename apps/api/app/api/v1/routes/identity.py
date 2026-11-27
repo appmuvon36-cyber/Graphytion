@@ -150,13 +150,13 @@ class WorkspaceUpdate(BaseModel):
 
 class RoleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    role: str = Field(pattern=r"^(admin|editor|member|viewer|billing)$")
+    role: str = Field(pattern=r"^(admin|editor|member|viewer)$")
 
 
 class InviteCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-    role: str = Field(pattern=r"^(admin|editor|member|viewer|billing)$")
+    role: str = Field(pattern=r"^(admin|editor|member|viewer)$")
 
 
 class InviteAccept(BaseModel):

@@ -229,9 +229,21 @@ async def list_project_assets(
 ):
     actor = _actor(claims)
     workspace_id = await _project_workspace(db, project_id, actor, "project.read")
-    rows = (await db.execute(text("""
-        select id,project_id,workspace_id,uploaded_by,file_name,content_type,
-               size_bytes,sha256,status,created_at
+    version_columns_ready = await db.scalar(text("""
+        select count(*)=11 from information_schema.columns
+        where table_schema='public' and table_name='project_assets'
+          and column_name in ('asset_family_id','version_number','supersedes_asset_id',
+            'source_type','source_provider','source_job_id','provenance',
+            'usage_rights_status','license_type','commercial_use_allowed','attribution')
+    """))
+    fields = """id,project_id,workspace_id,uploaded_by,file_name,content_type,
+                size_bytes,sha256,status,created_at"""
+    if version_columns_ready:
+        fields += """,asset_family_id,version_number,supersedes_asset_id,source_type,
+                     source_provider,source_job_id,provenance,usage_rights_status,
+                     license_type,commercial_use_allowed,attribution"""
+    rows = (await db.execute(text(f"""
+        select {fields}
         from public.project_assets
         where workspace_id=:workspace and status='active'
           and (:scope='workspace' or project_id=:project)

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims, DbSession
 from app.core.database import set_rls_subject
+from app.services.agent_registry import agent_registry
 
 router = APIRouter()
 HANDLERS = {
@@ -106,6 +107,9 @@ async def register_agent_tool(payload: ToolRegistration, request: Request,
     await _admin(db, actor)
     if HANDLERS[payload.handler_key] != payload.stage:
         raise HTTPException(422, "Handler key does not implement the selected stage")
+    profile = await agent_registry.resolve(
+        db=db, agent_key=payload.agent_key, stage=payload.stage,
+    )
     if payload.input_schema.get("type") != "object" or payload.input_schema.get("additionalProperties", False) is not False:
         raise HTTPException(422, "Tool input schema must be a strict JSON object schema")
     if len(json.dumps(payload.input_schema)) > 24000 or len(json.dumps(payload.configuration)) > 12000:

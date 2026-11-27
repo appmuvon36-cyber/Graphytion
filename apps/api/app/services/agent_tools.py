@@ -153,7 +153,8 @@ class AgentToolRegistry:
     ) -> None:
         for agent_key in STAGE_AGENT_KEYS.get(tool.stage, ()):
             profile = await agent_registry.resolve(db=db, agent_key=agent_key, stage=tool.stage)
-            agent_tool = replace(tool, agent_key=profile.agent_key, permission=profile.permission_key)
+            permission = tool.permission if profile.agent_key == tool.agent_key else profile.permission_key
+            agent_tool = replace(tool, agent_key=profile.agent_key, permission=permission)
             if not await self._allowed(
                 db=db, actor=actor, workspace_id=workspace_id,
                 tool=agent_tool, resource_id=resource_id,

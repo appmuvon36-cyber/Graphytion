@@ -238,6 +238,18 @@ async def cancel_media_generation(generation_id: UUID, request: Request, claims:
     return {"data": {"generation_id": str(generation_id), "status": status}}
 
 
+@router.post("/internal/media-generation-jobs/recover")
+async def recover_media_generation_jobs(request: Request, db: AsyncSession = DbSession):
+    _require_worker(request)
+    rows = (await db.execute(text("""
+        select * from private.graphytion_recover_media_generation_jobs()
+    """))).mappings().all()
+    await db.commit()
+    return {"data": {"recovered": len(rows), "jobs": [
+        {"generation_id": str(row["job_id"]), "status": row["job_status"]} for row in rows
+    ]}}
+
+
 @router.post("/internal/media-generation-jobs/claim")
 async def claim_media_generation_job(request: Request, worker_id: str = Query(min_length=1, max_length=128),
                                      db: AsyncSession = DbSession):
@@ -342,9 +354,13 @@ async def complete_media_generation_cancel(generation_id: UUID, request: Request
         update public.media_generation_jobs set status='cancelled',completed_at=now(),
           worker_id=null,lease_expires_at=null,updated_at=now() where id=:id
     """), {"id": generation_id})
-    await release_fixed_operation(
-        db, resource_type="image_generation" if row["media_type"] == "image" else "video_generation",
-        resource_id=generation_id, reason="provider_cancelled_or_output_discarded")
+    # Keep the reservation open: the provider may continue processing after the
+    # client connection is cancelled, so its billable outcome is not yet known.
+    await db.execute(text("""
+        update public.media_generation_jobs
+        set error_code='CANCELLED_PROVIDER_OUTCOME_UNKNOWN',updated_at=now()
+        where id=:id
+    """), {"id": generation_id})
     await db.commit()
     return {"data": {"generation_id": str(generation_id), "status": "cancelled"}}
 

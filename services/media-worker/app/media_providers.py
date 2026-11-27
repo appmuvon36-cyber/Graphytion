@@ -104,6 +104,9 @@ class GeminiMediaProvider:
         self, *, prompt: str, model: str, aspect_ratio: str = "1:1",
         output_format: str = "png", image_size: str = "1K",
         configuration: dict[str, Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_operation: Callable[[str], Awaitable[None]] | None = None,
+        existing_operation_id: str | None = None,
     ) -> tuple[bytes, str, dict[str, Any]]:
         if model not in self.IMAGE_MODELS:
             raise ValueError("GEMINI_IMAGE_MODEL_UNSUPPORTED")
@@ -113,40 +116,46 @@ class GeminiMediaProvider:
             raise ValueError("IMAGE_OUTPUT_FORMAT_UNSUPPORTED")
         if image_size not in {"512", "1K", "2K", "4K"}:
             raise ValueError("IMAGE_SIZE_UNSUPPORTED")
-        # Gemini image models use GenerateContent with imageConfig; this is
-        # intentionally distinct from the Interactions contract used by Omni video.
-        url = f"{self.API_BASE}/models/{model}:generateContent"
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {
-                    "aspectRatio": aspect_ratio,
-                    "imageSize": image_size,
+
+        mime_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[output_format]
+        if existing_operation_id:
+            interaction_id = existing_operation_id
+            body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
+        else:
+            body = await self._create_interaction({
+                "model": model,
+                "input": [{"type": "text", "text": prompt}],
+                "response_format": {
+                    "type": "image",
+                    "mime_type": mime_type,
+                    "aspect_ratio": aspect_ratio,
+                    "image_size": image_size,
                 },
-            },
-        }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=20)) as client:
-            response = await client.post(url, headers=self._headers(), json=payload)
-            response.raise_for_status()
-            body = response.json()
-        if not isinstance(body, dict) or body.get("error"):
-            raise RuntimeError("GEMINI_IMAGE_RESPONSE_INVALID")
-        candidates = body.get("candidates") or []
-        parts = (candidates[0].get("content") or {}).get("parts") or [] if candidates else []
-        image_part = next(
-            (part for part in parts if isinstance(part, dict) and
-             (part.get("inlineData") or part.get("inline_data"))),
+            }, timeout=300.0)
+            interaction_id = str(body["id"])
+            if on_operation is not None:
+                await on_operation(interaction_id)
+            status = str(body.get("status", "")).lower()
+            if status not in self.TERMINAL_STATUSES:
+                body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
+            elif status != "completed":
+                raise RuntimeError(f"GEMINI_IMAGE_{status.upper()}")
+
+        image_block = next(
+            (item for item in self._output_blocks(body)
+             if item.get("type") == "image" and item.get("data")),
             None,
         )
-        if image_part is None:
+        if image_block is None:
+            output_image = body.get("output_image") or {}
+            image_block = output_image if output_image.get("data") else None
+        if image_block is None:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_MISSING")
-        inline_data = image_part.get("inlineData") or image_part.get("inline_data") or {}
         try:
-            content = base64.b64decode(inline_data["data"], validate=True)
+            content = base64.b64decode(image_block["data"], validate=True)
         except Exception as exc:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_INVALID_BASE64") from exc
-        mime = inline_data.get("mimeType") or inline_data.get("mime_type") or "image/png"
+        mime = image_block.get("mime_type") or image_block.get("mimeType") or mime_type
         signatures = {
             "image/png": content.startswith(b"\x89PNG\r\n\x1a\n"),
             "image/jpeg": content.startswith(b"\xff\xd8\xff"),
@@ -156,8 +165,9 @@ class GeminiMediaProvider:
             raise RuntimeError("GEMINI_IMAGE_OUTPUT_MIME_MISMATCH")
         return content, mime, {
             "provider": "gemini", "model": model,
-            "response_id": body.get("responseId") or body.get("response_id"),
-            "usage": body.get("usageMetadata") or body.get("usage_metadata"),
+            "provider_operation_id": interaction_id,
+            "response_id": body.get("id"),
+            "usage": body.get("usage"),
             "image_size": image_size, "aspect_ratio": aspect_ratio,
         }
 

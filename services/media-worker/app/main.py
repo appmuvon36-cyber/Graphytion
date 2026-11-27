@@ -120,6 +120,9 @@ class Worker:
                 output_format=(job.get("generation_config") or {}).get("output_format", "png"),
                 image_size=(job.get("generation_config") or {}).get("image_size", "1K"),
                 configuration=job.get("generation_config") or {},
+                cancel_event=cancel_event,
+                on_operation=persist_provider_operation,
+                existing_operation_id=job.get("provider_job_id"),
             ) if job["media_type"] == "image" else provider.generate_video(
                 prompt=job["prompt"], model=job["model_key"],
                 aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "16:9"),
@@ -136,17 +139,13 @@ class Worker:
                 {generation_task, cancel_wait}, return_when=asyncio.FIRST_COMPLETED,
             )
             if cancel_wait in done and cancel_event.is_set():
-                if job["media_type"] == "video":
-                    try:
-                        await generation_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                else:
-                    generation_task.cancel()
-                    try:
-                        await generation_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
+                # Both image and video use the Interactions API. Once an operation
+                # ID is persisted, the provider adapter requests cancellation and
+                # polls the terminal state before the job is marked cancelled.
+                try:
+                    await generation_task
+                except (asyncio.CancelledError, Exception):
+                    pass
                 await self.api(
                     f"/internal/media-generation-jobs/{job_id}/cancelled",
                     method="POST", params={"worker_id": WORKER_ID},

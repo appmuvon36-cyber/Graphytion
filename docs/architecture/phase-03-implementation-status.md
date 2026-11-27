@@ -542,7 +542,8 @@ Four additive migrations are applied to project `xtjwmezfzexvupbfsdqt`:
 
 - `20261127180420_persistent_orchestrator_dispatcher.sql`
 - `20261127180559_dispatch_only_executable_production_steps.sql`
-- `20261127180718_dispatcher_timeout_reconciliation.sql`\n- `20261127182523_orchestrator_privileged_reconciliation.sql`
+- `20261127180718_dispatcher_timeout_reconciliation.sql`
+- `20261127182523_orchestrator_privileged_reconciliation.sql`
 
 Production history contains 49 migrations; all 49 versions have matching repository migration files. The new step lease/payload/retry columns are present, the four private worker functions for claim, heartbeat, active-run reconciliation and failure recording are SECURITY DEFINER with EXECUTE granted to `graphytion_api` and `graphytion_runtime`, and RLS remains enabled on `production_run_steps`.
 

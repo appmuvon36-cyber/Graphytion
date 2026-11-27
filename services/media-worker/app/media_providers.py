@@ -12,7 +12,8 @@ class GeminiMediaProvider:
 
     API_BASE = "https://generativelanguage.googleapis.com/v1beta"
     IMAGE_MODELS = {"gemini-3.1-flash-image"}
-    VIDEO_MODEL = "gemini-omni-1.2-flash"
+    VIDEO_MODEL = "gemini-omni-1.1-flash"
+    LEGACY_VIDEO_MODELS = {"gemini-omni-1.2-flash"}
     TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
     def __init__(self, api_key: str, *, poll_interval: float = 5.0, timeout_seconds: int = 840):
@@ -194,7 +195,7 @@ class GeminiMediaProvider:
         on_operation: Callable[[str], Awaitable[None]] | None = None,
         existing_operation_id: str | None = None,
     ) -> tuple[bytes, str, dict[str, Any]]:
-        if model != self.VIDEO_MODEL:
+        if model != self.VIDEO_MODEL and model not in self.LEGACY_VIDEO_MODELS:
             raise ValueError("GEMINI_VIDEO_MODEL_UNSUPPORTED")
         if aspect_ratio not in {"16:9", "9:16"}:
             raise ValueError("VIDEO_ASPECT_RATIO_UNSUPPORTED")

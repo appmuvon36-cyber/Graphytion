@@ -450,8 +450,10 @@ async def _dispatch_timeline(
         timeline_id, version = existing_id, int(expected_version or 1)
     else:
         await db.execute(text("select pg_advisory_xact_lock(hashtext(:project))"), {"project": str(run["project_id"])})
-        current = await db.scalar(text("select max(version) from public.video_timelines where project_id=:project"), {"project": run["project_id"]})
-        version = int(current or 0) + 1
+        current = int(await db.scalar(text("select max(version) from public.video_timelines where project_id=:project"), {"project": run["project_id"]}) or 0)
+        if expected_version is not None and expected_version != current:
+            raise StepInputError("Timeline changed after the production request was prepared")
+        version = current + 1
         timeline_id = await db.scalar(text("""
             insert into public.video_timelines(
               workspace_id,project_id,version,schema_version,fps,width,height,duration_frames,
@@ -478,6 +480,15 @@ async def _dispatch_render(
     snapshot.pop("contentHash", None)
     digest = _validate_snapshot(snapshot)
     snapshot["contentHash"] = digest
+    if timeline_id is None:
+        timeline = (await db.execute(text("""
+            select id,version from public.video_timelines
+            where project_id=:project and workspace_id=:workspace and compiled_hash=:hash
+            order by version desc limit 1
+        """), {"project": run["project_id"], "workspace": run["workspace_id"], "hash": digest})).mappings().first()
+        if timeline is None:
+            raise StepInputError("Render requires the exact immutable timeline snapshot to be persisted first")
+        timeline_id, version = timeline["id"], int(timeline["version"])
     asset_ids = collect_asset_ids(snapshot)
     await resolve_project_assets(
         db, project_id=run["project_id"], workspace_id=run["workspace_id"],

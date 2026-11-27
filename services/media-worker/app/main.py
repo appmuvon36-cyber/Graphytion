@@ -114,6 +114,7 @@ class Worker:
                 prompt=job["prompt"], model=job["model_key"],
                 aspect_ratio=(job.get("generation_config") or {}).get("aspect_ratio", "16:9"),
                 duration_seconds=(job.get("generation_config") or {}).get("duration_seconds", 8),
+                resolution=(job.get("generation_config") or {}).get("resolution", "720p"),
                 configuration=job.get("generation_config") or {},
             )
         )

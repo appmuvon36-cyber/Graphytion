@@ -278,3 +278,9 @@ Latest source implementation after the priority reset:
 - Verification status: source diff reviewed and updated file re-fetched from `main`; Python typecheck/build was not run in this connector-only execution.
 
 **Latest source HEAD:** `2c50f10eca6432641caa07ed1fabbe8a6f0f267d`. Phase 03 remains OPEN.
+## Media worker transient-provider retry correction — 2026-11-27
+
+- `services/media-worker/app/main.py` now treats provider HTTP `408`, `425`, `429`, and `5xx` responses as retryable; permanent client/configuration errors remain non-retryable.
+- Before releasing a retryable TTS job back to PostgreSQL, the worker waits for the provider `Retry-After` value when numeric, otherwise applies bounded exponential backoff derived from the persisted attempt count (1–60 seconds). The worker heartbeat remains active during the wait.
+- Retry budget enforcement remains in the FastAPI failure callback and PostgreSQL `audio_generations.max_attempts`; the worker does not fabricate job state.
+- No schema migration, production DB mutation, secret change, or deployment was performed. Source was committed and re-fetched; runtime provider behavior and type/build checks remain unverified.

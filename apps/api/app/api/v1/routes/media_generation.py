@@ -29,7 +29,7 @@ MAX_VIDEO_BYTES = 512 * 1024 * 1024
 
 class MediaGenerationCreate(BaseModel):
     media_type: Literal["image", "video"]
-    provider_key: Literal["gemini", "google_agent_platform"] = "gemini"
+    provider_key: Literal["gemini"] = "gemini"
     model_key: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=32000)
     generation_config: dict[str, Any] = Field(default_factory=dict)
@@ -94,17 +94,17 @@ def _validate_config(payload: MediaGenerationCreate) -> dict[str, Any]:
         config["image_size"] = image_size
         config["output_format"] = "png"
     else:
-        if payload.provider_key != "google_agent_platform":
-            raise HTTPException(422, "Video generation requires Google Agent Platform OAuth")
+        if payload.provider_key != "gemini":
+            raise HTTPException(422, "Video generation requires the Gemini Developer API provider")
         if payload.model_key != "gemini-omni-1.2-flash":
-            raise HTTPException(422, "Unsupported Google Agent Platform video model")
+            raise HTTPException(422, "Unsupported Gemini Developer API video model")
         ratio = config.get("aspect_ratio", "16:9")
         duration = config.get("duration_seconds", 8)
         if ratio not in {"16:9", "9:16"} or duration not in range(3, 16):
             raise HTTPException(422, "Google Omni 1.2 Flash supports 3-15 second videos")
         resolution = config.get("resolution", "720p")
         if resolution not in {"360p", "720p", "1080p", "4k"}:
-            raise HTTPException(422, "Unsupported Google Omni 1.2 Flash resolution")
+            raise HTTPException(422, "Unsupported Gemini Omni 1.2 Flash resolution")
         config.update({"aspect_ratio": ratio, "duration_seconds": duration, "resolution": resolution})
     return config
 
@@ -180,7 +180,7 @@ async def list_media_generations(project_id: UUID, claims: AuthenticatedClaims, 
     try:
         rows = (await db.execute(text("""
         select id,project_id,media_type,provider_key,model_key,status,error_code,attempt_count,
-               asset_id,output_mime_type,output_size_bytes,output_sha256,
+               provider_operation_id,asset_id,output_mime_type,output_size_bytes,output_sha256,
                provider_cost_status,provider_cost_microusd,operational_cost_microusd,
                quota_debit_microusd,margin_microusd,economics_status,created_at,started_at,completed_at
         from public.media_generation_jobs where project_id=:project
@@ -224,6 +224,7 @@ async def get_media_generation(generation_id: UUID, claims: AuthenticatedClaims,
         "id": str(row["id"]), "project_id": str(row["project_id"]),
         "media_type": row["media_type"], "provider_key": row["provider_key"],
         "model_key": row["model_key"], "status": row["status"],
+        "provider_operation_id": row["provider_operation_id"],
         "error_code": row["error_code"], "attempt_count": row["attempt_count"],
         "generation_config": row["generation_config"],
         "provider_provenance": row["provider_provenance"],
@@ -385,6 +386,35 @@ async def heartbeat_media_generation_job(generation_id: UUID, request: Request,
     await db.commit()
     return {"data": {"generation_id": str(generation_id), "cancel_requested": status["status"] == "cancel_requested",
                      "status": status["status"]}}
+
+
+@router.post("/internal/media-generation-jobs/{generation_id}/provider-operation")
+async def save_media_provider_operation(
+    generation_id: UUID, request: Request, payload: dict[str, str],
+    worker_id: str = Query(min_length=1, max_length=128), db: AsyncSession = DbSession,
+):
+    _require_worker(request)
+    operation_id = (payload.get("provider_operation_id") or "").strip()
+    if not operation_id or len(operation_id) > 256:
+        raise HTTPException(422, "Invalid Gemini interaction ID")
+    owner = await db.scalar(
+        text("select private.graphytion_media_generation_owner(:id,:worker)"),
+        {"id": generation_id, "worker": worker_id},
+    )
+    if owner is None:
+        raise HTTPException(409, "Media generation lease is no longer owned")
+    await set_rls_subject(db, str(owner))
+    result = await db.execute(text("""
+        update public.media_generation_jobs
+        set provider_operation_id=:operation,updated_at=now()
+        where id=:id and worker_id=:worker and status='processing'
+          and provider_key='gemini'
+        returning id
+    """), {"operation": operation_id, "id": generation_id, "worker": worker_id})
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(409, "Media generation is no longer eligible for provider tracking")
+    await db.commit()
+    return {"data": {"generation_id": str(generation_id), "provider_operation_id": operation_id}}
 
 
 @router.post("/internal/media-generation-jobs/{generation_id}/failed")

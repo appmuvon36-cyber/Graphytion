@@ -11,8 +11,8 @@ from fastapi import HTTPException
 from redis.asyncio import Redis
 from sqlalchemy import text
 
-from app.core.config import settings
 from app.api.v1.routes.creative import CreativeRunRequest, _process_creative_run
+from app.core.config import settings
 from app.core.database import SessionLocal, set_rls_subject
 
 logger = logging.getLogger("graphytion.creative_worker")

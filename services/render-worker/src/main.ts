@@ -69,6 +69,7 @@ type RenderJob = {
   render_config: {codec?: string; format?: string; video_crf?:number; video_bitrate?:string|null; audio_codec?:string; audio_bitrate?:string|null; concurrency?:number; thumbnail_enabled?:boolean; preview_enabled?:boolean};
   resolved_assets:Record<string,string>;
   attempt_count: number;
+  max_attempts: number;
 };
 
 async function processJob(jobId?: string): Promise<boolean> {
@@ -140,6 +141,17 @@ async function processJob(jobId?: string): Promise<boolean> {
         }
       },
     });
+    const probe = await execFile('ffprobe', ['-v','error','-show_entries','format=format_name,duration:stream=codec_type,codec_name,width,height','-of','json',outputPath], {timeout:30000, maxBuffer:1024*1024});
+    const metadata = JSON.parse(probe.stdout) as {format?:{format_name?:string;duration?:string};streams?:Array<{codec_type?:string;codec_name?:string;width?:number;height?:number}>};
+    const video = metadata.streams?.find(stream => stream.codec_type === 'video');
+    const duration = Number(metadata.format?.duration);
+    const expectedDuration = claimed.timeline_snapshot.durationFrames / claimed.timeline_snapshot.fps;
+    const expectedCodec = ({h264:'h264',h265:'hevc',vp8:'vp8',vp9:'vp9'} as Record<string,string>)[claimed.render_config.codec ?? 'h264'];
+    const formats = metadata.format?.format_name?.split(',') ?? [];
+    const validContainer = extension === 'webm' ? formats.includes('webm') || formats.includes('matroska') : formats.includes('mp4');
+    const audio = metadata.streams?.find(stream => stream.codec_type === 'audio');
+    const expectedAudio = ({aac:'aac',opus:'opus'} as Record<string,string>)[claimed.render_config.audio_codec ?? 'aac'];
+    if (!validContainer || video?.codec_name !== expectedCodec || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05 || (claimed.render_config.audio_codec === 'none' && audio) || (claimed.render_config.audio_codec !== 'none' && audio && audio.codec_name !== expectedAudio)) throw new Error('Rendered media metadata does not match the immutable composition snapshot and profile');
     if (claimed.render_config.thumbnail_enabled !== false) {
       const thumbnailPath = join(directory, claimed.id + '.jpg');
       await renderStill({
@@ -160,17 +172,6 @@ async function processJob(jobId?: string): Promise<boolean> {
         body: thumbnailForm,
       });
     }
-    const probe = await execFile('ffprobe', ['-v','error','-show_entries','format=format_name,duration:stream=codec_type,codec_name,width,height','-of','json',outputPath], {timeout:30000, maxBuffer:1024*1024});
-    const metadata = JSON.parse(probe.stdout) as {format?:{format_name?:string;duration?:string};streams?:Array<{codec_type?:string;codec_name?:string;width?:number;height?:number}>};
-    const video = metadata.streams?.find(stream => stream.codec_type === 'video');
-    const duration = Number(metadata.format?.duration);
-    const expectedDuration = claimed.timeline_snapshot.durationFrames / claimed.timeline_snapshot.fps;
-    const expectedCodec = ({h264:'h264',h265:'hevc',vp8:'vp8',vp9:'vp9'} as Record<string,string>)[claimed.render_config.codec ?? 'h264'];
-    const formats = metadata.format?.format_name?.split(',') ?? [];
-    const validContainer = extension === 'webm' ? formats.includes('webm') || formats.includes('matroska') : formats.includes('mp4');
-    const audio = metadata.streams?.find(stream => stream.codec_type === 'audio');
-    const expectedAudio = ({aac:'aac',opus:'opus'} as Record<string,string>)[claimed.render_config.audio_codec ?? 'aac'];
-    if (!validContainer || video?.codec_name !== expectedCodec || video.width !== claimed.timeline_snapshot.width || video.height !== claimed.timeline_snapshot.height || !Number.isFinite(duration) || Math.abs(duration - expectedDuration) > (1 / claimed.timeline_snapshot.fps) + 0.05 || (claimed.render_config.audio_codec === 'none' && audio) || (claimed.render_config.audio_codec !== 'none' && audio && audio.codec_name !== expectedAudio)) throw new Error('Rendered media metadata does not match the immutable composition snapshot and profile');
     if (claimed.render_config.preview_enabled !== false) {
       const previewPath = join(directory, claimed.id + '.preview.mp4');
       await execFile('ffmpeg', [
@@ -206,7 +207,7 @@ async function processJob(jobId?: string): Promise<boolean> {
         body: JSON.stringify({
           error_code: timedOut ? 'REMOTION_RENDER_TIMEOUT' : 'REMOTION_RENDER_FAILED',
           error_message: message.slice(0, 500),
-          retryable: !timedOut && claimed.attempt_count < 3,
+          retryable: claimed.attempt_count < claimed.max_attempts,
         }),
       });
     } catch (callbackError) {

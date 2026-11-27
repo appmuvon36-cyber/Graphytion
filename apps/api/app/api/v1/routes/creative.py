@@ -618,7 +618,7 @@ async def _process_creative_run(
     task: UUID,
 ) -> dict[str, Any]:
     try:
-        await agent_tool_registry.authorize(
+        tool = await agent_tool_registry.authorize(
             db=db, actor=actor, workspace_id=workspace_id, project_id=project_id,
             stage=stage, payload=payload.model_dump(exclude_none=True),
         )
@@ -644,7 +644,7 @@ async def _process_creative_run(
                     input_prompt=payload.input_prompt,
                     project_settings=dict(project),
                     source_material=payload.source_material,
-                    idempotency_key=str(run["id"]),
+                    idempotency_key=str(run["id"]), provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -742,7 +742,7 @@ async def _process_creative_run(
             else:
                 arc, arc_meta = await creative_pipeline.direct_story(
                     approved_brief=brief_payload, approved_script=script_payload,
-                    idempotency_key=f"{run['id']}:story-arc",
+                    idempotency_key=f"{run['id']}:story-arc", provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],
@@ -760,7 +760,7 @@ async def _process_creative_run(
                     approved_brief=brief_payload, approved_script=script_payload,
                     story_arc=arc.model_dump(),
                     approved_component_candidates=payload.approved_component_candidates,
-                    idempotency_key=f"{run['id']}:storyboard",
+                    idempotency_key=f"{run['id']}:storyboard", provider_key=tool.configuration.get("provider_key"), model_key=tool.configuration.get("model_key"), route_agent_key=tool.agent_key,
                 )
                 await _persist_run_checkpoint(
                     db, run_id=run["id"], worker_id=run["worker_id"],

@@ -44,7 +44,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [mediaType,setMediaType]=useState<'image'|'video'>('image');
   const [mediaAspectRatio,setMediaAspectRatio]=useState('1:1');
   const [mediaDurationSeconds,setMediaDurationSeconds]=useState(8);
-  const [mediaResolution,setMediaResolution]=useState('720p');
+  const [mediaImageSize,setMediaImageSize]=useState('1K');
   const [subtitleTracks,setSubtitleTracks]=useState<SubtitleTrackItem[]>([]);
   const [subtitleDrafts,setSubtitleDrafts]=useState<Record<string,{text:string;start_ms:number;end_ms:number}>>({});
   const [selectedSubtitleSegments,setSelectedSubtitleSegments]=useState<string[]>([]);
@@ -570,13 +570,14 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
           <select aria-label="Aspect ratio" value={mediaAspectRatio} onChange={event=>setMediaAspectRatio(event.target.value)} style={field}>
             {mediaType==='image'?<><option value="1:1">1:1 Square</option><option value="16:9">16:9 Landscape</option><option value="9:16">9:16 Portrait</option><option value="4:3">4:3</option><option value="3:4">3:4</option></>:<><option value="16:9">16:9 Landscape</option><option value="9:16">9:16 Portrait</option></>}
           </select>
+          {mediaType==='image'&&<select aria-label="Image size" value={mediaImageSize} onChange={event=>setMediaImageSize(event.target.value)} style={field}>
+            <option value="512">512</option><option value="1K">1K</option><option value="2K">2K</option><option value="4K">4K</option>
+          </select>}
           {mediaType==='video'&&<>
             <select aria-label="Video duration" value={mediaDurationSeconds} onChange={event=>setMediaDurationSeconds(Number(event.target.value))} style={field}>
-              {[3,4,5,6,8,10,12,15].map(value=><option key={value} value={value}>{value} seconds</option>)}
+              {[3,4,5,6,8,10].map(value=><option key={value} value={value}>{value} seconds</option>)}
             </select>
-            <select aria-label="Video resolution" value={mediaResolution} onChange={event=>setMediaResolution(event.target.value)} style={field}>
-              <option value="360p">360p</option><option value="720p">720p</option><option value="1080p">1080p</option><option value="4k">4K</option>
-            </select>
+            <span style={{fontSize:12,color:'#68788e',alignSelf:'center'}}>Google Omni Flash · native output quality</span>
           </>}
         </div>
         <textarea aria-label="Media generation prompt" rows={4} required maxLength={32000} value={mediaPrompt} onChange={event=>setMediaPrompt(event.target.value)} placeholder="Describe subject, style, composition, lighting, and motion…" style={field}/>

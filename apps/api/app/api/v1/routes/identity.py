@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthenticatedClaims
 from app.core.config import settings
-from app.core.database import get_db_session, set_rls_subject
+from app.core.database import get_db_session, set_rls_runtime_role, set_rls_subject
 from app.services.idempotency import (
     complete_idempotency,
     reserve_idempotency,
@@ -223,6 +223,9 @@ async def audit_auth_event(
     actor: UUID | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    # Anonymous recovery/resend events still require the restricted runtime
+    # database role; authenticated events additionally bind the verified subject.
+    await set_rls_runtime_role(db)
     if actor is not None:
         await set_rls_subject(db, str(actor))
     await db.execute(

@@ -44,6 +44,17 @@ class StepEnvelope(BaseModel):
     execution_context: dict[str, Any]
 
 
+class EmptyStepConfiguration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentStepConfiguration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agent_key: str | None = None
+    task_type: str | None = None
+    input_payload: dict[str, Any] | None = None
+
+
 class MediaConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")
     media_type: Literal["image", "video"]
@@ -80,8 +91,44 @@ class SubtitleConfiguration(BaseModel):
 
 class SnapshotConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    snapshot: dict[str, Any]
+    snapshot: dict[str, Any] | None = None
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class AudioProcessingConfiguration(EmptyStepConfiguration):
+    pass
+
+
+class AssetPersistenceConfiguration(EmptyStepConfiguration):
+    pass
+
+
+class CompositionConfiguration(EmptyStepConfiguration):
+    pass
+
+
+class QualityCheckConfiguration(EmptyStepConfiguration):
+    pass
+
+
+class DeliveryConfiguration(EmptyStepConfiguration):
+    pass
+
+
+STEP_CONFIG_MODELS: dict[str, type[BaseModel]] = {
+    "agent": AgentStepConfiguration,
+    "creative": EmptyStepConfiguration,
+    "media_generation": MediaConfiguration,
+    "asset_persistence": AssetPersistenceConfiguration,
+    "voiceover": VoiceoverConfiguration,
+    "audio_processing": AudioProcessingConfiguration,
+    "subtitle": SubtitleConfiguration,
+    "timeline": SnapshotConfiguration,
+    "composition": CompositionConfiguration,
+    "render": SnapshotConfiguration,
+    "quality_check": QualityCheckConfiguration,
+    "delivery": DeliveryConfiguration,
+}
 
 
 class StepInputError(ValueError):
@@ -157,7 +204,15 @@ async def _load_envelope(db: AsyncSession, step: dict[str, Any]) -> tuple[StepEn
     if any(row["status"] != "completed" for row in parents):
         raise StepInputError("A dependency output is not complete")
     dependency_outputs = {row["step_key"]: dict(row["output_refs"] or {}) for row in parents}
-    config = dict(step["config"] or {})
+    config_model = STEP_CONFIG_MODELS.get(str(step["step_type"]))
+    if config_model is None:
+        raise StepInputError(f"Unsupported production step type: {step['step_type']}")
+    try:
+        config = config_model.model_validate(dict(step["config"] or {})).model_dump(
+            mode="json", exclude_unset=True
+        )
+    except ValidationError as exc:
+        raise StepInputError(f"Invalid {step['step_type']} step configuration: {exc}") from exc
     input_refs = dict(step["input_refs"] or {})
     fingerprint = _fingerprint({
         "schema_version": SCHEMA_VERSION,
@@ -442,6 +497,8 @@ async def _load_snapshot(
             raise StepInputError("No immutable timeline snapshot is available")
         return dict(row["snapshot"]), row["id"], int(row["version"])
     parsed = SnapshotConfiguration.model_validate(envelope.configuration)
+    if parsed.snapshot is None:
+        raise StepInputError("Timeline snapshot contract is empty")
     return dict(parsed.snapshot), None, parsed.expected_version
 
 

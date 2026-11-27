@@ -160,11 +160,25 @@ class Worker:
         cancel_wait = asyncio.create_task(cancel_event.wait())
 
         async def persist_provider_operation(operation_id: str) -> None:
-            await self.api(
-                f"/internal/media-generation-jobs/{job_id}/provider-operation",
-                method="POST", params={"worker_id": WORKER_ID},
-                json={"provider_operation_id": operation_id},
-            )
+            try:
+                await self.api(
+                    f"/internal/media-generation-jobs/{job_id}/provider-operation",
+                    method="POST", params={"worker_id": WORKER_ID},
+                    json={"provider_operation_id": operation_id},
+                )
+            except Exception:
+                # Do not leave a billable Gemini operation running without its
+                # provider ID persisted in PostgreSQL. The endpoint is
+                # idempotent for the same operation ID; attempt provider cleanup
+                # if the API remains unavailable.
+                try:
+                    await provider.cancel_interaction(operation_id)
+                except Exception:
+                    log.exception(
+                        "gemini_operation_cancel_after_persist_failure_failed",
+                        extra={"generation_id": job_id},
+                    )
+                raise
 
         generation_task = asyncio.create_task(
             provider.generate_image(

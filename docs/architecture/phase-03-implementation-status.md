@@ -309,3 +309,15 @@ Latest source implementation after the priority reset:
 - Source-only change. No provider request, usage event, database migration, deployment, typecheck, or runtime verification was performed.
 
 **Latest source HEAD:** `9f39d9417e584758f6b31012d47257533405a09b`. Phase 03 remains OPEN.
+
+
+## Central LLM gateway provider expansion — 2026-11-27
+
+- Added an optional Gemini GenerateContent structured-JSON adapter to the existing server-side LLM Gateway. It uses the server-only `GEMINI_API_KEY`, configured `GEMINI_MODEL_KEY`, JSON response mode, and returns provider/model/request metadata plus actual token counts from Gemini `usageMetadata`.
+- Added `LLM_DEFAULT_PROVIDER` so the existing creative agents use the centrally selected configured adapter without changing their stage contracts. OpenAI remains the default; Gemini is registered only when its API key is present. An unconfigured provider fails explicitly with 503; no synthetic output or silent provider substitution is used.
+- Both provider adapters use bounded retries for transient statuses; the Gemini adapter also validates JSON shape before the existing Pydantic domain-schema validation. Provider credentials remain server-side.
+- Added placeholder environment documentation only. No Railway secret was changed and no provider call was made.
+- Source-only status: IMPLEMENTED in adapter/configuration source; INTEGRATED through the existing creative pipeline gateway; runtime VERIFIED remains pending provider credentials and execution.
+- No migration, production DB mutation, deployment, typecheck, or build was performed.
+
+**Latest source HEAD:** `a768477fa74b52ab1f05083c8c71d0a6534aaa1b`. Phase 03 remains OPEN.

@@ -6,6 +6,7 @@ from app.api.v1.routes import (
     health,
     identity,
     media_generation,
+    memory,
     platform_admin,
     render,
     subtitles,
@@ -23,6 +24,7 @@ api_router.include_router(identity.router, tags=["identity", "workspace", "proje
 api_router.include_router(
     creative.router, tags=["creative production", "briefs", "scripts", "storyboards"]
 )
+api_router.include_router(memory.router, tags=["conversation history", "persistent memory"])
 api_router.include_router(templates.router, tags=["composition templates", "brand kits"])
 api_router.include_router(platform_admin.router, prefix="/admin", tags=["platform administration"])
 api_router.include_router(tool_registry.router, prefix="/admin", tags=["agent tool registry"])

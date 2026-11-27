@@ -116,3 +116,12 @@ If worker claims return 200 but heartbeat returns 500 with PostgreSQL `Ambiguous
 - The validated final output is stored once in the private `render-artifacts` bucket and registered as a generated `project_assets` row that references that same bucket/object path. The normal Asset Library signed preview/download path serves it without duplicating the file into `project-assets`.
 - The generated asset metadata records the render job ID, timeline hash and composition version. Asset deletion refuses to remove an output still referenced by a completed render job.
 - This is implemented in source; no real render was run and no claim of MP4 runtime completion is made until worker output is actually produced and validated.
+
+
+## Supabase production verification — 2026-11-27
+
+- Production migration history contains 30 applied migrations; every applied version/name now matches exactly one SQL file under `supabase/migrations/`. The latest applied migration is `20261127073738_dynamic_agent_tool_registry`.
+- The registry migration was applied because existing FastAPI admin routes require its tables. RLS is enabled on all registry, permission and audit tables.
+- The only intentionally unapplied migration files are the price-book read policy and Google Agent Platform provider migration. Personal mode has no quota pricing dependency and media generation is pinned to direct Gemini Developer API, so neither migration is required.
+- Render tables and Project Assets exist in production with tenant RLS. The render and project asset storage buckets are private. Five active global render profiles and eight enabled motion components are present.
+- One recent render worker heartbeat and one recent media worker heartbeat are online. No synthetic render jobs or generated assets were created.

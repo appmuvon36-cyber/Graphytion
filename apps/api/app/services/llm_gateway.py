@@ -198,7 +198,7 @@ class GeminiGenerateContentAdapter:
                 "parts": [{
                     "text": (
                         system_prompt
-                        + "\\nReturn a JSON object conforming to this schema:\\n"
+                        + "\nReturn a JSON object conforming to this schema:\n"
                         + json.dumps(output_schema, ensure_ascii=False)
                     )
                 }]

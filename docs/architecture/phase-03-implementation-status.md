@@ -458,3 +458,17 @@ These blockers prevent declaring Graphytion fully complete. Continue implementat
 - Supabase now has 31 applied migrations and 31 exactly matching versioned SQL files. The unused price-book read-policy and Google Agent Platform provider migrations are archived under `supabase/archive/unused_personal_mode_migrations/`; `supabase/migrations/` now contains exactly the 31 applied migrations, with no pending production migration files.
 - Latest production services: API deployment `008b7361-9e20-43d2-b1b3-a12b5c008874` SUCCESS; Web `529bfcb4-17fa-47da-825a-96d3e8190a9f` SUCCESS; Media Worker `ed7847c3-fb36-43da-93fb-b17f84689984` SUCCESS; Render Worker `4828e3b9-fae7-44fc-bb5f-34244293c16b` SUCCESS. One replica per service, no active critical/warning issues.
 - API logs after deployment show `/api/v1/health` 200, worker heartbeat 200, Media Worker claim 200 and Render Worker claim 200. No image/video generation or Remotion render was run. MP4 output, Asset Library display and download remain runtime-unverified by the explicit no-real-test rule.
+
+
+## Reliability continuation — 2026-11-27
+
+- Session BFF recovery no longer clears access/refresh cookies when Supabase Auth or FastAPI returns HTTP 5xx. A temporary verification outage returns HTTP 503 and preserves cookies; definitive invalid/expired session responses still clear them. Customer Studio surfaces the temporary verification issue rather than silently treating it as a logout.
+- Removed the final obsolete `billing` workspace role option from member invitation and member role controls. API authorization and role validation already accept only owner/admin/editor/member/viewer.
+- Customer Studio no longer converts a failed media-generation list request into an empty array. Other project panels remain usable, and the media panel shows the actual API error.
+- Media Worker heartbeat handling no longer converts transient API/network failures into user cancellation. It retries the heartbeat; a confirmed 409 lease loss stops the provider operation without attempting to mark another worker's job cancelled.
+- If Gemini creates an interaction but FastAPI cannot persist its operation ID, Media Worker attempts to cancel that untracked provider interaction before surfacing the persistence error.
+- Render Worker no longer cancels a valid render after a single transient API heartbeat/progress failure. It stops only on a definitive HTTP 409 lease loss or explicit cancellation.
+- Gemini Developer API requests now explicitly set `response_format.delivery='inline'` for both image and video. The adapter consumes inline base64 bytes and persists them to Graphytion private Storage; no GCS/Vertex/ADC dependency is introduced.
+- Render artifact registration is transactional with render job completion and Project Asset insertion. If database metadata persistence fails after upload, the API rolls back and attempts to remove the deterministic Storage object so the job can safely retry.
+- No new Supabase schema changes were required in this continuation. The existing 31 applied migrations, tenant RLS, and private Storage buckets remain unchanged.
+- Railway production builds/deployments for the affected web, API, media-worker and render-worker code paths succeeded. API health returned 200; API logs show worker heartbeat and media/render claim/recovery endpoints returning 200; web logged Ready; media worker logged started; render worker logged started. These are operational checks only, not proof of actual Gemini output or MP4 render completion.

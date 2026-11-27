@@ -167,6 +167,7 @@ class GeminiMediaProvider:
         configuration: dict[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
         on_operation: Callable[[str], Awaitable[None]] | None = None,
+        existing_operation_id: str | None = None,
     ) -> tuple[bytes, str, dict[str, Any]]:
         if model != self.VIDEO_MODEL:
             raise ValueError("GEMINI_VIDEO_MODEL_UNSUPPORTED")
@@ -176,27 +177,31 @@ class GeminiMediaProvider:
             raise ValueError("VIDEO_DURATION_UNSUPPORTED")
         if resolution not in {"360p", "720p", "1080p", "4k"}:
             raise ValueError("VIDEO_RESOLUTION_UNSUPPORTED")
-        body = await self._create_interaction({
-            "model": self.VIDEO_MODEL,
-            "input": [{"type": "text", "text": prompt}],
-            "response_format": {
-                "type": "video",
-                "duration": f"{duration_seconds}s",
-                "resolution": resolution,
-                "aspect_ratio": aspect_ratio,
-            },
-            "generation_config": {"video_config": {"task": "text_to_video"}},
-            "background": True,
-            "store": True,
-        }, timeout=120.0)
-        interaction_id = str(body["id"])
-        if on_operation is not None:
-            await on_operation(interaction_id)
-        status = str(body.get("status", "")).lower()
-        if status not in self.TERMINAL_STATUSES:
+        if existing_operation_id:
+            interaction_id = existing_operation_id
             body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
-        elif status != "completed":
-            raise RuntimeError(f"GEMINI_VIDEO_{status.upper()}")
+        else:
+            body = await self._create_interaction({
+                "model": self.VIDEO_MODEL,
+                "input": [{"type": "text", "text": prompt}],
+                "response_format": {
+                    "type": "video",
+                    "duration": f"{duration_seconds}s",
+                    "resolution": resolution,
+                    "aspect_ratio": aspect_ratio,
+                },
+                "generation_config": {"video_config": {"task": "text_to_video"}},
+                "background": True,
+                "store": True,
+            }, timeout=120.0)
+            interaction_id = str(body["id"])
+            if on_operation is not None:
+                await on_operation(interaction_id)
+            status = str(body.get("status", "")).lower()
+            if status not in self.TERMINAL_STATUSES:
+                body = await self._poll_interaction(interaction_id, cancel_event=cancel_event)
+            elif status != "completed":
+                raise RuntimeError(f"GEMINI_VIDEO_{status.upper()}")
         video_block = next(
             (item for item in self._output_blocks(body)
              if item.get("type") == "video" and item.get("data")),

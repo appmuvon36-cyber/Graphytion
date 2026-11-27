@@ -34,6 +34,7 @@ export default function PlatformAdmin() {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [modelPrices,setModelPrices]=useState<ModelPrice[]>([]);
   const [usageSummary,setUsageSummary]=useState<UsageSummary|null>(null);
+  const [pricingError,setPricingError]=useState('');
   const [priceDraft,setPriceDraft]=useState({provider_key:'openai',model_key:'gpt-4.1-mini',input_microusd_per_million:0,output_microusd_per_million:0,notes:''});
   const [renderProfiles,setRenderProfiles]=useState<RenderProfile[]>([]);
   const [renderSettings,setRenderSettings]=useState<RenderSettings>({max_concurrent_jobs:2,lease_seconds:300,max_attempts:3,max_output_bytes:536870912});
@@ -72,7 +73,7 @@ export default function PlatformAdmin() {
   const load = useCallback(async () => {
     setBusy(true); setError('');
     try {
-      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj, wk, mp, us] = await Promise.all([
+      const [o, u, w, p, a, i, pa, llm, rp, rs, mc, rj, mj, wk] = await Promise.all([
         request<{data: Overview}>('/admin/overview'),
         request<Page<User>>('/admin/users?page=' + page + '&per_page=25&q=' + encodeURIComponent(query)),
         request<Page<Workspace>>('/admin/workspaces?page=1&per_page=50&q=' + encodeURIComponent(query)),
@@ -87,11 +88,17 @@ export default function PlatformAdmin() {
         request<Page<AdminRenderJob>>('/admin/render-jobs?page=1&per_page=50'),
         request<Page<AdminMediaJob>>('/admin/media-jobs?page=1&per_page=50'),
         request<{data:WorkerStatus[]}>('/admin/workers'),
+      ]);
+      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data);
+      setDenied(false);
+      const [pricesResult, usageResult] = await Promise.allSettled([
         request<{data:ModelPrice[]}>('/admin/providers/model-prices'),
         request<{data:UsageSummary}>('/admin/usage?days=30'),
       ]);
-      setOverview(o.data); setUsers(u.data); setWorkspaces(w.data); setProjects(p.data); setAudit(a.data); setInvitations(i.data); setPlatformAdmins(pa.data); setLlmStatus(llm.data); setRenderProfiles(rp.data); setRenderSettings(rs.data); setMotionComponents(mc.data); setAdminRenderJobs(rj.data); setAdminMediaJobs(mj.data); setWorkers(wk.data); setModelPrices(mp.data); setUsageSummary(us.data);
-      setDenied(false);
+      if (pricesResult.status === 'fulfilled') { setModelPrices(pricesResult.value.data); setPricingError(''); }
+      else { setModelPrices([]); setPricingError('Usage economics migration is not yet active or the pricing API is unavailable.'); }
+      if (usageResult.status === 'fulfilled') setUsageSummary(usageResult.value.data);
+      else setUsageSummary(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Platform data unavailable'); }
     finally { setBusy(false); }
   }, [page, query, request]);
@@ -305,6 +312,7 @@ export default function PlatformAdmin() {
 
       <section style={panel}>
         <h2>AI usage economics · actual provider usage</h2>
+        {pricingError&&<p role="status" style={{fontSize:12,color:'#a15b00'}}>{pricingError}</p>}
         <p style={{fontSize:13,color:'#68788e'}}>Biaya dihitung dari token aktual provider dan price book versi efektif. Event tanpa harga atau metadata token lengkap tetap ditandai unpriced, bukan dianggap gratis.</p>
         {usageSummary&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
           <div><strong>{usageSummary.totals.input_tokens.toLocaleString()}</strong><div style={{fontSize:11,color:'#68788e'}}>Input tokens · 30 hari</div></div>

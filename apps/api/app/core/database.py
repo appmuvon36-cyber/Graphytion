@@ -41,20 +41,36 @@ async def set_rls_runtime_role(session: AsyncSession) -> None:
     ).scalar_one()
     if not has_runtime_role:
         raise RuntimeError("Database session is not a member of graphytion_runtime")
-    await session.execute(text("SET ROLE graphytion_runtime"))
+    # Scope role elevation to the current transaction. This is required for
+    # Supavisor transaction pooling and prevents role state leaking between requests.
+    await session.execute(text("SET LOCAL ROLE graphytion_runtime"))
 
 
 async def set_rls_subject(session: AsyncSession, user_id: str | None) -> None:
     if user_id is not None:
         await set_rls_runtime_role(session)
 
+    # Supabase auth.uid() first reads request.jwt.claim.sub and falls back to
+    # request.jwt.claims. Set both in the same transaction as the protected DML.
+    # During dependency cleanup, clear session-level values after the transaction
+    # has been rolled back so a pooled connection cannot retain a previous actor.
+    is_local = user_id is not None
     await session.execute(
         text("""
             select
-              set_config('request.jwt.claim.sub', :subject, false),
-              set_config('request.jwt.claim.role', :role, false)
+              set_config('request.jwt.claim.sub', :subject, :is_local),
+              set_config('request.jwt.claim.role', :role, :is_local),
+              set_config('request.jwt.claims', :claims, :is_local)
         """),
-        {"subject": user_id or "", "role": "authenticated" if user_id else ""},
+        {
+            "subject": user_id or "",
+            "role": "authenticated" if user_id else "",
+            "claims": (
+                '{"sub":"' + user_id + '","role":"authenticated"}'
+                if user_id else ""
+            ),
+            "is_local": is_local,
+        },
     )
 
 

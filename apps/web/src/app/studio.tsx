@@ -167,7 +167,11 @@ export default function Studio() {
   async function createWorkspace(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();setBusy(true);setError('');
     try{await call('/workspaces',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name:workspaceName,slug:workspaceSlug})});setWorkspaceName('');setWorkspaceSlug('');await loadAccount();setNotice('Workspace berhasil dibuat.');}
-    catch(e){setError(e instanceof Error?e.message:'Gagal membuat workspace');}finally{setBusy(false);}
+    catch(e){
+      const message=e instanceof Error?e.message:'Gagal membuat workspace';
+      const requestId=e instanceof ApiClientError?e.requestId:null;
+      setError(requestId?message+' (ID laporan: '+requestId+')':message);
+    }finally{setBusy(false);}
   }
   async function updateWorkspace(event:React.FormEvent<HTMLFormElement>){
     event.preventDefault();if(!workspaceId)return;setBusy(true);setError('');

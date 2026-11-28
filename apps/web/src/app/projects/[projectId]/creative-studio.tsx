@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClientError, createApiClient } from '@graphytion/api-client';
 import type { MediaGenerationApi } from '@graphytion/api-client';
 import { TimelineEditor } from '@graphytion/motion-components';
@@ -34,6 +34,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
   const [workflow,setWorkflow]=useState<ProductionWorkflowApi|null>(null);
   const [workflowLoadError,setWorkflowLoadError]=useState('');
   const [renders, setRenders] = useState<RenderItem[]>([]);
+  const refreshedCompletedRenderIds = useRef<Set<string>>(new Set());
   const [previewSnapshot, setPreviewSnapshot] = useState<CompositionSnapshot | null>(null);
   const [previewResolvedAssets,setPreviewResolvedAssets]=useState<ResolvedCompositionAssets>({});
   const [timelineVersion,setTimelineVersion]=useState<number|null>(null);
@@ -162,6 +163,30 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     });
     return () => { active = false; };
   }, [api, selectedConversation]);
+
+  const hasActiveRenders = renders.some(item => ['queued','rendering','cancel_requested'].includes(item.status));
+  useEffect(() => {
+    if (!hasActiveRenders) return;
+    let active = true;
+    const refreshRenders = async () => {
+      try {
+        const result = await api.listRenders(projectId);
+        if (!active) return;
+        const newlyCompleted = result.data.filter(item =>
+          item.status === 'completed' && !refreshedCompletedRenderIds.current.has(item.id)
+        );
+        for (const item of newlyCompleted) refreshedCompletedRenderIds.current.add(item.id);
+        setRenders(result.data);
+        // Refresh the Asset Library only after a real completed status is returned by FastAPI.
+        if (newlyCompleted.length > 0) void load();
+      } catch (refreshError) {
+        console.warn('render_status_refresh_failed', refreshError);
+      }
+    };
+    const timer = window.setInterval(() => { void refreshRenders(); }, 5000);
+    void refreshRenders();
+    return () => { active = false; window.clearInterval(timer); };
+  }, [api, projectId, hasActiveRenders, load]);
 
   useEffect(() => {
     if (!mediaGenerations.some(item => ['queued','processing','cancel_requested'].includes(item.status))) return;
@@ -863,7 +888,7 @@ export default function CreativeStudio({ projectId }: { projectId: string }) {
     </section>
     <section style={panel}>
       <h2 style={{marginTop:0}}>05 · Render jobs</h2>
-      {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div><div style={{display:'flex',gap:7}}>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download MP4</button>}{['queued','rendering'].includes(render.status)&&<button type="button" disabled={busy} onClick={()=>void cancelRender(render.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div></div>)}
+      {renders.map(render=><div key={render.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,padding:'8px 0',borderTop:'1px solid #edf0f5',flexWrap:'wrap'}}><div><strong>{render.status}</strong><p style={{fontSize:12,color:'#68788e',margin:'3px 0'}}>Progress {render.progress_percent}% · {render.error_code || render.id}</p></div><div style={{display:'flex',gap:7}}>{render.status==='completed'&&<button type="button" onClick={()=>void downloadRender(render.id)} style={button}>Download {String(render.output_container||'mp4').toUpperCase()}</button>}{['queued','rendering'].includes(render.status)&&<button type="button" disabled={busy} onClick={()=>void cancelRender(render.id)} style={{...button,background:'#fff1f0',color:'#b42318'}}>Cancel</button>}</div></div>)}
       {renders.length===0&&<p style={{color:'#68788e'}}>Belum ada render job.</p>}
     </section>
     <section style={panel}>

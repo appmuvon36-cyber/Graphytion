@@ -201,13 +201,14 @@ async def _heartbeat(step_id: UUID) -> None:
 
 
 async def _load_envelope(db: AsyncSession, step: dict[str, Any]) -> tuple[StepEnvelope, dict[str, Any]]:
+    # The dispatcher has no tenant JWT subject before it knows the run owner.
+    # Resolve only the run context for the currently leased step through a
+    # narrowly scoped SECURITY DEFINER function, then switch back to tenant RLS.
     run = (await db.execute(
         text("""
-            select id,workspace_id,project_id,requested_by,status,input_snapshot,config_snapshot,
-                   cancel_requested_at
-            from public.production_runs where id=:run
+            select * from private.graphytion_get_dispatch_run_context(:step,:worker)
         """),
-        {"run": step["production_run_id"]},
+        {"step": step["id"], "worker": WORKER_ID},
     )).mappings().first()
     if run is None:
         raise StepInputError("Production Run no longer exists")

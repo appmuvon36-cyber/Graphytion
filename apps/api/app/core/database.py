@@ -60,15 +60,18 @@ async def set_rls_subject(session: AsyncSession, user_id: str | None) -> None:
             select
               set_config('request.jwt.claim.sub', :subject, :is_local),
               set_config('request.jwt.claim.role', :role, :is_local),
-              set_config('request.jwt.claims', :claims, :is_local)
+              set_config(
+                'request.jwt.claims',
+                case when :subject <> ''
+                  then jsonb_build_object('sub', :subject, 'role', 'authenticated')::text
+                  else ''
+                end,
+                :is_local
+              )
         """),
         {
             "subject": user_id or "",
             "role": "authenticated" if user_id else "",
-            "claims": (
-                '{"sub":"' + user_id + '","role":"authenticated"}'
-                if user_id else ""
-            ),
             "is_local": is_local,
         },
     )
